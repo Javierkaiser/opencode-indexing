@@ -35,7 +35,7 @@ A server command, so it is available anywhere, including clients without a JSX r
 | Subcommand | Purpose |
 | --- | --- |
 | `/indexing-config` or `show` | Print the effective configuration and any warnings |
-| `/indexing-config set <key> <value>` | Change one setting (validated). Use `set <key> reset` to revert a key to its default |
+| `/indexing-config set <key>=<value>` | Change one setting. `set <key>` alone prints its current value; `set <key>=reset` reverts it |
 | `/indexing-config test [target]` | Test connectivity: `qdrant`, `lancedb`, `provider`, `kilo` |
 | `/indexing-config import [source]` | Import vectors from a Kilo source without re-embedding |
 | `/indexing-config help` | List keys and subcommands |
@@ -84,7 +84,7 @@ The terminal footer shows whether the current workspace is indexed, in one glyph
 | `⏸ paused` | Indexing paused: nothing is written or refreshed |
 | `!` / `◌` | The status could not be read / is still loading |
 
-*Indexing: start, pause or resume indexing* in the command palette — or `/indexing-config set enabled false` — controls it. The footer is a status line only: the host's `prompt.footer` slot exposes no interaction surface, so it is not clickable. Pausing leaves `indexing_search` working (it still reads Kilo's index), but `indexing_build`, `indexing_refresh`, `indexing_import` and auto-refresh refuse to write until you resume. The command has a stable id, so a key can be assigned in `cli.json`.
+*Indexing: start, pause or resume indexing* in the command palette — or `/indexing-config set enabled=false` — controls it. The footer is a status line only: the host's `prompt.footer` slot exposes no interaction surface, so it is not clickable. Pausing leaves `indexing_search` working (it still reads Kilo's index), but `indexing_build`, `indexing_refresh`, `indexing_import` and auto-refresh refuse to write until you resume. The command has a stable id, so a key can be assigned in `cli.json`.
 
 ### Editing settings
 
