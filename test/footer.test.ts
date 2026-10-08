@@ -1,7 +1,7 @@
 import * as assert from "node:assert/strict"
 import { describe, test } from "node:test"
 
-import { footerState, footerText, footerView, formatPoints, type IndexingState } from "../tui/footer.ts"
+import { footerAction, footerState, footerText, footerView, formatPoints, type IndexingState } from "../tui/footer.ts"
 import { pagePalette, type PagePalette } from "../tui/page-style.ts"
 
 const PALETTE: PagePalette = pagePalette(undefined)
@@ -45,6 +45,24 @@ describe("footerState", () => {
   })
 })
 
+describe("footerAction", () => {
+  test("paused resumes, ready pauses", () => {
+    assert.equal(footerAction("paused"), "resume")
+    assert.equal(footerAction("ready"), "pause")
+  })
+
+  test("anything indexable starts indexing", () => {
+    for (const state of ["empty", "stale", "unavailable"] as const) {
+      assert.equal(footerAction(state), "start", `${state} should start indexing`)
+    }
+  })
+
+  test("transient states only re-read the status", () => {
+    assert.equal(footerAction("loading"), "restatus")
+    assert.equal(footerAction("error"), "restatus")
+  })
+})
+
 describe("footerView", () => {
   test("gives every state a distinct glyph and a non-empty label", () => {
     const states: IndexingState[] = ["loading", "paused", "ready", "stale", "empty", "unavailable", "error"]
@@ -77,14 +95,13 @@ describe("footerText", () => {
     assert.ok(text.startsWith("● indexed"))
     assert.ok(text.includes("81.4k"))
     assert.ok(text.includes("index up to date"))
-    assert.ok(text.includes("click to pause"), "the detail must advertise the click affordance")
   })
 
   test("omits the point count when there is nothing indexed", () => {
-    assert.match(footerText(footerView("empty"), true, null), /not indexed {2}no own index yet; click to pause$/)
+    assert.match(footerText(footerView("empty"), true, null), /not indexed {2}no own index yet$/)
   })
 
   test("omits a zero count rather than showing 0", () => {
-    assert.match(footerText(footerView("stale"), true, 0), /index stale {2}needs a refresh; click to pause$/)
+    assert.match(footerText(footerView("stale"), true, 0), /index stale {2}index needs a refresh$/)
   })
 })

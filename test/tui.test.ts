@@ -29,6 +29,7 @@ interface SettingsView {
   dimension: number
   importFromKilo: boolean
   autoRefresh: boolean
+  enabled: boolean
   searchMaxResults: number
   hasMistralKey: boolean
   hasOpenAiKey: boolean
@@ -88,7 +89,15 @@ interface HarnessOptions {
   /** Result of `settings.test`. */
   testResult?: (target: string) => { ok: boolean; message: string }
   /** Result of `status.get`. */
-  status?: { summary: string; recommendation: string; ownKind: string; ownStore: string }
+  status?: {
+    summary: string
+    recommendation: string
+    ownKind: string
+    ownStore: string
+    ownPoints?: number | null
+    ownComplete?: boolean | null
+    kiloCollection?: string | null
+  }
   /** Overrides for the `index.*` summaries. */
   summaries?: Partial<Record<"build" | "refresh" | "import", string>>
   /** Keep `dialog.select` pending until `releaseDialog()` is called. */
@@ -105,6 +114,7 @@ const DEFAULT_SETTINGS: SettingsView = {
   dimension: 1536,
   importFromKilo: false,
   autoRefresh: true,
+  enabled: true,
   searchMaxResults: 10,
   hasMistralKey: false,
   hasOpenAiKey: false,
@@ -495,8 +505,18 @@ describe("tui plugin", () => {
     assert.deepEqual(harness.slots, [])
   })
 
-  test("the toggle command flips enabled and reports the new state", async () => {
-    const harness = await setupPlugin()
+  test("the footer action pauses a healthy index", async () => {
+    const harness = await setupPlugin({
+      status: {
+        summary: "81.4k points, complete",
+        recommendation: "",
+        ownKind: "qdrant",
+        ownStore: "oc-demo",
+        ownPoints: 81_400,
+        ownComplete: true,
+        kiloCollection: null,
+      },
+    })
     const toggle = harness.layerFor("opencode.indexing.toggle").commands.find((c) => c.id === "opencode.indexing.toggle")
     assert.ok(toggle)
     assert.equal(toggle.bind, false, "the toggle must not claim a key by default")
@@ -505,7 +525,6 @@ describe("tui plugin", () => {
     await toggle.run?.()
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    // Enabled by default, so the first toggle pauses it.
     assertCalledWith(harness, "settings.set", { patch: { enabled: false } })
     assert.ok(
       harness.toasts.some((toast) => toast.message === "Indexing paused"),
@@ -513,8 +532,85 @@ describe("tui plugin", () => {
     )
   })
 
-  test("the toggle reports a failure instead of silently doing nothing", async () => {
-    const harness = await setupPlugin()
+  test("the footer action resumes a paused index without rebuilding", async () => {
+    const harness = await setupPlugin({
+      settings: { enabled: false },
+      status: {
+        summary: "paused",
+        recommendation: "",
+        ownKind: "qdrant",
+        ownStore: "oc-demo",
+        ownPoints: 81_400,
+        ownComplete: true,
+        kiloCollection: null,
+      },
+    })
+    const toggle = harness.layerFor("opencode.indexing.toggle").commands.find((c) => c.id === "opencode.indexing.toggle")
+    assert.ok(toggle)
+
+    await toggle.run?.()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    assertCalledWith(harness, "settings.set", { patch: { enabled: true } })
+    assert.ok(harness.toasts.some((toast) => toast.message === "Indexing resumed"))
+    assert.equal(countCalls(harness, "index.build"), 0, "resuming must not kick off a build")
+  })
+
+  test("the footer action refreshes a stale index instead of pausing it", async () => {
+    const harness = await setupPlugin({
+      status: {
+        summary: "81.4k points, incomplete",
+        recommendation: "",
+        ownKind: "qdrant",
+        ownStore: "oc-demo",
+        ownPoints: 81_400,
+        ownComplete: false,
+        kiloCollection: null,
+      },
+    })
+    const toggle = harness.layerFor("opencode.indexing.toggle").commands.find((c) => c.id === "opencode.indexing.toggle")
+    assert.ok(toggle)
+
+    await toggle.run?.()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    assertCalledWith(harness, "index.refresh", {})
+    assert.equal(countCalls(harness, "settings.set"), 0, "a stale index needs a refresh, not a pause")
+  })
+
+  test("the footer action builds when there is no index at all", async () => {
+    const harness = await setupPlugin({
+      status: {
+        summary: "not built",
+        recommendation: "",
+        ownKind: "qdrant",
+        ownStore: "oc-demo",
+        ownPoints: null,
+        ownComplete: null,
+        kiloCollection: "ws-demo",
+      },
+    })
+    const toggle = harness.layerFor("opencode.indexing.toggle").commands.find((c) => c.id === "opencode.indexing.toggle")
+    assert.ok(toggle)
+
+    await toggle.run?.()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    assertCalledWith(harness, "index.build", { skipImport: false })
+  })
+
+  test("the footer action reports a failure instead of silently doing nothing", async () => {
+    const harness = await setupPlugin({
+      status: {
+        summary: "81.4k points, complete",
+        recommendation: "",
+        ownKind: "qdrant",
+        ownStore: "oc-demo",
+        ownPoints: 81_400,
+        ownComplete: true,
+        kiloCollection: null,
+      },
+    })
     harness.rpcFail = new Set(["settings.set"])
     const toggle = harness.layerFor("opencode.indexing.toggle").commands.find((c) => c.id === "opencode.indexing.toggle")
     assert.ok(toggle)
@@ -524,7 +620,7 @@ describe("tui plugin", () => {
 
     assert.ok(
       harness.toasts.some((toast) => toast.variant === "error"),
-      "a failed toggle must surface an error toast",
+      "a failed action must surface an error toast",
     )
   })
 

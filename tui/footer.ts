@@ -49,6 +49,23 @@ export interface FooterView {
   color: (palette: PagePalette) => PageColor
 }
 
+export type FooterAction = "start" | "pause" | "resume" | "restatus"
+
+export function footerAction(state: IndexingState): FooterAction {
+  switch (state) {
+    case "paused":
+      return "resume"
+    case "ready":
+      return "pause"
+    case "loading":
+    case "error":
+      return "restatus"
+    default:
+      // empty, stale, unavailable: there is something to index, so start it.
+      return "start"
+  }
+}
+
 const GLYPHS: Record<IndexingState, string> = {
   loading: "◌",
   paused: "⏸",
@@ -93,7 +110,7 @@ export function footerView(state: IndexingState): FooterView {
         state,
         glyph,
         label: "indexed",
-        detail: "index up to date; click to pause",
+        detail: "index up to date",
         color: (palette) => palette.success,
       }
     case "stale":
@@ -101,7 +118,7 @@ export function footerView(state: IndexingState): FooterView {
         state,
         glyph,
         label: "index stale",
-        detail: "needs a refresh; click to pause",
+        detail: "index needs a refresh",
         color: (palette) => palette.accent,
       }
     case "empty":
@@ -109,7 +126,7 @@ export function footerView(state: IndexingState): FooterView {
         state,
         glyph,
         label: "not indexed",
-        detail: "no own index yet; click to pause",
+        detail: "no own index yet",
         color: (palette) => palette.muted,
       }
     case "unavailable":

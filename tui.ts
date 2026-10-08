@@ -21,8 +21,9 @@ import { SETTINGS_PAGE_NAME, mountSettingsPage, type RouterLike } from "./tui/pa
 import { PAGE_KEYMAP, SettingsPageStore } from "./tui/page-store.ts"
 import type { ThemeLike } from "./tui/page-style.ts"
 import { PAGE_ACTIONS, PAGE_ROWS, type SettingsPageRpc } from "./tui/settings-page-data.ts"
-import { footerState, type IndexingState } from "./tui/footer.ts"
+import { footerAction, footerState } from "./tui/footer.ts"
 import { pagePalette } from "./tui/page-style.ts"
+import type { FooterHandle, FooterState } from "./tui/footer-view.tsx"
 
 /**
  * Navigable rows on the page.
@@ -611,16 +612,43 @@ const plugin = {
     // -------------------------------------------------------------------------
 
     /**
-     * Index status shown in the footer, cached.
+     * Reads the index status the footer shows.
      *
-     * The footer re-renders on every keystroke, so status is fetched on demand —
-     * on activation, on the refresh command, and after the toggle — never per
-     * render. `bump` makes the slot re-read the cache after each fetch.
+     * Fetched on demand — on activation, after every action, and on demand from
+     * a click — never per render: the footer repaints on every keystroke.
      */
-    let footer: { state: IndexingState; points: number | null } = { state: "loading", points: null }
+    /**
+     * Reads the index status the footer shows.
+     *
+     * Fetched on demand — on activation, after every action, and on demand from
+     * a click — never per render: the footer repaints on every keystroke.
+     */
     const palette = pagePalette(context.theme as unknown as ThemeLike)
 
-    const readFooterState = async (): Promise<{ state: IndexingState; points: number | null }> => {
+    /**
+     * Source of truth for the footer state.
+     *
+     * Deliberately a plain variable, not the reactive handle: the palette command
+     * runs the same action as a click, and it must work on hosts where the JSX
+     * footer never loaded. The handle is only the view.
+     */
+    let current: FooterState = { state: "loading", points: null }
+    let footerHandle: FooterHandle | undefined
+
+    const setFooter = (next: FooterState): void => {
+      current = next
+      footerHandle?.update(next)
+    }
+
+    const refreshFooter = async (): Promise<void> => {
+      try {
+        setFooter(await readFooterState())
+      } catch {
+        setFooter({ state: "error", points: null })
+      }
+    }
+
+    const readFooterState = async (): Promise<FooterState> => {
       const [status, settings] = await Promise.all([
         rpc()["status.get"]({ checkFreshness: false }),
         rpc()["settings.get"]({}),
@@ -636,24 +664,43 @@ const plugin = {
       }
     }
 
-    const refreshFooter = async (): Promise<void> => {
-      try {
-        footer = await readFooterState()
-      } catch {
-        footer = { state: "error", points: null }
-      }
-    }
 
-    /** Flips `enabled` for this workspace and re-reads the indicator. */
-    const toggleIndexing = async (): Promise<void> => {
+    /**
+     * What a click on the indicator does: start indexing, pause it, resume it, or
+     * just re-read the status. Long operations are not awaited before repainting:
+     * the footer flips to the in-progress state immediately and settles later.
+     */
+    const activateFooter = async (): Promise<void> => {
+      const action = footerAction(current.state)
       try {
-        const current = await loadSettings()
-        const next = current.enabled === false
-        await patchSettings({ enabled: next })
-        await refreshFooter()
-        toast(next ? "Indexing enabled" : "Indexing paused", "success")
+        if (action === "restatus") {
+          await refreshFooter()
+          return
+        }
+        if (action === "pause") {
+          await patchSettings({ enabled: false })
+          setFooter({ state: "paused", points: current.points })
+          toast("Indexing paused", "success")
+          return
+        }
+        if (action === "resume") {
+          await patchSettings({ enabled: true })
+          setFooter({ state: "stale", points: current.points })
+          toast("Indexing resumed", "success")
+          return
+        }
+        // start: make sure nothing is blocking writes, then index.
+        const settings = await loadSettings()
+        if (settings.enabled === false) await patchSettings({ enabled: true })
+        const summary =
+          current.state === "stale"
+            ? await rpc()["index.refresh"]({})
+            : await rpc()["index.build"]({ skipImport: false })
+        toast(summary.summary, "success")
       } catch (error) {
         fail(error)
+      } finally {
+        await refreshFooter()
       }
     }
 
@@ -666,19 +713,16 @@ const plugin = {
     })
 
     if (footerModule) {
+      footerHandle = footerModule.createFooterIndicator({ state: "loading", points: null }, palette, () => void activateFooter())
       context.ui.slot({
         append: "prompt.footer",
-        render: (input) =>
-          footerModule.FooterIndicator({
-            state: footer.state,
-            points: footer.points,
-            showDetails: input.showDetails,
-            palette,
-            onToggle: () => void toggleIndexing(),
-          }),
+        render: (input) => footerHandle?.render(input),
       })
-      await refreshFooter()
     }
+
+    // Read the status even when there is no indicator to show: the palette command
+    // runs the same action as a click, and it must work on hosts without JSX.
+    await refreshFooter()
 
     context.keymap.layer(() => ({
       mode: "global",
@@ -686,15 +730,15 @@ const plugin = {
       commands: [
         {
           id: "opencode.indexing.toggle",
-          title: "Indexing: toggle indexing for this workspace",
-          description: "Pause or resume writing the own index; search keeps working either way",
+          title: "Indexing: start, pause or resume indexing",
+          description: "Same action as clicking the footer indicator; search keeps working while paused",
           group: "Indexing",
           palette: true,
           // No default binding: the id is stable, so a key can be assigned in cli.json
           // if the user wants one that works outside the settings page.
           bind: false,
           enabled: () => true,
-          run: () => void toggleIndexing(),
+          run: () => void activateFooter(),
         },
       ],
     }))
