@@ -1,0 +1,80 @@
+{
+  "name": "opencode-indexing",
+  "version": "1.0.0",
+  "description": "OpenCode plugin: semantic code search that reuses Kilo Code indexes (Qdrant/LanceDB) and maintains its own independent index",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "semantic-search",
+    "code-search",
+    "codebase-indexing",
+    "embeddings",
+    "qdrant",
+    "lancedb",
+    "kilo-code"
+  ],
+  "exports": {
+    ".": "./index.ts",
+    "./rpc": "./src/rpc.ts",
+    "./tui": "./tui.ts"
+  },
+  "files": [
+    "index.ts",
+    "tui.ts",
+    "tui",
+    "src",
+    "install.mjs",
+    "install.sh",
+    "install.ps1",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test:unit": "node --test \"test/*.test.ts\"",
+    "test": "npm run typecheck && npm run test:unit"
+  },
+  "engines": {
+    "node": ">=22.6"
+  },
+  "dependencies": {
+    "ignore": "^7.0.5"
+  },
+  "optionalDependencies": {
+    "@lancedb/lancedb": "0.26.2",
+    "tree-sitter-wasms": "0.1.13",
+    "web-tree-sitter": "0.25.10"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "2.0.23",
+    "@opencode/theme": "^2.0.23",
+    "@opentui/core": "^0.5.14",
+    "@opentui/solid": "^0.5.14",
+    "@types/node": "^24.0.0",
+    "solid-js": "^1.9.12",
+    "typescript": "^5.8.2"
+  },
+  "peerDependencies": {
+    "@opencode/theme": ">=2.0.23",
+    "@opentui/core": ">=0.5.14",
+    "@opentui/solid": ">=0.5.14",
+    "solid-js": ">=1.9.12"
+  },
+  "peerDependenciesMeta": {
+    "@opencode/theme": {
+      "optional": true
+    },
+    "@opentui/core": {
+      "optional": true
+    },
+    "@opentui/solid": {
+      "optional": true
+    },
+    "solid-js": {
+      "optional": true
+    }
+  }
+}

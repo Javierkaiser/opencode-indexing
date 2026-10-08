@@ -1,0 +1,89 @@
+import * as assert from "node:assert/strict"
+import { describe, test } from "node:test"
+
+import { footerState, footerText, footerView, formatPoints, type IndexingState } from "../tui/footer.ts"
+import { pagePalette, type PagePalette } from "../tui/page-style.ts"
+
+const PALETTE: PagePalette = pagePalette(undefined)
+
+describe("formatPoints", () => {
+  test("keeps the footer short", () => {
+    assert.equal(formatPoints(0), "0")
+    assert.equal(formatPoints(999), "999")
+    assert.equal(formatPoints(1_000), "1.0k")
+    assert.equal(formatPoints(81_360), "81.4k")
+    assert.equal(formatPoints(2_500_000), "2.5M")
+  })
+
+  test("never prints NaN for nonsense", () => {
+    assert.equal(formatPoints(Number.NaN), "?")
+    assert.equal(formatPoints(-1), "?")
+  })
+})
+
+describe("footerState", () => {
+  test("paused wins over everything else", () => {
+    assert.equal(
+      footerState({ enabled: false, ownPoints: 100, ownComplete: true, hasKilo: true }),
+      "paused",
+    )
+    assert.equal(footerState({ enabled: false, ownPoints: null, ownComplete: null, hasKilo: false }), "paused")
+  })
+
+  test("a complete own index is ready", () => {
+    assert.equal(footerState({ enabled: true, ownPoints: 81_360, ownComplete: true, hasKilo: false }), "ready")
+  })
+
+  test("an incomplete own index is stale", () => {
+    assert.equal(footerState({ enabled: true, ownPoints: 81_360, ownComplete: false, hasKilo: false }), "stale")
+    assert.equal(footerState({ enabled: true, ownPoints: 5, ownComplete: null, hasKilo: false }), "stale")
+  })
+
+  test("nothing indexed falls back to whether Kilo can be read", () => {
+    assert.equal(footerState({ enabled: true, ownPoints: null, ownComplete: null, hasKilo: true }), "empty")
+    assert.equal(footerState({ enabled: true, ownPoints: null, ownComplete: null, hasKilo: false }), "unavailable")
+  })
+})
+
+describe("footerView", () => {
+  test("gives every state a distinct glyph and a non-empty label", () => {
+    const states: IndexingState[] = ["loading", "paused", "ready", "stale", "empty", "unavailable", "error"]
+    const glyphs = new Set<string>()
+    for (const state of states) {
+      const view = footerView(state)
+      assert.ok(view.glyph.length > 0, `${state} needs a glyph`)
+      assert.ok(view.label.length > 0, `${state} needs a label`)
+      assert.ok(view.detail.length > 0, `${state} needs a detail line`)
+      glyphs.add(view.glyph)
+    }
+    assert.equal(glyphs.size, states.length, "glyphs must be distinguishable at a glance")
+  })
+
+  test("colors come from the palette rather than being hardcoded", () => {
+    assert.equal(footerView("ready").color(PALETTE), PALETTE.success)
+    assert.equal(footerView("stale").color(PALETTE), PALETTE.accent)
+    assert.equal(footerView("error").color(PALETTE), PALETTE.error)
+    assert.equal(footerView("paused").color(PALETTE), PALETTE.muted)
+  })
+})
+
+describe("footerText", () => {
+  test("compact form is glyph plus label", () => {
+    assert.equal(footerText(footerView("ready"), false, 81_360), "● indexed")
+  })
+
+  test("detailed form adds the point count and the explanation", () => {
+    const text = footerText(footerView("ready"), true, 81_360)
+    assert.ok(text.startsWith("● indexed"))
+    assert.ok(text.includes("81.4k"))
+    assert.ok(text.includes("index up to date"))
+  })
+
+  test("omits the point count when there is nothing indexed", () => {
+    assert.equal(footerText(footerView("empty"), true, null), "○ not indexed  no own index yet")
+  })
+
+  test("omits a zero count rather than showing 0", () => {
+    assert.equal(footerText(footerView("stale"), true, 0), "◐ index stale  index needs a refresh")
+  })
+})
