@@ -84,7 +84,7 @@ The terminal footer shows whether the current workspace is indexed, in one glyph
 | `⏸ paused` | Indexing paused: nothing is written or refreshed |
 | `!` / `◌` | The status could not be read / is still loading |
 
-*Indexing: toggle indexing for this workspace* in the command palette — or `/indexing-config set enabled false` — pauses it. Pausing leaves `indexing_search` working (it still reads Kilo's index), but `indexing_build`, `indexing_refresh`, `indexing_import` and auto-refresh refuse to write until you resume. The toggle command has a stable id, so a key can be assigned in `cli.json` if you want one outside the settings page.
+*Indexing: start, pause or resume indexing* in the command palette — or `/indexing-config set enabled false` — controls it. The footer is a status line only: the host's `prompt.footer` slot exposes no interaction surface, so it is not clickable. Pausing leaves `indexing_search` working (it still reads Kilo's index), but `indexing_build`, `indexing_refresh`, `indexing_import` and auto-refresh refuse to write until you resume. The command has a stable id, so a key can be assigned in `cli.json`.
 
 ### Editing settings
 

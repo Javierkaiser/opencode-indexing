@@ -15,15 +15,16 @@
  * resolves the real package (documented layout: `tui.ts` beside `index.ts`).
  */
 import type { Plugin } from "@opencode/plugin/tui"
+import type { JSX } from "@opentui/solid"
 
 import { IndexingRpc } from "./src/rpc.ts"
 import { SETTINGS_PAGE_NAME, mountSettingsPage, type RouterLike } from "./tui/page-mount.ts"
 import { PAGE_KEYMAP, SettingsPageStore } from "./tui/page-store.ts"
 import type { ThemeLike } from "./tui/page-style.ts"
 import { PAGE_ACTIONS, PAGE_ROWS, type SettingsPageRpc } from "./tui/settings-page-data.ts"
-import { footerAction, footerState } from "./tui/footer.ts"
+import { footerAction, footerState, type IndexingState } from "./tui/footer.ts"
 import { pagePalette } from "./tui/page-style.ts"
-import type { FooterHandle, FooterState } from "./tui/footer-view.tsx"
+import type { FooterState } from "./tui/footer-view.tsx"
 
 /**
  * Navigable rows on the page.
@@ -612,32 +613,27 @@ const plugin = {
     // -------------------------------------------------------------------------
 
     /**
-     * Reads the index status the footer shows.
-     *
-     * Fetched on demand — on activation, after every action, and on demand from
-     * a click — never per render: the footer repaints on every keystroke.
-     */
-    /**
-     * Reads the index status the footer shows.
-     *
-     * Fetched on demand — on activation, after every action, and on demand from
-     * a click — never per render: the footer repaints on every keystroke.
-     */
-    const palette = pagePalette(context.theme as unknown as ThemeLike)
-
-    /**
      * Source of truth for the footer state.
      *
-     * Deliberately a plain variable, not the reactive handle: the palette command
-     * runs the same action as a click, and it must work on hosts where the JSX
-     * footer never loaded. The handle is only the view.
+     * A plain variable, and the view is rebuilt by re-registering the slot: a new
+     * mount always repaints, whereas relying on the host to re-run `render` for a
+     * changed signal depends on behaviour the SDK does not promise for footer
+     * slots.
      */
     let current: FooterState = { state: "loading", points: null }
-    let footerHandle: FooterHandle | undefined
+    let unmountFooter: (() => void) | undefined
+    let buildFooter: ((props: { state: IndexingState; points: number | null }) => JSX.Element) | undefined
 
     const setFooter = (next: FooterState): void => {
       current = next
-      footerHandle?.update(next)
+      const build = buildFooter
+      if (!build) return
+      // Dispose before re-registering: the host keys slots by plugin and path.
+      unmountFooter?.()
+      unmountFooter = context.ui.slot({
+        append: "prompt.footer",
+        render: () => build({ state: current.state, points: current.points }),
+      })
     }
 
     const refreshFooter = async (): Promise<void> => {
@@ -713,14 +709,8 @@ const plugin = {
     })
 
     if (footerModule) {
-      const handle = footerModule.createFooterIndicator({ state: "loading", points: null }, palette, () =>
-        void activateFooter(),
-      )
-      footerHandle = handle
-      context.ui.slot({
-        append: "prompt.footer",
-        render: () => handle.render(),
-      })
+      buildFooter = (props) =>
+        footerModule.buildFooter({ ...props, palette: pagePalette(context.theme as unknown as ThemeLike) })
     }
 
     // Read the status even when there is no indicator to show: the palette command
@@ -734,7 +724,7 @@ const plugin = {
         {
           id: "opencode.indexing.toggle",
           title: "Indexing: start, pause or resume indexing",
-          description: "Same action as clicking the footer indicator; search keeps working while paused",
+          description: "Start, pause or resume indexing; search keeps working while paused",
           group: "Indexing",
           palette: true,
           // No default binding: the id is stable, so a key can be assigned in cli.json
