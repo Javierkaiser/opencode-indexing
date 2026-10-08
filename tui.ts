@@ -42,10 +42,10 @@ type RpcClient = {
   "settings.set": (input: { patch: Record<string, unknown> }) => Promise<{ settings: SettingsView }>
   "settings.test": (input: { target: "qdrant" | "lancedb" | "provider" | "kilo" }) => Promise<{ ok: boolean; message: string }>
   "kilo.discover": () => Promise<{ sources: Array<{ kind: string; name: string; pointsCount: number | null; compatible: boolean; profile: string | null }> }>
-  "status.get": (input: { checkFreshness?: boolean }) => Promise<{ summary: string; recommendation: string; ownKind: string; ownStore: string; ownPoints?: number | null; ownComplete?: boolean | null; kiloCollection?: string | null }>
-  "index.build": (input: { rebuild?: boolean; skipImport?: boolean }) => Promise<{ summary: string }>
-  "index.refresh": (input: { maxFiles?: number }) => Promise<{ summary: string }>
-  "index.import": (input: { source?: string; rebuild?: boolean }) => Promise<{ summary: string }>
+  "status.get": (input: { checkFreshness?: boolean; directory?: string }) => Promise<{ summary: string; recommendation: string; ownKind: string; ownStore: string; ownPoints?: number | null; ownComplete?: boolean | null; kiloCollection?: string | null; directory?: string }>
+  "index.build": (input: { rebuild?: boolean; skipImport?: boolean; directory?: string }) => Promise<{ summary: string }>
+  "index.refresh": (input: { maxFiles?: number; directory?: string }) => Promise<{ summary: string }>
+  "index.import": (input: { source?: string; rebuild?: boolean; directory?: string }) => Promise<{ summary: string }>
 }
 
 interface SettingsView {
@@ -404,7 +404,7 @@ const plugin = {
       toast("Running…", "info")
       try {
         if (action === "refresh") {
-          const result = await rpc()["index.refresh"]({})
+          const result = await rpc()["index.refresh"]({ directory: workspace() })
           toast(result.summary, "success")
         } else if (action === "build") {
           const result = await rpc()["index.build"]({})
@@ -487,6 +487,16 @@ const plugin = {
       const route = context.ui.router?.current?.()
       return route?.type === "plugin" && route.name === SETTINGS_PAGE_NAME
     }
+
+    /**
+     * The workspace the caller is working in.
+     *
+     * The server plugin serves its own instance directory, so every RPC that
+     * reads or writes an index must be told which workspace it is about. Without
+     * this the footer would report — and the palette command would index — the
+     * service's directory instead of the user's.
+     */
+    const workspace = (): string | undefined => context.location?.directory
 
     /** Opens the dialog editor, holding the page keys off for its duration. */
     async function openEditor(): Promise<void> {
@@ -646,7 +656,7 @@ const plugin = {
 
     const readFooterState = async (): Promise<FooterState> => {
       const [status, settings] = await Promise.all([
-        rpc()["status.get"]({ checkFreshness: false }),
+        rpc()["status.get"]({ checkFreshness: false, directory: workspace() }),
         rpc()["settings.get"]({}),
       ])
       return {
@@ -699,8 +709,8 @@ const plugin = {
         toast("Indexing started…", "info")
         const summary =
           from.state === "stale"
-            ? await rpc()["index.refresh"]({})
-            : await rpc()["index.build"]({ skipImport: false })
+            ? await rpc()["index.refresh"]({ directory: workspace() })
+            : await rpc()["index.build"]({ skipImport: false, directory: workspace() })
         toast(summary.summary, "success")
       } catch (error) {
         fail(error)

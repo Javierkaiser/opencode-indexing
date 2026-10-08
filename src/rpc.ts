@@ -9,6 +9,16 @@ import type { Rpc } from "@opencode/plugin/rpc"
 
 const empty = { type: "object", properties: {}, additionalProperties: false } as const
 
+/**
+ * Optional workspace the call is about.
+ *
+ * The server plugin is instantiated for the directory the service runs in, so a
+ * caller working elsewhere (the TUI opened in another folder) must say which
+ * workspace it means. Without this, the footer would report — and index — the
+ * service's directory rather than the user's current one.
+ */
+const directoryShape = { directory: { type: "string" } } as const
+
 const settingsShape = {
   type: "object",
   properties: {
@@ -93,7 +103,7 @@ export const IndexingRpc = {
     "status.get": {
       input: {
         type: "object",
-        properties: { checkFreshness: { type: "boolean" } },
+        properties: { checkFreshness: { type: "boolean" }, ...directoryShape },
         additionalProperties: false,
       },
       output: {
@@ -106,6 +116,7 @@ export const IndexingRpc = {
           ownComplete: { type: ["boolean", "null"] },
           kiloCollection: { type: ["string", "null"] },
           recommendation: { type: "string" },
+          workspace: { type: "string" },
         },
         required: ["summary", "recommendation"],
         additionalProperties: true,
@@ -114,19 +125,19 @@ export const IndexingRpc = {
     "index.build": {
       input: {
         type: "object",
-        properties: { rebuild: { type: "boolean" }, skipImport: { type: "boolean" } },
+        properties: { rebuild: { type: "boolean" }, skipImport: { type: "boolean" }, ...directoryShape },
         additionalProperties: false,
       },
       output: { type: "object", properties: { summary: { type: "string" } }, required: ["summary"], additionalProperties: true },
     },
     "index.refresh": {
-      input: { type: "object", properties: { maxFiles: { type: "number" } }, additionalProperties: false },
+      input: { type: "object", properties: { maxFiles: { type: "number" }, ...directoryShape }, additionalProperties: false },
       output: { type: "object", properties: { summary: { type: "string" } }, required: ["summary"], additionalProperties: true },
     },
     "index.import": {
       input: {
         type: "object",
-        properties: { source: { type: "string" }, rebuild: { type: "boolean" } },
+        properties: { source: { type: "string" }, rebuild: { type: "boolean" }, ...directoryShape },
         additionalProperties: false,
       },
       output: { type: "object", properties: { summary: { type: "string" } }, required: ["summary"], additionalProperties: true },

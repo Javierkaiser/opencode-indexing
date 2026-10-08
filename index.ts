@@ -104,6 +104,18 @@ const plugin = {
   id: "opencode.indexing",
   async setup(ctx: Plugin.Context): Promise<void> {
     const root = ctx.location.directory as string
+
+    /**
+     * Workspace a call is about.
+     *
+     * Callers that run somewhere else — the TUI opened in another folder — pass
+     * their directory, and everything for that call (status, index, import) uses
+     * it. Falls back to the instance's own directory.
+     */
+    const rootFor = (input: unknown): string => {
+      const directory = (input as { directory?: string } | undefined)?.directory
+      return typeof directory === "string" && directory.trim() !== "" ? directory : root
+    }
     const options = (ctx.options ?? {}) as unknown as PluginOptionsInput
     const kv: KVStore = createPluginStorage(ctx.storage as never)
     const getSettings = (): Promise<IndexingSettings> => Promise.resolve(resolveSettings(options))
@@ -208,16 +220,17 @@ const plugin = {
      * Shared with the `index.import` RPC so the command and the tools cannot
      * disagree about which source gets picked or what the summary says.
      */
-    async function runImport(wanted?: string): Promise<string> {
+    async function runImport(wantedDirectory?: string, wanted?: string): Promise<string> {
       const settings = await getSettings()
+      const workspace = wantedDirectory ?? root
       if (settings.enabled === false) {
         throw new Error("Indexing is paused for this workspace. Re-enable it first: `set enabled=true`")
       }
-      const store = createOwnStore(settings, root)
+      const store = createOwnStore(settings, workspace)
       const dimension = settings.dimension || (await store.info()).profile?.dimension || 0
       if (!dimension) throw new Error("Embedding dimension unknown")
       const targetProfile = { provider: settings.provider, modelId: settings.modelId, dimension }
-      const sources = await discoverKiloSources(root, { qdrant: createSettingsQdrant(settings), targetProfile })
+      const sources = await discoverKiloSources(workspace, { qdrant: createSettingsQdrant(settings), targetProfile })
       const source = wanted
         ? sources.find((item) => item.name === wanted)
         : (sources.find((item) => item.compatible) ?? sources[0])
@@ -225,7 +238,7 @@ const plugin = {
       if (!source.compatible) throw new Error(`Source ${source.name} has an incompatible embedding profile`)
       await store.ensure(dimension, targetProfile)
       const report = await importFromKilo({
-        root,
+        root: workspace,
         source,
         target: store,
         targetProfile,
@@ -387,7 +400,7 @@ const plugin = {
         "status.get": async (input: unknown) => {
           const settings = await getSettings()
           const status = await getStatus(
-            { qdrant: createSettingsQdrant(settings), kv, root, settings },
+            { qdrant: createSettingsQdrant(settings), kv, root: rootFor(input), settings },
             { checkFreshness: (input as { checkFreshness?: boolean }).checkFreshness === true },
           )
           const summary = [
@@ -405,13 +418,14 @@ const plugin = {
             ownComplete: status.own.complete,
             kiloCollection: status.kilo.collection,
             recommendation: status.recommendation,
+            workspace: rootFor(input),
           }
         },
 
         "index.build": async (input: unknown) => {
           const settings = await getSettings()
           const report = await runIndex(
-            { kv, root, settings, qdrant: createSettingsQdrant(settings) },
+            { kv, root: rootFor(input), settings, qdrant: createSettingsQdrant(settings) },
             {
               mode: "build",
               rebuild: (input as { rebuild?: boolean }).rebuild === true,
@@ -424,14 +438,14 @@ const plugin = {
         "index.refresh": async (input: unknown) => {
           const settings = await getSettings()
           const report = await runIndex(
-            { kv, root, settings, qdrant: createSettingsQdrant(settings) },
+            { kv, root: rootFor(input), settings, qdrant: createSettingsQdrant(settings) },
             { mode: "refresh", maxFiles: (input as { maxFiles?: number }).maxFiles },
           )
           return { summary: summarizeReport(report) }
         },
 
         "index.import": async (input: unknown) => {
-          return { summary: await runImport((input as { source?: string }).source) }
+          return { summary: await runImport((input as { directory?: string }).directory, (input as { source?: string }).source) }
         },
       } as never)
     } catch (error) {

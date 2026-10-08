@@ -556,6 +556,39 @@ describe("tui plugin", () => {
     assert.equal(countCalls(harness, "index.build"), 0, "resuming must not kick off a build")
   })
 
+  test("index actions name the workspace, so they never default to the service directory", async () => {
+    const harness = await setupPlugin({
+      status: {
+        summary: "incomplete",
+        recommendation: "",
+        ownKind: "qdrant",
+        ownStore: "oc-demo",
+        ownPoints: 571,
+        ownComplete: false,
+        kiloCollection: null,
+      },
+    })
+    const toggle = harness.layerFor("opencode.indexing.toggle").commands.find((c) => c.id === "opencode.indexing.toggle")
+    assert.ok(toggle)
+
+    await toggle.run?.()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // Without the directory the server would resolve its own instance root, so the
+    // footer could report one workspace and the action would write another.
+    const refresh = harness.calls.find((call) => call.method === "index.refresh") as
+      | { input: { directory?: string } }
+      | undefined
+    assert.ok(refresh, "an incomplete index must trigger a refresh")
+    assert.equal(refresh.input.directory, "D:\\Proyectos", "the caller's workspace must be sent")
+
+    const status = harness.calls
+      .filter((call) => call.method === "status.get")
+      .map((call) => call as { input: { directory?: string } })
+    assert.ok(status.length > 0, "the footer must also read status for that workspace")
+    assert.equal(status[status.length - 1].input.directory, "D:\\Proyectos")
+  })
+
   test("the footer action refreshes a stale index instead of pausing it", async () => {
     const harness = await setupPlugin({
       status: {
@@ -574,7 +607,7 @@ describe("tui plugin", () => {
     await toggle.run?.()
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    assertCalledWith(harness, "index.refresh", {})
+    assertCalledWith(harness, "index.refresh", { directory: "D:\\Proyectos" })
     assert.equal(countCalls(harness, "settings.set"), 0, "a stale index needs a refresh, not a pause")
     assert.equal(countCalls(harness, "index.build"), 0, "a stale index must never trigger a full rebuild")
   })
@@ -597,7 +630,7 @@ describe("tui plugin", () => {
     await toggle.run?.()
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    assertCalledWith(harness, "index.build", { skipImport: false })
+    assertCalledWith(harness, "index.build", { skipImport: false, directory: "D:\\Proyectos" })
   })
 
   test("the footer action reports a failure instead of silently doing nothing", async () => {
