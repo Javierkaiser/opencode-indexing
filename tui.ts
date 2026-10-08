@@ -713,10 +713,13 @@ const plugin = {
     })
 
     if (footerModule) {
-      footerHandle = footerModule.createFooterIndicator({ state: "loading", points: null }, palette, () => void activateFooter())
+      const handle = footerModule.createFooterIndicator({ state: "loading", points: null }, palette, () =>
+        void activateFooter(),
+      )
+      footerHandle = handle
       context.ui.slot({
         append: "prompt.footer",
-        render: (input) => footerHandle?.render(input),
+        render: () => handle.render(),
       })
     }
 

@@ -156,7 +156,13 @@ export function footerView(state: IndexingState): FooterView {
   }
 }
 
-/** The text rendered in the footer, glyph included. */
+/**
+ * The text rendered in the footer.
+ *
+ * The footer itself always uses the compact form (`showDetails: false`): it is a
+ * status line, and the longer explanation belongs in `/indexing`. The detailed
+ * form is kept for callers that have room for it.
+ */
 export function footerText(view: FooterView, showDetails: boolean, points?: number | null): string {
   const parts = [`${view.glyph} ${view.label}`]
   if (showDetails && points !== undefined && points !== null && points > 0) {

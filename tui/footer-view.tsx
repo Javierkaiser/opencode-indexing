@@ -2,12 +2,12 @@
 /**
  * JSX wrapper for the prompt-footer index indicator.
  *
- * Two pieces:
- *  - `createFooterIndicator` owns the reactive state. The host re-renders a slot
- *    when the signals read inside its `render` change, so the displayed text has
- *    to come from a signal — a plain captured variable updates the data but never
- *    repaints, which is what made the indicator look frozen after a toggle.
- *  - `FooterIndicator` renders one snapshot, for tests and direct use.
+ * The slot content builds the `<text>` directly instead of delegating to a child
+ * component: with a nested component the click stopped reaching the handler, and
+ * the direct form is the one verified to work in the TUI.
+ *
+ * State lives in a Solid signal so the host re-renders the slot when it changes
+ * — a plain variable would update the data but never repaint.
  *
  * The mouse handler is passed as a renderable *option* (`onMouseDown`), not as
  * `on:mousedown`: the reconciler turns the latter into emitter subscriptions, but
@@ -25,45 +25,21 @@ export interface FooterState {
   points: number | null
 }
 
-export interface FooterIndicatorProps extends FooterState {
-  /** Footer verbosity, from the host's slot input. */
-  showDetails: boolean
-  palette: PagePalette
-  /** Called on click: start, pause or resume indexing. */
-  onActivate: () => void
-}
-
-export function FooterIndicator(props: FooterIndicatorProps): JSX.Element {
-  const view = footerView(props.state)
-  return (
-    <text
-      fg={view.color(props.palette)}
-      onMouseDown={(event: MouseEvent) => {
-        // The footer belongs to the host: stop here so the click does not keep
-        // bubbling into whatever the host binds on that row.
-        event.stopPropagation()
-        props.onActivate()
-      }}
-    >
-      {footerText(view, props.showDetails, props.points)}
-    </text>
-  )
-}
-
 export interface FooterHandle {
-  /** Hand this to `ui.slot().render`. Reactive: reads the state signal. */
-  render: (input: { showDetails: boolean }) => JSX.Element
-  /** Publishes a new state, which repaints the footer. */
+  /** Hand this to `ui.slot().render`. Reads the state signal, so it repaints. */
+  render: () => JSX.Element
+  /** Publishes a new state. */
   update: (next: FooterState) => void
   /** Current state, readable for assertions. */
   current: () => FooterState
 }
 
 /**
- * Creates the reactive footer bound to a palette and an action callback.
+ * Creates the reactive footer.
  *
- * The action is passed in rather than derived here so this module stays free of
- * RPC knowledge: what a click means is decided in `tui.ts`.
+ * Always renders the compact form (glyph + state): the footer is a status line,
+ * and the detail lives in `/indexing`. `onActivate` is the click action, passed
+ * in so this module stays free of RPC knowledge.
  */
 export function createFooterIndicator(
   initial: FooterState,
@@ -72,15 +48,23 @@ export function createFooterIndicator(
 ): FooterHandle {
   const [state, setState] = createSignal<FooterState>(initial)
   return {
-    render: (input) => (
-      <FooterIndicator
-        state={state().state}
-        points={state().points}
-        showDetails={input.showDetails}
-        palette={palette}
-        onActivate={onActivate}
-      />
-    ),
+    render: () => {
+      const snapshot = state()
+      const view = footerView(snapshot.state)
+      return (
+        <text
+          fg={view.color(palette)}
+          onMouseDown={(event: MouseEvent) => {
+            // The footer belongs to the host: stop here so the click does not keep
+            // bubbling into whatever the host binds on that row.
+            event.stopPropagation()
+            onActivate()
+          }}
+        >
+          {footerText(view, false)}
+        </text>
+      )
+    },
     update: (next) => setState(next),
     current: state,
   }
