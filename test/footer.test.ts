@@ -61,6 +61,12 @@ describe("footerAction", () => {
     assert.equal(footerAction("loading"), "restatus")
     assert.equal(footerAction("error"), "restatus")
   })
+
+  test("a run in flight is not restartable", () => {
+    // Without this, selecting the command twice would start two concurrent runs.
+    assert.equal(footerAction("working"), "restatus")
+    assert.match(footerText(footerView("working"), false), /indexing/)
+  })
 })
 
 describe("footerView", () => {

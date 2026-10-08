@@ -576,6 +576,7 @@ describe("tui plugin", () => {
 
     assertCalledWith(harness, "index.refresh", {})
     assert.equal(countCalls(harness, "settings.set"), 0, "a stale index needs a refresh, not a pause")
+    assert.equal(countCalls(harness, "index.build"), 0, "a stale index must never trigger a full rebuild")
   })
 
   test("the footer action builds when there is no index at all", async () => {

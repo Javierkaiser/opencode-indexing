@@ -14,6 +14,8 @@ import type { PageColor, PagePalette } from "./page-style.ts"
 export type IndexingState =
   /** Status not fetched yet. */
   | "loading"
+  /** An index run is in flight. */
+  | "working"
   /** Indexing paused by the user (`enabled: false`). */
   | "paused"
   /** Own index exists and is complete. */
@@ -58,6 +60,7 @@ export function footerAction(state: IndexingState): FooterAction {
     case "ready":
       return "pause"
     case "loading":
+    case "working":
     case "error":
       return "restatus"
     default:
@@ -68,6 +71,7 @@ export function footerAction(state: IndexingState): FooterAction {
 
 const GLYPHS: Record<IndexingState, string> = {
   loading: "◌",
+  working: "◍",
   paused: "⏸",
   ready: "●",
   stale: "◐",
@@ -104,6 +108,14 @@ export function footerView(state: IndexingState): FooterView {
         label: "paused",
         detail: "click to resume indexing",
         color: (palette) => palette.muted,
+      }
+    case "working":
+      return {
+        state,
+        glyph,
+        label: "indexing…",
+        detail: "an index run is in progress",
+        color: (palette) => palette.accent,
       }
     case "ready":
       return {

@@ -667,7 +667,12 @@ const plugin = {
      * the footer flips to the in-progress state immediately and settles later.
      */
     const activateFooter = async (): Promise<void> => {
-      const action = footerAction(current.state)
+      // While a run is in flight the state is "working", whose action is
+      // "restatus", so a second selection cannot start a concurrent run.
+      // Snapshot it: `setFooter` below reassigns `current`, and the branch that
+      // decides between refresh and build must see the state we started from.
+      const from = current
+      const action = footerAction(from.state)
       try {
         if (action === "restatus") {
           await refreshFooter()
@@ -675,21 +680,25 @@ const plugin = {
         }
         if (action === "pause") {
           await patchSettings({ enabled: false })
-          setFooter({ state: "paused", points: current.points })
+          setFooter({ state: "paused", points: from.points })
           toast("Indexing paused", "success")
           return
         }
         if (action === "resume") {
           await patchSettings({ enabled: true })
-          setFooter({ state: "stale", points: current.points })
+          setFooter({ state: "stale", points: from.points })
           toast("Indexing resumed", "success")
           return
         }
         // start: make sure nothing is blocking writes, then index.
         const settings = await loadSettings()
         if (settings.enabled === false) await patchSettings({ enabled: true })
+        // Say something before awaiting: a build or refresh takes minutes, and
+        // without this the command looks like it did nothing at all.
+        setFooter({ state: "working", points: from.points })
+        toast("Indexing started…", "info")
         const summary =
-          current.state === "stale"
+          from.state === "stale"
             ? await rpc()["index.refresh"]({})
             : await rpc()["index.build"]({ skipImport: false })
         toast(summary.summary, "success")
