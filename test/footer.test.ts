@@ -77,13 +77,14 @@ describe("footerText", () => {
     assert.ok(text.startsWith("● indexed"))
     assert.ok(text.includes("81.4k"))
     assert.ok(text.includes("index up to date"))
+    assert.ok(text.includes("click to pause"), "the detail must advertise the click affordance")
   })
 
   test("omits the point count when there is nothing indexed", () => {
-    assert.equal(footerText(footerView("empty"), true, null), "○ not indexed  no own index yet")
+    assert.match(footerText(footerView("empty"), true, null), /not indexed {2}no own index yet; click to pause$/)
   })
 
   test("omits a zero count rather than showing 0", () => {
-    assert.equal(footerText(footerView("stale"), true, 0), "◐ index stale  index needs a refresh")
+    assert.match(footerText(footerView("stale"), true, 0), /index stale {2}needs a refresh; click to pause$/)
   })
 })

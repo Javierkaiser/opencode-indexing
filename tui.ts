@@ -674,6 +674,7 @@ const plugin = {
             points: footer.points,
             showDetails: input.showDetails,
             palette,
+            onToggle: () => void toggleIndexing(),
           }),
       })
       await refreshFooter()

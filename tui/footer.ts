@@ -85,7 +85,7 @@ export function footerView(state: IndexingState): FooterView {
         state,
         glyph,
         label: "paused",
-        detail: "indexing paused",
+        detail: "click to resume indexing",
         color: (palette) => palette.muted,
       }
     case "ready":
@@ -93,7 +93,7 @@ export function footerView(state: IndexingState): FooterView {
         state,
         glyph,
         label: "indexed",
-        detail: "index up to date",
+        detail: "index up to date; click to pause",
         color: (palette) => palette.success,
       }
     case "stale":
@@ -101,7 +101,7 @@ export function footerView(state: IndexingState): FooterView {
         state,
         glyph,
         label: "index stale",
-        detail: "index needs a refresh",
+        detail: "needs a refresh; click to pause",
         color: (palette) => palette.accent,
       }
     case "empty":
@@ -109,7 +109,7 @@ export function footerView(state: IndexingState): FooterView {
         state,
         glyph,
         label: "not indexed",
-        detail: "no own index yet",
+        detail: "no own index yet; click to pause",
         color: (palette) => palette.muted,
       }
     case "unavailable":
