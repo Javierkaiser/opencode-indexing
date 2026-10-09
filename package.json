@@ -1,8 +1,17 @@
 {
-  "name": "opencode-indexing",
-  "version": "1.0.0",
+  "name": "@javierkaiser/opencode-indexing",
+  "version": "0.1.0",
   "description": "OpenCode plugin: semantic code search that reuses Kilo Code indexes (Qdrant/LanceDB) and maintains its own independent index",
   "license": "MIT",
+  "author": "Carlos Javier Lust <javierkaiser@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Javierkaiser/opencode-indexing.git"
+  },
+  "homepage": "https://github.com/Javierkaiser/opencode-indexing#readme",
+  "bugs": {
+    "url": "https://github.com/Javierkaiser/opencode-indexing/issues"
+  },
   "type": "module",
   "keywords": [
     "opencode",
@@ -30,7 +39,8 @@
     "install.ps1",
     "README.md",
     "LICENSE",
-    "THIRD_PARTY_NOTICES.md"
+    "THIRD_PARTY_NOTICES.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -39,6 +49,9 @@
   },
   "engines": {
     "node": ">=22.6"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "ignore": "^7.0.5"
@@ -58,12 +71,16 @@
     "typescript": "^5.8.2"
   },
   "peerDependencies": {
+    "@opencode/plugin": ">=2.0.0",
     "@opencode/theme": ">=2.0.23",
     "@opentui/core": ">=0.5.14",
     "@opentui/solid": ">=0.5.14",
     "solid-js": ">=1.9.12"
   },
   "peerDependenciesMeta": {
+    "@opencode/plugin": {
+      "optional": true
+    },
     "@opencode/theme": {
       "optional": true
     },
