@@ -109,10 +109,10 @@ describe("activeWorkspace", () => {
       { sessionID: "ses-work", active: true },
     ],
     sessions: () => [
-      { id: "ses-home", location: { directory: "C:\\Users\\clust" } },
+      { id: "ses-home", location: { directory: "C:\\Users\\dev" } },
       { id: "ses-work", location: { directory: "D:\\Proyectos\\opencode-indexing" } },
     ],
-    instanceDirectory: () => "C:\\Users\\clust",
+    instanceDirectory: () => "C:\\Users\\dev",
     ...overrides,
   })
 
@@ -125,7 +125,7 @@ describe("activeWorkspace", () => {
   })
 
   test("ignores the tabs that are not focused", () => {
-    assert.equal(activeWorkspace(sources({ tabs: () => [{ sessionID: "ses-home", active: false }] })), "C:\\Users\\clust")
+    assert.equal(activeWorkspace(sources({ tabs: () => [{ sessionID: "ses-home", active: false }] })), "C:\\Users\\dev")
     assert.equal(
       activeWorkspace(
         sources({
@@ -135,7 +135,7 @@ describe("activeWorkspace", () => {
           ],
         }),
       ),
-      "C:\\Users\\clust",
+      "C:\\Users\\dev",
     )
   })
 
@@ -151,21 +151,21 @@ describe("activeWorkspace", () => {
           },
         }),
       ),
-      "C:\\Users\\clust",
+      "C:\\Users\\dev",
     )
     assert.equal(sessionReads, 0, "with tabs off the session list is not even consulted")
   })
 
   test("falls back when the host names no directory for the active tab", () => {
-    assert.equal(activeWorkspace(sources({ tabs: () => [] })), "C:\\Users\\clust", "no focused tab")
+    assert.equal(activeWorkspace(sources({ tabs: () => [] })), "C:\\Users\\dev", "no focused tab")
     assert.equal(
-      activeWorkspace(sources({ sessions: () => [{ id: "ses-home", location: { directory: "C:\\Users\\clust" } }] })),
-      "C:\\Users\\clust",
+      activeWorkspace(sources({ sessions: () => [{ id: "ses-home", location: { directory: "C:\\Users\\dev" } }] })),
+      "C:\\Users\\dev",
       "the active tab's session is not loaded yet",
     )
     assert.equal(
       activeWorkspace(sources({ sessions: () => [{ id: "ses-work" }] })),
-      "C:\\Users\\clust",
+      "C:\\Users\\dev",
       "the session carries no location",
     )
   })

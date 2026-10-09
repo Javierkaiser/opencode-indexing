@@ -626,7 +626,7 @@ describe("tui plugin", () => {
       sessions: [
         // Same shape as the live host: the instance directory is the home the
         // service was started in, and the tabs are where the work happens.
-        { id: "ses-home", location: { directory: "C:\\Users\\clust" } },
+        { id: "ses-home", location: { directory: "C:\\Users\\dev" } },
         { id: "ses-work", location: { directory: "D:\\Proyectos\\opencode-indexing" } },
       ],
     })
