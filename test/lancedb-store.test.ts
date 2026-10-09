@@ -5,6 +5,14 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 
+/**
+ * `@lancedb/lancedb` is an optional dependency, so its suites are skipped when
+ * the native module is not installed instead of failing the whole run.
+ */
+const lanceUnavailable = await import("@lancedb/lancedb")
+  .then(() => false as const)
+  .catch(() => "optional @lancedb/lancedb is not installed")
+
 import { createLanceDbStore, lanceDbName, readLanceDbBatch, readLanceDbInfoAt } from "../src/lancedb-store.ts"
 import type { EmbeddingProfile, QdrantPoint } from "../src/types.ts"
 import type { ExportBatch } from "../src/vector-store.ts"
@@ -73,7 +81,7 @@ describe("lanceDbName", () => {
   })
 })
 
-describe("ensure / info", () => {
+describe("ensure / info", { skip: lanceUnavailable }, () => {
   test("creates the db with schema and profile metadata, then validates on re-ensure", async () => {
     const name = uniqueName("ensure")
     const s = store(name)
@@ -124,7 +132,7 @@ describe("ensure / info", () => {
   })
 })
 
-describe("upsert / search", () => {
+describe("upsert / search", { skip: lanceUnavailable }, () => {
   test("stores points and finds the exact vector with its payload", async () => {
     const name = uniqueName("search")
     const s = store(name)
@@ -198,7 +206,7 @@ describe("upsert / search", () => {
   })
 })
 
-describe("deleteByFilePaths", () => {
+describe("deleteByFilePaths", { skip: lanceUnavailable }, () => {
   test("removes only the points of the given files", async () => {
     const name = uniqueName("delete")
     const s = store(name)
@@ -226,7 +234,7 @@ describe("deleteByFilePaths", () => {
   })
 })
 
-describe("deleteAll", () => {
+describe("deleteAll", { skip: lanceUnavailable }, () => {
   test("clears both tables but keeps the database usable", async () => {
     const name = uniqueName("clear")
     const s = store(name)
@@ -259,7 +267,7 @@ describe("deleteAll", () => {
   })
 })
 
-describe("markComplete", () => {
+describe("markComplete", { skip: lanceUnavailable }, () => {
   test("persists the completion flag and profile", async () => {
     const name = uniqueName("complete")
     const s = store(name)
@@ -280,7 +288,7 @@ describe("markComplete", () => {
   })
 })
 
-describe("exportBatch", () => {
+describe("exportBatch", { skip: lanceUnavailable }, () => {
   test("paginates via the numeric cursor and round-trips vectors exactly", async () => {
     const name = uniqueName("export")
     const s = store(name)
@@ -321,7 +329,7 @@ describe("exportBatch", () => {
   })
 })
 
-describe("readLanceDbInfoAt / readLanceDbBatch", () => {
+describe("readLanceDbInfoAt / readLanceDbBatch", { skip: lanceUnavailable }, () => {
   test("read a created store through the standalone helpers", async () => {
     const name = uniqueName("readonly")
     const s = store(name)

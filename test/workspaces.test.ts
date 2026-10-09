@@ -1,4 +1,5 @@
 import * as assert from "node:assert/strict"
+import * as fs from "node:fs"
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
@@ -112,7 +113,13 @@ describe("workspace registry", () => {
 
   test("an unwritable config dir degrades to an empty registry", () => {
     const previous = process.env.XDG_CONFIG_HOME
-    process.env.XDG_CONFIG_HOME = "NUL:\\unwritable"
+    // A path whose parent is a FILE cannot be created on any platform, and it
+    // does not rely on permissions, so it holds when the tests run as root.
+    // (The previous `NUL:\unwritable` was a Windows-only trick: on POSIX it is
+    // an ordinary relative path and the write succeeded.)
+    const blocker = path.join(os.tmpdir(), `oi-blocker-${Date.now()}`)
+    fs.writeFileSync(blocker, "not a directory")
+    process.env.XDG_CONFIG_HOME = path.join(blocker, "nested")
     try {
       assert.deepEqual(readWorkspaces(), [])
       assert.equal(forgetWorkspace("oc-1a06d5eeba99bff7"), false)
@@ -120,6 +127,7 @@ describe("workspace registry", () => {
       assert.deepEqual(readWorkspaces(), [], "a failed write never throws and never reports")
     } finally {
       process.env.XDG_CONFIG_HOME = previous
+      fs.rmSync(blocker, { force: true })
     }
   })
 })

@@ -41,25 +41,38 @@ log(`  to:   ${dest}`)
 // ---------------------------------------------------------------------------
 // 1. Copy plugin files (keep a previously installed node_modules in place)
 // ---------------------------------------------------------------------------
-const EXCLUDE = new Set([
-  "node_modules",
-  "test",
-  ".git",
-  ".gitignore",
-  "package-lock.json",
-  "install.mjs",
-  "install.ps1",
-  "install.sh",
-])
+/**
+ * Entries copied into the plugin directory.
+ *
+ * An allowlist rather than a blocklist: a blocklist copied whatever local debris
+ * happened to be in the working tree — a stray `test-run.log` was shipped into
+ * every install. This mirrors the `files` field in package.json, minus the
+ * installers, which are not needed inside an installed plugin.
+ */
+const COPY_ENTRIES = [
+  "index.ts",
+  "tui.ts",
+  "tui",
+  "src",
+  "package.json",
+  "tsconfig.json",
+  "README.md",
+  "LICENSE",
+  "THIRD_PARTY_NOTICES.md",
+]
 
 mkdirSync(dest, { recursive: true })
 for (const entry of readdirSync(dest)) {
   if (entry === "node_modules") continue
   rmSync(join(dest, entry), { recursive: true, force: true })
 }
-for (const entry of readdirSync(source)) {
-  if (EXCLUDE.has(entry) || entry === "node_modules") continue
-  cpSync(join(source, entry), join(dest, entry), { recursive: true })
+for (const entry of COPY_ENTRIES) {
+  const from = join(source, entry)
+  if (!existsSync(from)) {
+    warn(`  skipping missing entry: ${entry}`)
+    continue
+  }
+  cpSync(from, join(dest, entry), { recursive: true })
 }
 log("  files copied")
 

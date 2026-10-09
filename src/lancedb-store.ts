@@ -97,9 +97,17 @@ function wrapNativeError(operation: string, dbPath: string, error: unknown): Err
 // Naming
 // ---------------------------------------------------------------------------
 
-/** Database directory name for a workspace: `<basename>-<sha256(root)[0:16]>` (mirrors Kilo). */
+/**
+ * Database directory name for a workspace: `<basename>-<sha256(root)[0:16]>`
+ * (mirrors Kilo).
+ *
+ * The basename is taken over both separators: `path.basename` only knows the
+ * host's convention, so on Linux a Windows-style root would keep its whole path
+ * and produce a directory name containing backslashes.
+ */
 export function lanceDbName(root: string): string {
-  return `${path.basename(root)}-${workspaceHash(root).slice(0, 16)}`
+  const base = root.split(/[\\/]/).filter((segment) => segment.length > 0).pop() ?? "workspace"
+  return `${base}-${workspaceHash(root).slice(0, 16)}`
 }
 
 // ---------------------------------------------------------------------------
