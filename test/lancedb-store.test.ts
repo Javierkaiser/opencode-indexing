@@ -23,7 +23,8 @@ import type { ExportBatch } from "../src/vector-store.ts"
  * once in `after()`.
  */
 
-const ROOT = "D:\\fake\\workspace"
+/** Absolute on the running OS: the delete path relativizes file paths against it. */
+const ROOT = process.platform === "win32" ? "D:\\fake\\workspace" : "/fake/workspace"
 const DIRECTORY = fs.mkdtempSync(path.join(os.tmpdir(), "oi-lance-"))
 
 const PROFILE: EmbeddingProfile = { provider: "openai", modelId: "text-embedding-3-small", dimension: 4 }
