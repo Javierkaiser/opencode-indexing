@@ -5,6 +5,7 @@ import {
   EDIT_ROW,
   PAGE_ACTIONS,
   PAGE_ROWS,
+  actionRowText,
   RELOAD_ROW,
   UNKNOWN_SETTINGS,
   actionById,
@@ -235,5 +236,29 @@ describe("PAGE_ROWS", () => {
   test("row titles never repeat, so the selection is unambiguous", () => {
     const titles = PAGE_ROWS.map((row) => row.title)
     assert.equal(new Set(titles).size, titles.length)
+  })
+})
+
+describe("actionRowText", () => {
+  test("shows only the title when the row is not selected", () => {
+    const row = PAGE_ROWS[0]
+    assert.equal(actionRowText(row, false), row.title)
+    assert.ok(!actionRowText(row, false).includes(row.description))
+  })
+
+  test("appends the description to the same string when selected", () => {
+    const row = PAGE_ROWS[0]
+    const text = actionRowText(row, true)
+    assert.ok(text.startsWith(row.title))
+    assert.ok(text.includes(row.description))
+    // One string, not two elements: mounting it separately made the host draw it
+    // over the title.
+    assert.equal(text.split("\n").length, 1)
+  })
+
+  test("covers every row without losing a description", () => {
+    for (const row of PAGE_ROWS) {
+      assert.ok(actionRowText(row, true).includes(row.description), `row ${row.row} lost its description`)
+    }
   })
 })

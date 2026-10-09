@@ -26,6 +26,7 @@ import {
   EDIT_ROW,
   PAGE_ACTIONS,
   PAGE_ROWS,
+  actionRowText,
   RELOAD_ROW,
   configRows,
   describeSource,
@@ -198,21 +199,22 @@ export function SettingsPage(props: SettingsPageProps): JSX.Element {
       </text>
       <For each={PAGE_ROWS}>
         {(entry) => (
+          // One element per text run, with the description appended to the title
+          // string instead of mounted conditionally: mounting a child into an
+          // already-laid-out column box left the description drawn over the title,
+          // so the selected row showed mangled text and lost its title.
           <box
-            flexDirection="column"
+            flexDirection="row"
+            gap={1}
             paddingLeft={1}
             backgroundColor={isSelected(entry.row) ? palette.selectedBg : undefined}
           >
-            <box flexDirection="row" gap={1}>
-              <text fg={isSelected(entry.row) ? palette.selectedFg : palette.muted}>
-                {isSelected(entry.row) ? SELECTED_MARKER : UNSELECTED_MARKER}
-              </text>
-              <text fg={isSelected(entry.row) ? palette.selectedFg : palette.value}>{entry.title}</text>
-            </box>
-            {/* Progressive disclosure: only the selected row explains itself. */}
-            <Show when={isSelected(entry.row)}>
-              <text fg={isSelected(entry.row) ? palette.selectedFg : palette.muted}>{`  ${entry.description}`}</text>
-            </Show>
+            <text fg={isSelected(entry.row) ? palette.selectedFg : palette.muted}>
+              {isSelected(entry.row) ? SELECTED_MARKER : UNSELECTED_MARKER}
+            </text>
+            <text fg={isSelected(entry.row) ? palette.selectedFg : palette.value}>
+              {actionRowText(entry, isSelected(entry.row))}
+            </text>
           </box>
         )}
       </For>

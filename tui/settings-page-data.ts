@@ -249,6 +249,17 @@ export interface PageRow {
 }
 
 /**
+ * Text of one action row.
+ *
+ * The description is appended to the title for the selected row only. It is part
+ * of the same string on purpose: mounting it as a second element made the host
+ * draw it over the title, mangling both.
+ */
+export function actionRowText(row: PageRow, selected: boolean): string {
+  return selected ? `${row.title} — ${row.description}` : row.title
+}
+
+/**
  * Every navigable row, in display order: the actions, then the dialog editor and
  * the manual reload. Lives here rather than in the JSX so the row model is
  * unit-testable and cannot drift from `PAGE_ACTIONS`.
