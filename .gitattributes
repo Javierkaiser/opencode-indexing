@@ -1,0 +1,3 @@
+# Keep line endings stable across platforms: the plugin ships POSIX shell
+# scripts and TypeScript/TSX sources, all of which are stored with LF.
+* text=auto eol=lf
