@@ -26,7 +26,7 @@ import { footerAction, footerState, type IndexingState } from "./tui/footer.ts"
 import { activeWorkspace, type WorkspaceSources } from "./tui/footer.ts"
 import { describeRow, forgetWorkspaceFlow, type WorkspacesRpc } from "./tui/workspaces.ts"
 import { pagePalette } from "./tui/page-style.ts"
-import type { FooterState } from "./tui/footer-view.tsx"
+import type { FooterHandle, FooterState } from "./tui/footer-view.tsx"
 
 /**
  * Navigable rows on the page.
@@ -685,35 +685,20 @@ const plugin = {
     /**
      * Source of truth for the footer state.
      *
-     * A plain variable, and the view is rebuilt by re-registering the slot: a new
-     * mount always repaints, whereas relying on the host to re-run `render` for a
-     * changed signal depends on behaviour the SDK does not promise for footer
-     * slots.
+     * A plain variable, not the handle: the palette command runs the same action
+     * as the indicator and must work on hosts where the JSX footer never loaded.
+     * The handle below is only the view, and mirrors this value.
      */
     let current: FooterState = { state: "loading", points: null }
     /** Directory `current` describes: the slot render fetches again only on change. */
     let requested: string | undefined
-    let unmountFooter: (() => void) | undefined
-    let buildFooter: ((props: { state: IndexingState; points: number | null }) => JSX.Element) | undefined
+    let footerHandle: FooterHandle | undefined
+
+    const currentFooter = (): FooterState => current
 
     const setFooter = (next: FooterState): void => {
       current = next
-      // Without a slot API there is nothing to repaint and nothing to watch; the
-      // state above is still read by the palette command.
-      if (typeof context.ui.slot !== "function") return
-      // Dispose before re-registering: the host keys slots by plugin and path.
-      unmountFooter?.()
-      unmountFooter = context.ui.slot({
-        append: "prompt.footer",
-        // The host runs `render` inside a computation, so reading the active tab
-        // here is reactive: switching to a tab in another directory re-runs it.
-        // The repaint is deferred because re-registering the slot from inside the
-        // running render would dispose the very computation doing the reading.
-        render: () => {
-          if (workspace() !== requested) queueMicrotask(() => void refreshFooter())
-          return buildFooter?.({ state: current.state, points: current.points }) ?? null
-        },
-      })
+      footerHandle?.update(next)
     }
 
     const refreshFooter = async (): Promise<void> => {
@@ -758,7 +743,7 @@ const plugin = {
       // "restatus", so a second selection cannot start a concurrent run.
       // Snapshot it: `setFooter` below reassigns `current`, and the branch that
       // decides between refresh and build must see the state we started from.
-      const from = current
+      const from = currentFooter()
       const action = footerAction(from.state)
       try {
         if (action === "restatus") {
@@ -805,8 +790,25 @@ const plugin = {
     })
 
     if (footerModule) {
-      buildFooter = (props) =>
-        footerModule.buildFooter({ ...props, palette: pagePalette(context.theme as unknown as ThemeLike) })
+      footerHandle = footerModule.createFooterIndicator(
+        { state: "loading", points: null },
+        pagePalette(context.theme as unknown as ThemeLike),
+      )
+    }
+
+    if (typeof context.ui.slot === "function") {
+      // Registered exactly once, for the life of the plugin. Re-registering per
+      // state change added a second claim to the host and the indicator rendered
+      // twice. The render reads the signal (repaints on state change) and the
+      // active tab (repaints on tab change); the fetch is deferred because
+      // re-entering the slot from inside its own running computation is not safe.
+      context.ui.slot({
+        append: "prompt.footer",
+        render: () => {
+          if (workspace() !== requested) queueMicrotask(() => void refreshFooter())
+          return footerHandle?.render() ?? null
+        },
+      })
     }
 
     // Read the status even when there is no indicator to show: the palette command

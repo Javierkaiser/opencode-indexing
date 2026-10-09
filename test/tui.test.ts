@@ -568,6 +568,32 @@ describe("tui plugin", () => {
     await harness.releaseDialog()
   })
 
+  test("the footer is claimed exactly once, however many state changes happen", async () => {
+    const harness = await setupPlugin({
+      status: {
+        summary: "ready",
+        recommendation: "",
+        ownKind: "qdrant",
+        ownStore: "oc-demo",
+        ownPoints: 100,
+        ownComplete: true,
+        kiloCollection: null,
+      },
+    })
+    // Registering a fresh claim per state change made the host render the
+    // indicator twice, so the count is the assertion that matters here.
+    assert.equal(harness.slots.length, 1, "the slot must be claimed once at setup")
+
+    const toggle = harness.layerFor("opencode.indexing.toggle").commands.find((c) => c.id === "opencode.indexing.toggle")
+    assert.ok(toggle)
+    await toggle.run?.()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await toggle.run?.()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    assert.equal(harness.slots.length, 1, "state changes must repaint the claim, not add another")
+  })
+
   test("setup survives a host without a JSX runtime and renders no footer content", async () => {
     const harness = await setupPlugin()
     // node --test cannot load .tsx, so the footer module rejects and no element
