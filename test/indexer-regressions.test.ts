@@ -68,6 +68,8 @@ class FakeStore implements VectorStoreAdapter {
   complete: boolean | null = null
   /** When set, `deleteByFilePaths` rejects to simulate a cleanup outage. */
   failDeletes = false
+  /** When set, `markComplete` rejects to simulate the store refusing the flag. */
+  failMarkComplete = false
 
   constructor(dbPath: string) {
     this.name = dbPath
@@ -120,6 +122,7 @@ class FakeStore implements VectorStoreAdapter {
   }
 
   async markComplete(_profile: EmbeddingProfile, complete: boolean) {
+    if (this.failMarkComplete) throw new Error("simulated markComplete outage")
     this.complete = complete
   }
 }
@@ -272,6 +275,28 @@ const successEmbedder = {
     return texts.map(() => [1, 0, 0, 0])
   },
 }
+
+describe("manifest and store agree about completion", () => {
+  test("a store that cannot record completion leaves both sides incomplete", async () => {
+    const root = makeWorkspace()
+    const store = new FakeStore(path.join(root, ".lancedb", "db"))
+    store.failMarkComplete = true
+    const kv = createMemoryStorage()
+    const settings = makeSettings(root)
+    writeFileSync(path.join(root, "src", "a.ts"), fileContent("a", 1))
+
+    const report = await runIndex({ kv, root, settings, store, embedder: successEmbedder }, { mode: "build", skipImport: true })
+
+    // The manifest must not claim a completion the store refused to record.
+    const manifest = await loadManifest(kv, root)
+    assert.equal(manifest?.complete, false, "the manifest must not claim a completion the store refused")
+    assert.notEqual(store.complete, true, "the store never accepted the flag")
+    assert.ok(
+      report.errors.some((error) => error.includes("mark complete")),
+      `the failure must be fatal: errors=${JSON.stringify(report.errors)}`,
+    )
+  })
+})
 
 describe("completion flag reflects fatal errors, not cleanup warnings", () => {
   test("a failing deleteByFilePaths still ends the run COMPLETE and reports a warning", async () => {

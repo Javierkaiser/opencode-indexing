@@ -371,15 +371,18 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
   manifest.lastRun = Date.now()
   // Only fatal errors (files left unindexed) mark the run incomplete; cleanup
   // warnings do not, because every file's fresh chunks were still upserted.
-  const complete = report.errors.length === 0
-  manifest.complete = complete
-  await saveManifest(kv, manifest)
-
+  let complete = report.errors.length === 0
+  // The store is told first, and the manifest is written from what the store
+  // accepted: if completion cannot be recorded there, the run must not claim it
+  // either, or the two disagree about the same run.
   try {
     await store.markComplete(profile, complete, dimension)
   } catch (error) {
     report.errors.push(`mark complete: ${error instanceof Error ? error.message : String(error)}`)
+    complete = false
   }
+  manifest.complete = complete
+  await saveManifest(kv, manifest)
 
   // Registry: a collection name is a one-way hash of the root, so remember the
   // mapping that makes the store nameable (and forgettable) later on. Recorded
