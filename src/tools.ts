@@ -3,6 +3,7 @@ import { searchCode } from "./search.ts"
 import { getStatus } from "./status.ts"
 import { discoverKiloSources, importFromKilo, type KiloSourceInfo } from "./import.ts"
 import { createOwnStore, createSettingsQdrant } from "./store-factory.ts"
+import { assessScope } from "./scope.ts"
 import type { IndexingSettings, KVStore } from "./types.ts"
 import type { Qdrant } from "./qdrant.ts"
 
@@ -81,6 +82,16 @@ function sourceLine(source: KiloSourceInfo): string {
   const complete = source.complete === true ? "complete" : source.complete === false ? "INCOMPLETE" : "unknown state"
   const compat = source.compatible ? "compatible" : "INCOMPATIBLE (different embedding profile)"
   return `${source.kind} ${source.name} — ${points} points, ${complete}, ${profile}, ${compat}`
+}
+
+/**
+ * Scope warning for the workspace being indexed, or `""` when it looks like a
+ * single project. Deliberately non-blocking: the operator decides.
+ */
+function scopeWarning(root: string): string {
+  const assessment = assessScope(root)
+  if (assessment.level !== "warn") return ""
+  return `Warning: ${root} is ${assessment.reason}. Indexing continues; scope the workspace to a single project for a smaller, sharper index.`
 }
 
 export function createTools(deps: ToolDeps): ToolDefinition[] {
@@ -201,7 +212,12 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
           },
           { mode: "refresh", maxFiles },
         )
-        return { output: formatReport("refresh", report), metadata: report as unknown as Record<string, unknown> }
+        const summary = formatReport("refresh", report)
+        const warning = scopeWarning(deps.root)
+        return {
+          output: warning ? `${warning}\n${summary}` : summary,
+          metadata: report as unknown as Record<string, unknown>,
+        }
       },
     },
     {
@@ -225,7 +241,12 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
           },
           { mode: "build", rebuild: input.rebuild === true, skipImport: input.skipImport === true },
         )
-        return { output: formatReport("build", report), metadata: report as unknown as Record<string, unknown> }
+        const summary = formatReport("build", report)
+        const warning = scopeWarning(deps.root)
+        return {
+          output: warning ? `${warning}\n${summary}` : summary,
+          metadata: report as unknown as Record<string, unknown>,
+        }
       },
     },
     {

@@ -52,9 +52,12 @@ export interface OwnSearchOptions {
   hnswEf?: number
 }
 
+/** Collections of the plugin's own index use this prefix (Kilo's use `ws-`). */
+export const OWN_COLLECTION_PREFIX = "oc-"
+
 /** Name of the plugin's collection for a workspace root. */
 export function ownCollectionName(root: string): string {
-  return `oc-${workspaceHash(root).slice(0, 16)}`
+  return `${OWN_COLLECTION_PREFIX}${workspaceHash(root).slice(0, 16)}`
 }
 
 /**

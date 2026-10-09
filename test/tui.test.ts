@@ -12,6 +12,7 @@ import { isDeepStrictEqual } from "node:util"
 import type { Plugin } from "@opencode/plugin/tui"
 
 import plugin from "../tui.ts"
+import type { WorkspaceSession, WorkspaceTab } from "../tui/footer.ts"
 import { SETTINGS_PAGE_NAME } from "../tui/page-mount.ts"
 import { PAGE_KEYMAP } from "../tui/page-store.ts"
 
@@ -100,6 +101,14 @@ interface HarnessOptions {
   }
   /** Overrides for the `index.*` summaries. */
   summaries?: Partial<Record<"build" | "refresh" | "import", string>>
+  /** Tabs the fake host reports open. The one with `active` is the focused tab. */
+  tabs?: WorkspaceTab[]
+  /** Sessions the fake client knows about, each with the directory it lives in. */
+  sessions?: WorkspaceSession[]
+  /** Whether the fake host reports session tabs as enabled. Defaults to enabled. */
+  tabsEnabled?: boolean
+  /** Publishes no slot tree at all, the way a host without a JSX runtime does. */
+  noSlotApi?: boolean
   /** Keep `dialog.select` pending until `releaseDialog()` is called. */
   holdDialogs?: boolean
 }
@@ -125,6 +134,10 @@ const DEFAULT_SETTINGS: SettingsView = {
  * Builds a fully fake `Plugin.Context`. Every RPC method is implemented so no
  * flow can crash; dialogs read from mutable queues and fall back to
  * `undefined` (select/prompt) or `false` (confirm) when a queue is exhausted.
+ *
+ * Tabs and sessions start empty, which is a host where tabs are enabled but
+ * none is focused: the workspace then falls back to `context.location`, so the
+ * fixtures that predate tabs keep asserting `D:\Proyectos`.
  */
 function makeHarness(options: HarnessOptions = {}) {
   const calls: RpcCall[] = []
@@ -135,6 +148,12 @@ function makeHarness(options: HarnessOptions = {}) {
   const prompts = [...(options.prompts ?? [])]
   const confirms = [...(options.confirms ?? [])]
   const settings: SettingsView = { ...DEFAULT_SETTINGS, ...options.settings }
+  const tabs: Array<{ sessionID: string; active: boolean }> = (options.tabs ?? []).map((tab) => ({
+    sessionID: tab.sessionID,
+    active: tab.active,
+  }))
+  const sessions = [...(options.sessions ?? [])]
+  let tabsEnabled = options.tabsEnabled ?? true
 
   const summary = (key: "build" | "refresh" | "import", fallback: string): string =>
     options.summaries?.[key] ?? fallback
@@ -188,6 +207,19 @@ function makeHarness(options: HarnessOptions = {}) {
   let releaseDialog: (() => void) | undefined
   const navigated: Array<{ type: string; name?: string }> = []
 
+  const claimSlot = (claim: {
+    append?: string
+    prepend?: string
+    before?: string
+    after?: string
+    replace?: string
+    render: (input: { showDetails: boolean }) => unknown
+  }): (() => void) => {
+    const placement = (["append", "prepend", "before", "after", "replace"] as const).find((key) => claim[key])
+    slots.push({ path: claim[placement ?? "append"] ?? "", placement: placement ?? "", render: claim.render })
+    return () => {}
+  }
+
   const ctx = {
     options: {},
     location: { directory: "D:\\Proyectos" },
@@ -205,7 +237,13 @@ function makeHarness(options: HarnessOptions = {}) {
           },
         }),
     },
-    data: { on: () => () => {}, listen: () => () => {} },
+    data: {
+      on: () => () => {},
+      listen: () => () => {},
+      session: {
+        list: () => sessions,
+      },
+    },
     theme: {},
     storage: {
       store: () => [{}, async () => {}] as const,
@@ -217,6 +255,12 @@ function makeHarness(options: HarnessOptions = {}) {
           toasts.push(record)
         },
       },
+      tabs: {
+        enabled: () => tabsEnabled,
+        list: () => tabs.map((tab) => ({ ...tab })),
+      },
+      // A host without a JSX runtime publishes no slot tree at all.
+      ...(options.noSlotApi ? {} : { slot: claimSlot }),
       router: {
         register: () => () => {},
         navigate: (destination: { type: string; name?: string }) => {
@@ -224,11 +268,6 @@ function makeHarness(options: HarnessOptions = {}) {
           route = destination
         },
         current: () => route,
-      },
-      slot: (claim: { append?: string; prepend?: string; before?: string; after?: string; replace?: string; render: (input: { showDetails: boolean }) => unknown }) => {
-        const placement = (["append", "prepend", "before", "after", "replace"] as const).find((key) => claim[key])
-        slots.push({ path: claim[placement ?? "append"] ?? "", placement: placement ?? "", render: claim.render })
-        return () => {}
       },
       dialog: {
         select: async (dialogOptions: Record<string, unknown>) => {
@@ -302,6 +341,24 @@ function makeHarness(options: HarnessOptions = {}) {
     setRoute(next: { type: string; id?: string; name?: string }): void {
       route = next
     },
+    /** Focuses one of the open tabs, the way the host does when the user picks it. */
+    setActiveTab(sessionID: string): void {
+      for (const tab of tabs) tab.active = tab.sessionID === sessionID
+    },
+    /** Reports session tabs as enabled or disabled, the way a host config does. */
+    setTabsEnabled(value: boolean): void {
+      tabsEnabled = value
+    },
+    /**
+     * Re-runs the live slot render, the way the host does when a signal that
+     * render read has changed. Only the last registration is live: `setFooter`
+     * disposes the previous one when it re-registers.
+     */
+    rerenderFooter(): void {
+      const slot = slots[slots.length - 1]
+      if (!slot) throw new Error("no footer slot was claimed")
+      slot.render({ showDetails: false })
+    },
     /**
      * Closes the held dialog and lets the awaiting menu continue. Waits for the
      * dialog to actually open first: commands are fire-and-forget, so the menu
@@ -351,6 +408,20 @@ function callIndex(harness: Harness, method: string, input: unknown): number {
 
 function countCalls(harness: Harness, method: string): number {
   return harness.calls.filter((call) => call.method === method).length
+}
+
+/** Workspace of every `status.get`, in call order. */
+function statusDirectories(harness: Harness): Array<string | undefined> {
+  return harness.calls
+    .filter((call) => call.method === "status.get")
+    .map((call) => (call as { input: { directory?: string } }).input.directory)
+}
+
+/** Waits for the footer's deferred repaint and its RPC round trip to land. */
+async function settle(): Promise<void> {
+  for (let tick = 0; tick < 5; tick++) {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -497,12 +568,98 @@ describe("tui plugin", () => {
     await harness.releaseDialog()
   })
 
-  test("setup survives a host without a JSX runtime and registers no footer slot", async () => {
+  test("setup survives a host without a JSX runtime and renders no footer content", async () => {
     const harness = await setupPlugin()
-    // node --test cannot load .tsx, so the footer module rejects. The plugin must
-    // keep working and simply claim no slot. The indicator's own logic is covered
-    // by test/footer.test.ts.
+    // node --test cannot load .tsx, so the footer module rejects and no element
+    // is ever built. The plugin must keep working: what it still claims is the
+    // reactive workspace watch the indicator needs (see the tab-switch test
+    // below), and its render yields nothing. The indicator's own logic is
+    // covered by test/footer.test.ts.
+    const live = harness.slots[harness.slots.length - 1]
+    assert.ok(live, "the workspace watch must still be claimed")
+    assert.equal(live.render({ showDetails: false }), null, "no indicator without the JSX runtime")
+    assert.equal(harness.toasts.filter((toast) => toast.variant === "error").length, 0)
+  })
+
+  test("setup survives a host with no slot tree at all", async () => {
+    const harness = await setupPlugin({ noSlotApi: true })
+
+    // Nothing to claim, so no indicator and no watch — but the status must still
+    // be read: the palette command runs the same action as a click, and it must
+    // work wherever the footer cannot be rendered.
     assert.deepEqual(harness.slots, [])
+    assertCalledWith(harness, "status.get", { checkFreshness: false, directory: "D:\\Proyectos" })
+  })
+
+  test("the footer names the ACTIVE tab's workspace, not the plugin instance directory", async () => {
+    const harness = await setupPlugin({
+      tabs: [
+        { sessionID: "ses-home", active: false },
+        { sessionID: "ses-work", active: true },
+      ],
+      sessions: [
+        // Same shape as the live host: the instance directory is the home the
+        // service was started in, and the tabs are where the work happens.
+        { id: "ses-home", location: { directory: "C:\\Users\\clust" } },
+        { id: "ses-work", location: { directory: "D:\\Proyectos\\opencode-indexing" } },
+      ],
+    })
+
+    assertCalledWith(harness, "status.get", {
+      checkFreshness: false,
+      directory: "D:\\Proyectos\\opencode-indexing",
+    })
+  })
+
+  test("the footer falls back to the instance directory when tabs are disabled", async () => {
+    const harness = await setupPlugin({
+      tabsEnabled: false,
+      tabs: [{ sessionID: "ses-work", active: true }],
+      sessions: [{ id: "ses-work", location: { directory: "D:\\Proyectos\\opencode-indexing" } }],
+    })
+
+    // Tabs switched off means the host never told us where the user is, so the
+    // instance directory stays the only directory there is to name.
+    assertCalledWith(harness, "status.get", { checkFreshness: false, directory: "D:\\Proyectos" })
+  })
+
+  test("switching to a tab in another directory re-reads that workspace", async () => {
+    const harness = await setupPlugin({
+      tabs: [
+        { sessionID: "ses-here", active: true },
+        { sessionID: "ses-there", active: false },
+      ],
+      sessions: [
+        { id: "ses-here", location: { directory: "D:\\Proyectos" } },
+        { id: "ses-there", location: { directory: "D:\\Proyectos\\other" } },
+      ],
+    })
+    assert.deepEqual(statusDirectories(harness), ["D:\\Proyectos"])
+
+    harness.setActiveTab("ses-there")
+    // The host re-runs the slot render when a signal it read has changed.
+    harness.rerenderFooter()
+    await settle()
+
+    // One fetch for the new workspace, and none for the old one again: the
+    // comparison against the last fetched directory is what keeps the footer
+    // from polling the server on every repaint.
+    assert.deepEqual(statusDirectories(harness), [
+      "D:\\Proyectos",
+      "D:\\Proyectos\\other",
+    ])
+  })
+
+  test("repainting without a workspace change does not re-read the status", async () => {
+    const harness = await setupPlugin({
+      tabs: [{ sessionID: "ses-here", active: true }],
+      sessions: [{ id: "ses-here", location: { directory: "D:\\Proyectos\\opencode-indexing" } }],
+    })
+
+    harness.rerenderFooter()
+    await settle()
+
+    assert.deepEqual(statusDirectories(harness), ["D:\\Proyectos\\opencode-indexing"])
   })
 
   test("the footer action pauses a healthy index", async () => {

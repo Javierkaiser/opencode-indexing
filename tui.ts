@@ -23,6 +23,8 @@ import { PAGE_KEYMAP, SettingsPageStore } from "./tui/page-store.ts"
 import type { ThemeLike } from "./tui/page-style.ts"
 import { PAGE_ACTIONS, PAGE_ROWS, type SettingsPageRpc } from "./tui/settings-page-data.ts"
 import { footerAction, footerState, type IndexingState } from "./tui/footer.ts"
+import { activeWorkspace, type WorkspaceSources } from "./tui/footer.ts"
+import { describeRow, forgetWorkspaceFlow, type WorkspacesRpc } from "./tui/workspaces.ts"
 import { pagePalette } from "./tui/page-style.ts"
 import type { FooterState } from "./tui/footer-view.tsx"
 
@@ -90,6 +92,41 @@ const plugin = {
     async function patchSettings(patch: Record<string, unknown>): Promise<SettingsView> {
       const response = await rpc()["settings.set"]({ patch })
       return response.settings
+    }
+
+    /**
+     * Lists indexed workspaces and forgets the chosen one.
+     *
+     * Confirms first: dropping a collection loses the index and re-indexing costs
+     * embedding credits. The directory name is shown in both prompts, never the
+     * raw collection hash alone.
+     */
+    async function manageWorkspaces(): Promise<void> {
+      try {
+        const summary = await forgetWorkspaceFlow(
+          rpc() as unknown as WorkspacesRpc,
+          async (rows) => {
+            const choice = await context.ui.dialog.select({
+              title: "Forget an indexed workspace",
+              options: rows.map((row) => ({
+                title: row.root ?? `unknown (${row.store})`,
+                value: row.store,
+                description: describeRow(row),
+              })),
+            })
+            return rows.find((row) => row.store === choice)
+          },
+          async (row) =>
+            (await context.ui.dialog.confirm({
+              title: "Forget this index?",
+              message: `${row.root ?? row.store} — the collection is deleted and re-indexing it later costs embedding credits.`,
+              label: { confirm: "Forget", cancel: "Keep" },
+            })) === true,
+        )
+        toast(summary, "info")
+      } catch (error) {
+        fail(error)
+      }
     }
 
     async function mainMenu(): Promise<void> {
@@ -165,6 +202,12 @@ const plugin = {
             description: "Edit JSON directly for advanced options",
             category: "Info",
           },
+          {
+            title: "Indexed workspaces…",
+            value: "workspaces",
+            description: "List the directories with an index, and forget one",
+            category: "Info",
+          },
         ],
       })
 
@@ -200,6 +243,9 @@ const plugin = {
           break
         case "file":
           toast(`Edit: ${settings.settingsFile}`, "info")
+          break
+        case "workspaces":
+          await manageWorkspaces()
           break
         default:
           break
@@ -494,9 +540,23 @@ const plugin = {
      * The server plugin serves its own instance directory, so every RPC that
      * reads or writes an index must be told which workspace it is about. Without
      * this the footer would report — and the palette command would index — the
-     * service's directory instead of the user's.
+     * service's directory instead of the user's: the ACTIVE tab is what follows
+     * the user, and the instance directory is the fallback for a host with tabs
+     * switched off.
+     *
+     * Every accessor is optional: a host may expose neither `ui.tabs` nor
+     * `data.session`, and resolving the workspace must degrade rather than
+     * throw. Read from a reactive context (the footer slot render) the lookups
+     * re-run when the host's tab or session state changes.
      */
-    const workspace = (): string | undefined => context.location?.directory
+    const workspaceSources: WorkspaceSources = {
+      tabsEnabled: () => context.ui.tabs?.enabled?.() === true,
+      tabs: () => context.ui.tabs?.list?.() ?? [],
+      sessions: () => context.data?.session?.list?.() ?? [],
+      instanceDirectory: () => context.location?.directory,
+    }
+
+    const workspace = (): string | undefined => activeWorkspace(workspaceSources)
 
     /** Opens the dialog editor, holding the page keys off for its duration. */
     async function openEditor(): Promise<void> {
@@ -631,32 +691,50 @@ const plugin = {
      * slots.
      */
     let current: FooterState = { state: "loading", points: null }
+    /** Directory `current` describes: the slot render fetches again only on change. */
+    let requested: string | undefined
     let unmountFooter: (() => void) | undefined
     let buildFooter: ((props: { state: IndexingState; points: number | null }) => JSX.Element) | undefined
 
     const setFooter = (next: FooterState): void => {
       current = next
-      const build = buildFooter
-      if (!build) return
+      // Without a slot API there is nothing to repaint and nothing to watch; the
+      // state above is still read by the palette command.
+      if (typeof context.ui.slot !== "function") return
       // Dispose before re-registering: the host keys slots by plugin and path.
       unmountFooter?.()
       unmountFooter = context.ui.slot({
         append: "prompt.footer",
-        render: () => build({ state: current.state, points: current.points }),
+        // The host runs `render` inside a computation, so reading the active tab
+        // here is reactive: switching to a tab in another directory re-runs it.
+        // The repaint is deferred because re-registering the slot from inside the
+        // running render would dispose the very computation doing the reading.
+        render: () => {
+          if (workspace() !== requested) queueMicrotask(() => void refreshFooter())
+          return buildFooter?.({ state: current.state, points: current.points }) ?? null
+        },
       })
     }
 
     const refreshFooter = async (): Promise<void> => {
+      const directory = workspace()
+      // Recorded before awaiting, so an answer that arrives after the user moved
+      // on is discarded instead of clobbering the newer workspace.
+      requested = directory
       try {
-        setFooter(await readFooterState())
+        // Repaint before the round trip: a workspace switch must not leave the
+        // previous directory's state on screen while the new one is read.
+        setFooter({ state: "loading", points: null })
+        const next = await readFooterState(directory)
+        if (requested === directory) setFooter(next)
       } catch {
-        setFooter({ state: "error", points: null })
+        if (requested === directory) setFooter({ state: "error", points: null })
       }
     }
 
-    const readFooterState = async (): Promise<FooterState> => {
+    const readFooterState = async (directory: string | undefined): Promise<FooterState> => {
       const [status, settings] = await Promise.all([
-        rpc()["status.get"]({ checkFreshness: false, directory: workspace() }),
+        rpc()["status.get"]({ checkFreshness: false, directory }),
         rpc()["settings.get"]({}),
       ])
       return {
@@ -669,7 +747,6 @@ const plugin = {
         points: status.ownPoints ?? null,
       }
     }
-
 
     /**
      * What a click on the indicator does: start indexing, pause it, resume it, or

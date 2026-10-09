@@ -21,6 +21,7 @@ import { createTextAttributes } from "@opentui/core"
 import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js"
 
 import { LABEL_COLUMN, SELECTED_MARKER, UNSELECTED_MARKER, pagePalette } from "./page-style.ts"
+import { describeRow } from "./workspaces.ts"
 import {
   EDIT_ROW,
   PAGE_ACTIONS,
@@ -169,6 +170,27 @@ export function SettingsPage(props: SettingsPageProps): JSX.Element {
             </box>
           )}
         </For>
+      </Show>
+
+      <Show when={(data()?.workspaces.rows ?? []).length > 0}>
+        <text fg={palette.muted} attributes={HEADING}>
+          Indexed workspaces
+        </text>
+        <For each={data()?.workspaces.rows ?? []}>
+          {(row) => (
+            <box flexDirection="row" gap={2}>
+              <text fg={row.root === null ? palette.error : palette.accent} width={2}>
+                {row.root === null ? "?" : "•"}
+              </text>
+              <text fg={palette.value}>{describeRow(row)}</text>
+            </box>
+          )}
+        </For>
+        <Show when={(data()?.workspaces.unknownCount ?? 0) > 0}>
+          <text fg={palette.muted}>
+            Rows marked ? predate the registry, so their directory is unknown. Press e to forget one.
+          </text>
+        </Show>
       </Show>
 
       <text fg={palette.muted} attributes={HEADING}>

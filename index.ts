@@ -21,6 +21,8 @@ import { getStatus } from "./src/status.ts"
 import { discoverKiloSources, importFromKilo } from "./src/import.ts"
 import { createOwnStore, createSettingsQdrant } from "./src/store-factory.ts"
 import { createEmbedder } from "./src/embedder.ts"
+import { getOwnStoreInfo, OWN_COLLECTION_PREFIX, type OwnStoreInfo } from "./src/own-store.ts"
+import { forgetWorkspace, readWorkspaces } from "./src/workspaces.ts"
 import { IndexingRpc } from "./src/rpc.ts"
 import {
   COMMAND_USAGE,
@@ -29,6 +31,28 @@ import {
   parseIndexingCommand,
 } from "./src/settings-commands.ts"
 import type { IndexingSettings, KVStore } from "./src/types.ts"
+import type { Qdrant } from "./src/qdrant.ts"
+
+/** One row of `workspaces.list`; the contract lives in `src/rpc.ts`. */
+interface WorkspaceListRow {
+  store: string
+  root: string | null
+  points: number | null
+  complete: boolean | null
+  profile: string | null
+  updatedAt: string | null
+  source: "registry" | "collection"
+}
+
+/** Points and completion state of one own collection; null when unreadable. */
+async function readOwnCollectionInfo(client: Qdrant, store: string): Promise<OwnStoreInfo | null> {
+  try {
+    return await getOwnStoreInfo(client, store)
+  } catch {
+    // Raced with a deletion, or the collection vanished mid-listing.
+    return null
+  }
+}
 
 const SKILL_CONTENT = `# Semantic code search (opencode-indexing)
 
@@ -247,6 +271,82 @@ const plugin = {
       return `Imported ${report.imported} chunks from ${report.source.kind} ${report.source.name} · ${report.batches} batches · 0 embedding calls`
     }
 
+    /**
+     * Every workspace the server has an own index for.
+     *
+     * Qdrant only knows the hashed collection name, so the registry written
+     * after each run is what maps `oc-<hash16>` back to a directory. Collections
+     * without a record are listed as well: they hold indexed points, so they
+     * must stay visible and forgettable. An unreachable Qdrant costs the point
+     * counts, never the list itself.
+     */
+    async function listWorkspaces(): Promise<{ workspaces: WorkspaceListRow[] }> {
+      const settings = await getSettings()
+      const client = createSettingsQdrant(settings)
+      let collections: string[] = []
+      try {
+        collections = await client.listCollections()
+      } catch {
+        collections = []
+      }
+      const records = new Map(readWorkspaces().map((record) => [record.store, record]))
+
+      const workspaces: WorkspaceListRow[] = []
+      for (const store of collections.filter((name) => name.startsWith(OWN_COLLECTION_PREFIX)).sort()) {
+        const record = records.get(store)
+        const info = await readOwnCollectionInfo(client, store)
+        workspaces.push({
+          store,
+          root: record?.root ?? null,
+          points: info?.pointsCount ?? null,
+          // A recorded workspace is described by its record; completeness is a
+          // property of the collection alone, reported for unidentified rows.
+          complete: record ? null : (info?.complete ?? null),
+          profile: record?.profile ?? null,
+          updatedAt: record?.updatedAt ?? null,
+          source: record ? "registry" : "collection",
+        })
+      }
+
+      // Named directories first (alphabetical), unidentified collections after.
+      workspaces.sort((left, right) => {
+        if (left.root !== null && right.root !== null) return left.root.localeCompare(right.root)
+        if (left.root !== null) return -1
+        if (right.root !== null) return 1
+        return left.store.localeCompare(right.store)
+      })
+      return { workspaces }
+    }
+
+    /**
+     * Drop one own collection and forget its registry entry.
+     *
+     * Only `oc-` names are accepted: those are the plugin's own, nothing else in
+     * Qdrant may be deleted from here. A collection that is already gone is not
+     * an error — the registry entry is stale bookkeeping worth removing anyway.
+     */
+    async function forgetOwnWorkspace(store: string): Promise<{ summary: string; pointsDeleted: number | null }> {
+      const name = store.trim()
+      if (!name.startsWith(OWN_COLLECTION_PREFIX) || name.length === OWN_COLLECTION_PREFIX.length) {
+        throw new Error(`Only the plugin's own collections (${OWN_COLLECTION_PREFIX}…) can be forgotten, not "${store}"`)
+      }
+      const settings = await getSettings()
+      const client = createSettingsQdrant(settings)
+      const record = readWorkspaces().find((entry) => entry.store === name)
+      const label = record ? `${record.root} (${name})` : name
+
+      const info = await readOwnCollectionInfo(client, name)
+      if (info) await client.deleteCollection(name)
+      const forgotten = forgetWorkspace(name)
+
+      if (!info && !forgotten) {
+        return { summary: `Nothing to forget for ${label}: no such collection and no registry entry.`, pointsDeleted: null }
+      }
+      const parts = [info ? `${info.pointsCount} points deleted` : "collection did not exist"]
+      if (forgotten) parts.push("registry entry removed")
+      return { summary: `Forgot ${label}: ${parts.join(", ")}.`, pointsDeleted: info?.pointsCount ?? null }
+    }
+
     /** Renders the configuration report used by `show` and by the bare form. */
     async function renderConfigReport(): Promise<string> {
       const settings = await getSettings()
@@ -446,6 +546,14 @@ const plugin = {
 
         "index.import": async (input: unknown) => {
           return { summary: await runImport((input as { directory?: string }).directory, (input as { source?: string }).source) }
+        },
+
+        "workspaces.list": async () => {
+          return listWorkspaces()
+        },
+
+        "workspace.forget": async (input: unknown) => {
+          return forgetOwnWorkspace((input as { store?: string }).store ?? "")
         },
       } as never)
     } catch (error) {

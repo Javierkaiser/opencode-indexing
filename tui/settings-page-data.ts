@@ -7,6 +7,7 @@
  */
 
 import type { SettingsPageStore } from "./page-store.ts"
+import { loadWorkspaces, type WorkspaceRow, type WorkspacesView } from "./workspaces.ts"
 import type { ThemeLike } from "./page-style.ts"
 
 export interface SettingsView {
@@ -50,6 +51,8 @@ export interface SettingsPageRpc {
   "index.build": (input: { rebuild?: boolean; skipImport?: boolean }) => Promise<{ summary: string }>
   "index.refresh": (input: { maxFiles?: number }) => Promise<{ summary: string }>
   "index.import": (input: { source?: string; rebuild?: boolean }) => Promise<{ summary: string }>
+  "workspaces.list": (input: Record<string, never>) => Promise<{ workspaces: WorkspaceRow[] }>
+  "workspace.forget": (input: { store: string }) => Promise<{ summary: string; pointsDeleted: number | null }>
 }
 
 /**
@@ -75,6 +78,8 @@ export interface SettingsPageData {
   settings: SettingsView
   sources: KiloSourceView[]
   status: StatusView
+  /** Indexed workspaces, so the page can show what exists on disk. */
+  workspaces: WorkspacesView
 }
 
 export interface ConfigRow {
@@ -109,15 +114,18 @@ export const UNKNOWN_SETTINGS: SettingsView = {
  * not ready yet, the case the lazy RPC resolver exists for.
  */
 export async function loadSettingsPageData(rpc: SettingsPageRpc): Promise<SettingsPageData> {
-  const [settingsResponse, sourcesResponse, status] = await Promise.all([
+  const [settingsResponse, sourcesResponse, status, workspaces] = await Promise.all([
     rpc["settings.get"]({}).catch(() => ({ settings: UNKNOWN_SETTINGS })),
     rpc["kilo.discover"]().catch(() => ({ sources: [] as KiloSourceView[] })),
     rpc["status.get"]({ checkFreshness: false }).catch(() => ({ summary: "(status unavailable)", recommendation: "" })),
+    // loadWorkspaces already degrades to an empty view, so it cannot reject.
+    loadWorkspaces(rpc),
   ])
   return {
     settings: settingsResponse.settings,
     sources: sourcesResponse.sources,
     status,
+    workspaces,
   }
 }
 

@@ -12,6 +12,11 @@ import type { ExportBatch, StoreSearchOptions, VectorStoreAdapter, VectorStoreIn
 const PROFILE: EmbeddingProfile = { provider: "mistral", modelId: "codestral-embed-2500-test", dimension: 4 }
 const temporaries: string[] = []
 
+// Every run is recorded in the workspace registry, which lives next to the
+// user's settings file: point XDG at a temp dir so tests never write there.
+const configHome = mkdtempSync(path.join(os.tmpdir(), "oi-xdg-"))
+process.env.XDG_CONFIG_HOME = configHome
+
 function makeWorkspace(): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), "oi-indexer-"))
   temporaries.push(dir)
@@ -21,6 +26,7 @@ function makeWorkspace(): string {
 
 after(() => {
   for (const dir of temporaries) rmSync(dir, { recursive: true, force: true })
+  rmSync(configHome, { recursive: true, force: true })
 })
 
 function makeSettings(root: string, overrides: Partial<IndexingSettings> = {}): IndexingSettings {

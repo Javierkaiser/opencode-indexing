@@ -142,6 +142,52 @@ export const IndexingRpc = {
       },
       output: { type: "object", properties: { summary: { type: "string" } }, required: ["summary"], additionalProperties: true },
     },
+    "workspaces.list": {
+      input: empty,
+      output: {
+        type: "object",
+        properties: {
+          workspaces: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                /** Collection name, e.g. `oc-1a06d5eeba99bff7`. */
+                store: { type: "string" },
+                /** Directory it belongs to, or null when the registry does not know it. */
+                root: { type: ["string", "null"] },
+                points: { type: ["number", "null"] },
+                complete: { type: ["boolean", "null"] },
+                profile: { type: ["string", "null"] },
+                updatedAt: { type: ["string", "null"] },
+                source: { type: "string", enum: ["registry", "collection"] },
+              },
+              required: ["store", "root", "points", "complete", "profile", "updatedAt", "source"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["workspaces"],
+        additionalProperties: false,
+      },
+    },
+    "workspace.forget": {
+      input: {
+        type: "object",
+        properties: { store: { type: "string" } },
+        required: ["store"],
+        additionalProperties: false,
+      },
+      output: {
+        type: "object",
+        properties: {
+          summary: { type: "string" },
+          pointsDeleted: { type: ["number", "null"] },
+        },
+        required: ["summary", "pointsDeleted"],
+        additionalProperties: false,
+      },
+    },
   },
   events: {},
 } as const satisfies Rpc.PortableDefinition

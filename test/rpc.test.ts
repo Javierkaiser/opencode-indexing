@@ -16,6 +16,8 @@ describe("IndexingRpc contract", () => {
       "index.build",
       "index.refresh",
       "index.import",
+      "workspaces.list",
+      "workspace.forget",
     ]) {
       assert.ok(methods.includes(method), `missing method ${method}`)
     }
@@ -42,5 +44,14 @@ describe("IndexingRpc contract", () => {
       properties: { target: { enum: readonly string[] } }
     }
     assert.deepEqual([...input.properties.target.enum], ["qdrant", "lancedb", "provider", "kilo"])
+  })
+
+  test("workspace.forget requires a store name", () => {
+    const input = IndexingRpc.methods["workspace.forget"].input as unknown as {
+      properties: { store: { type: string } }
+      required: string[]
+    }
+    assert.equal(input.properties.store.type, "string")
+    assert.deepEqual(input.required, ["store"])
   })
 })

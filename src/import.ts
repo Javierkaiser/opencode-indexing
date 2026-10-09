@@ -5,6 +5,7 @@ import { createQdrant, type Qdrant } from "./qdrant.ts"
 import { getKiloStoreInfo, resolveKiloCollection } from "./kilo-store.ts"
 import { readLanceDbInfoAt, readLanceDbBatch, lanceDbName } from "./lancedb-store.ts"
 import { kiloLanceDbDirectory } from "./settings.ts"
+import { recordWorkspace } from "./workspaces.ts"
 import type { EmbeddingProfile, QdrantPoint, IndexReport } from "./types.ts"
 import type { VectorStoreAdapter } from "./vector-store.ts"
 import { profileKey } from "./registry.ts"
@@ -197,6 +198,21 @@ export async function importFromKilo(options: ImportOptions): Promise<ImportRepo
   }
 
   await target.markComplete(targetProfile, true, targetProfile.dimension)
+
+  // Registry: the store name is a one-way hash of the root, so remember the
+  // mapping that makes it nameable (and forgettable) later on.
+  try {
+    recordWorkspace({
+      root,
+      store: target.name,
+      kind: target.kind,
+      profile: profileKey(targetProfile),
+      updatedAt: new Date().toISOString(),
+    })
+  } catch {
+    // Best-effort only: never fail a finished import over bookkeeping.
+  }
+
   report.durationMs = Date.now() - started
   return report
 }

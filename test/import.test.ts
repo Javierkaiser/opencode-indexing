@@ -1,11 +1,21 @@
 import * as assert from "node:assert/strict"
-import { describe, test } from "node:test"
+import { mkdtempSync, rmSync } from "node:fs"
+import * as os from "node:os"
+import * as path from "node:path"
+import { after, describe, test } from "node:test"
 
 import { importFromKilo, importReportToIndexReport, type KiloSourceInfo } from "../src/import.ts"
 import type { EmbeddingProfile, QdrantPoint, QueryHit } from "../src/types.ts"
 import type { ExportBatch, StoreSearchOptions, VectorStoreAdapter, VectorStoreInfo } from "../src/vector-store.ts"
 
 const PROFILE: EmbeddingProfile = { provider: "mistral", modelId: "codestral-embed-2505", dimension: 4 }
+
+// Every import is recorded in the workspace registry, which lives next to the
+// user's settings file: point XDG at a temp dir so tests never write there.
+const configHome = mkdtempSync(path.join(os.tmpdir(), "oi-xdg-"))
+process.env.XDG_CONFIG_HOME = configHome
+
+after(() => rmSync(configHome, { recursive: true, force: true }))
 
 /** In-memory adapter used as import target. */
 class FakeTarget implements VectorStoreAdapter {

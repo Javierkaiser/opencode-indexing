@@ -8,6 +8,8 @@ import { deleteRecords, diffFiles, emptyManifest, loadManifest, saveManifest, se
 import { discoverKiloSources, importFromKilo } from "./import.ts"
 import { createOwnStore, createSettingsQdrant, recreateOwnStore } from "./store-factory.ts"
 import { scanWorkspace } from "./scanner.ts"
+import { profileKey } from "./registry.ts"
+import { recordWorkspace } from "./workspaces.ts"
 import type { Qdrant } from "./qdrant.ts"
 import type {
   Chunk,
@@ -369,6 +371,21 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
     await store.markComplete(profile, report.errors.length === 0, dimension)
   } catch (error) {
     report.errors.push(`mark complete: ${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  // Registry: a collection name is a one-way hash of the root, so remember the
+  // mapping that makes the store nameable (and forgettable) later on. Recorded
+  // even when files failed: the store exists and must stay discoverable.
+  try {
+    recordWorkspace({
+      root,
+      store: store.name,
+      kind: store.kind,
+      profile: profileKey(profile),
+      updatedAt: new Date().toISOString(),
+    })
+  } catch {
+    // Best-effort only: never fail a finished run over bookkeeping.
   }
 
   report.durationMs = Date.now() - started

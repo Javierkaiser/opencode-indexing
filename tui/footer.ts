@@ -53,6 +53,50 @@ export interface FooterView {
 
 export type FooterAction = "start" | "pause" | "resume" | "restatus"
 
+/** The slice of an open tab the workspace resolution needs. */
+export interface WorkspaceTab {
+  readonly sessionID: string
+  readonly active: boolean
+}
+
+/** The slice of a session the workspace resolution needs. */
+export interface WorkspaceSession {
+  readonly id: string
+  readonly location?: { readonly directory?: string } | undefined
+}
+
+export interface WorkspaceSources {
+  /** Whether the host opens session tabs at all. */
+  readonly tabsEnabled: () => boolean
+  /** The open tabs, in host order. */
+  readonly tabs: () => readonly WorkspaceTab[]
+  /** Every session the client knows about. */
+  readonly sessions: () => readonly WorkspaceSession[]
+  /** Directory the plugin instance was started in. Only a last resort. */
+  readonly instanceDirectory: () => string | undefined
+}
+
+/**
+ * Directory of the ACTIVE tab's session.
+ *
+ * `context.location.directory` is where the server SERVICE was started, not
+ * where the user is working: an RPC told about it reads and writes the index of
+ * the service's own root instead of the project on screen. The active tab is
+ * the signal that follows the user, so it wins whenever the host has tabs and
+ * can name the session. Everything else — tabs switched off, no tab focused,
+ * session unknown or without a directory — falls back to the instance
+ * directory, which is the best answer available on such a host.
+ */
+export function activeWorkspace(sources: WorkspaceSources): string | undefined {
+  if (sources.tabsEnabled()) {
+    const active = sources.tabs().find((tab) => tab.active)
+    const session = active && sources.sessions().find((entry) => entry.id === active.sessionID)
+    const directory = session?.location?.directory
+    if (directory) return directory
+  }
+  return sources.instanceDirectory()
+}
+
 export function footerAction(state: IndexingState): FooterAction {
   switch (state) {
     case "paused":
