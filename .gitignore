@@ -4,3 +4,15 @@ test/.state/
 .lancedb/
 *.tmp
 *.tgz
+coverage/
+
+# Local CodeGraph index (machine-specific, never published)
+.codegraph/
+
+# Working notes kept local, not published
+docs/publication-plan.md
+
+# OS cruft
+.DS_Store
+Thumbs.db
+ehthumbs.db
