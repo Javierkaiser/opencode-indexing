@@ -2,7 +2,7 @@ import * as assert from "node:assert/strict"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
-import { after, describe, test } from "node:test"
+import { after, beforeEach, describe, test } from "node:test"
 
 import {
   configDir,
@@ -27,6 +27,14 @@ function makeHome(): string {
 
 after(() => {
   for (const home of homes) rmSync(home, { recursive: true, force: true })
+})
+
+// XDG_CONFIG_HOME / XDG_STATE_HOME take precedence over the `homeDir` option in
+// the config layer, and GitHub's Linux/macOS runners set them. Clear both so the
+// temp-home tests never read or write the real configuration directory.
+beforeEach(() => {
+  delete process.env.XDG_CONFIG_HOME
+  delete process.env.XDG_STATE_HOME
 })
 
 describe("settings file", () => {

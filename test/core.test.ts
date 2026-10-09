@@ -3,13 +3,21 @@ import { createHash } from "node:crypto"
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
-import { after, describe, test } from "node:test"
+import { after, beforeEach, describe, test } from "node:test"
 
 import { resolveSettings, stripJsonComments, withProfile } from "../src/config.ts"
 import { diffFiles, emptyManifest, loadManifest, manifestKey, saveManifest, setRecord } from "../src/manifest.ts"
 import { getModelDimension, getModelQueryPrefix, getModelScoreThreshold, normalizeExtensions, workspaceHash } from "../src/registry.ts"
 import { createMemoryStorage } from "../src/storage.ts"
 import { CHUNK_NAMESPACE, uuidv5 } from "../src/uuid.ts"
+
+// The config layer lets XDG_CONFIG_HOME override the `homeDir` option. GitHub's
+// Linux/macOS runners set it, which would leak the real config into tests that
+// point `homeDir` at a temporary directory. Clear it so every test is hermetic.
+beforeEach(() => {
+  delete process.env.XDG_CONFIG_HOME
+  delete process.env.XDG_STATE_HOME
+})
 
 describe("uuidv5", () => {
   test("matches the known Kilo point id vector", () => {
