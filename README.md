@@ -116,7 +116,7 @@ The installer is cross-platform; it only needs Node >= 22.6.
 
 ```bash
 # Linux / macOS
-sh install.sh
+./install.sh
 
 # Windows
 powershell -ExecutionPolicy Bypass -File .\install.ps1
