@@ -62,13 +62,13 @@
     "web-tree-sitter": "0.25.10"
   },
   "devDependencies": {
-    "@opencode/plugin": "2.0.23",
+    "@opencode/plugin": "2.0.24",
     "@opencode/theme": "^2.0.23",
     "@opentui/core": "^0.5.14",
     "@opentui/solid": "^0.5.14",
-    "@types/node": "^24.0.0",
-    "solid-js": "^1.9.12",
-    "typescript": "^5.8.2"
+    "@types/node": "^26.6.4",
+    "solid-js": "^1.9.16",
+    "typescript": "^7.0.2"
   },
   "peerDependencies": {
     "@opencode/plugin": ">=2.0.0",
