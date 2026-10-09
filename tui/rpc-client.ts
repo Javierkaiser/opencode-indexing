@@ -9,7 +9,7 @@ import type { SettingsPageRpc } from "./settings-page-data.ts"
 
 export type RpcClient = SettingsPageRpc & {
   "workspaces.list": (input: Record<string, never>) => Promise<WorkspacesListResult>
-  "workspace.forget": (input: { store: string }) => Promise<{ ok: boolean; summary: string; pointsDeleted: number | null }>
+  "workspace.forget": (input: { store: string }) => Promise<{ ok: boolean; reason?: "refused" | "failed"; summary: string; pointsDeleted: number | null }>
 }
 
 /** One indexed workspace as reported by the server. */

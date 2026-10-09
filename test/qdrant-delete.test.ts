@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 
-import { isTimeoutError } from "../src/qdrant.ts"
+import { QdrantHttpError, isTimeoutError } from "../src/qdrant.ts"
 import type { Qdrant } from "../src/qdrant.ts"
 import type { QdrantFilter } from "../src/types.ts"
 import { DELETE_CHUNK_SIZE, chunkPaths, deleteOwnByFilePaths } from "../src/own-store.ts"
@@ -60,6 +60,19 @@ describe("isTimeoutError", () => {
     assert.equal(isTimeoutError(new Error("Qdrant GET /collections failed: HTTP 500 boom")), false)
     assert.equal(isTimeoutError("timed out"), false)
     assert.equal(isTimeoutError(undefined), false)
+  })
+
+  test("an HTTP error is never a timeout, even when its body says so", () => {
+    // The body is part of the message, so the text fallback used to classify a
+    // definite server answer as a timeout and retry it.
+    const error = new QdrantHttpError(
+      "POST",
+      "/collections/oc-x/points/delete",
+      500,
+      '{"status":{"error":"operation timed out while waiting for a shard"}}',
+    )
+    assert.equal(error.message.includes("timed out"), true, "the body really is in the message")
+    assert.equal(isTimeoutError(error), false)
   })
 })
 

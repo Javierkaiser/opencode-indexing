@@ -32,7 +32,7 @@ export interface WorkspacesView {
 /** The RPC slice this view needs. */
 export interface WorkspacesRpc {
   "workspaces.list": (input: Record<string, never>) => Promise<{ workspaces: WorkspaceRow[] }>
-  "workspace.forget": (input: { store: string }) => Promise<{ ok: boolean; summary: string; pointsDeleted: number | null }>
+  "workspace.forget": (input: { store: string }) => Promise<{ ok: boolean; reason?: "refused" | "failed"; summary: string; pointsDeleted: number | null }>
 }
 
 /** Formats the point count for a one-line row. */

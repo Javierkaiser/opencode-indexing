@@ -182,6 +182,8 @@ export const IndexingRpc = {
         type: "object",
         properties: {
           ok: { type: "boolean" },
+          // Present only on failure: `refused` is a policy decision, `failed` an error.
+          reason: { type: "string", enum: ["refused", "failed"] },
           summary: { type: "string" },
           pointsDeleted: { type: ["number", "null"] },
         },

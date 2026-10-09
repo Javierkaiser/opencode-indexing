@@ -98,7 +98,7 @@ function truncateBody(text: string): string {
   return text.length > BODY_SNIPPET_MAX ? text.slice(0, BODY_SNIPPET_MAX) : text
 }
 
-class QdrantHttpError extends Error {
+export class QdrantHttpError extends Error {
   readonly status: number
 
   constructor(method: string, path: string, status: number, bodyText: string) {
@@ -117,10 +117,14 @@ class QdrantTimeoutError extends Error {
 
 /**
  * True when a fetch failure was caused by the request timeout aborting.
- * Accepts the raw abort reason as well as the error this module wraps it in.
+ *
+ * An HTTP error from Qdrant is a definite server answer, never a timeout — its
+ * message embeds the response body, which may itself mention a timeout, so the
+ * class is checked before falling back to the text.
  */
 export function isTimeoutError(error: unknown): boolean {
   if (error instanceof QdrantTimeoutError) return true
+  if (error instanceof QdrantHttpError) return false
   if (!(error instanceof Error)) return false
   if (error.name === "TimeoutError" || error.name === "AbortError") return true
   return /timed out|timeout/i.test(error.message)

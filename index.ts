@@ -328,11 +328,13 @@ const plugin = {
      * an error — the registry entry is stale bookkeeping worth removing anyway.
      */
     async function forgetOwnWorkspace(
-    store: string,
-  ): Promise<{ ok: boolean; summary: string; pointsDeleted: number | null }> {
+      store: string,
+    ): Promise<{ ok: boolean; summary: string; pointsDeleted: number | null }> {
       const name = store.trim()
       if (!name.startsWith(OWN_COLLECTION_PREFIX) || name.length === OWN_COLLECTION_PREFIX.length) {
-        throw new Error(`Only the plugin's own collections (${OWN_COLLECTION_PREFIX}…) can be forgotten, not "${store}"`)
+        throw new ForgetRefusedError(
+          `Only the plugin's own collections (${OWN_COLLECTION_PREFIX}…) can be forgotten, not "${store}"`,
+        )
       }
       const settings = await getSettings()
       const client = createSettingsQdrant(settings)
@@ -351,7 +353,15 @@ const plugin = {
       return { ok: true, summary: `Forgot ${label}: ${parts.join(", ")}.`, pointsDeleted: info?.pointsCount ?? null }
     }
 
-    /** Renders the configuration report used by `show` and by the bare form. */
+    /**
+ * Thrown when a caller asks to forget something that is not ours.
+ *
+ * Kept as its own type so the RPC handler can tell a policy refusal apart from
+ * an infrastructure failure: only the refusal becomes `ok: false`.
+ */
+class ForgetRefusedError extends Error {}
+
+/** Renders the configuration report used by `show` and by the bare form. */
     async function renderConfigReport(): Promise<string> {
       const settings = await getSettings()
       const lines: string[] = [
@@ -567,11 +577,12 @@ const plugin = {
           try {
             return await forgetOwnWorkspace((input as { store?: string }).store ?? "")
           } catch (error) {
-            // A refusal (a name that is not ours) is a caller mistake, not a
-            // server fault: returning it as data keeps the message readable
-            // instead of collapsing it into an opaque internal RPC error.
+            // Returning the failure as data keeps the message readable instead
+            // of collapsing it into an opaque internal RPC error, and `reason`
+            // lets a caller tell a refusal from an infrastructure failure.
             return {
               ok: false,
+              reason: error instanceof ForgetRefusedError ? "refused" : "failed",
               summary: error instanceof Error ? error.message : String(error),
               pointsDeleted: null,
             }
