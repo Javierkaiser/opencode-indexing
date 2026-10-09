@@ -85,6 +85,7 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
     batches: 0,
     durationMs: 0,
     errors: [],
+    warnings: [],
   }
 
   let embedder = deps.embedder
@@ -237,7 +238,9 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
       await store.deleteByFilePaths(diff.deleted)
       deleteRecords(manifest, diff.deleted)
     } catch (error) {
-      report.errors.push(`delete phase: ${error instanceof Error ? error.message : String(error)}`)
+      // Cleanup only: stale points for deleted files may linger, but no file
+      // went unindexed, so this must not poison completion.
+      report.warnings.push(`delete phase: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -278,7 +281,9 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
     try {
       await store.deleteByFilePaths(changedPaths)
     } catch (error) {
-      report.errors.push(`clearing changed files: ${error instanceof Error ? error.message : String(error)}`)
+      // Cleanup only: stale tail points for changed files may linger, but the
+      // fresh chunks are still upserted below, so this is non-fatal.
+      report.warnings.push(`clearing changed files: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -364,11 +369,14 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
   }
   recordCompleted()
   manifest.lastRun = Date.now()
-  manifest.complete = report.errors.length === 0
+  // Only fatal errors (files left unindexed) mark the run incomplete; cleanup
+  // warnings do not, because every file's fresh chunks were still upserted.
+  const complete = report.errors.length === 0
+  manifest.complete = complete
   await saveManifest(kv, manifest)
 
   try {
-    await store.markComplete(profile, report.errors.length === 0, dimension)
+    await store.markComplete(profile, complete, dimension)
   } catch (error) {
     report.errors.push(`mark complete: ${error instanceof Error ? error.message : String(error)}`)
   }

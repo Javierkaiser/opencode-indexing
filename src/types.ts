@@ -197,7 +197,13 @@ export interface IndexReport {
   chunksUpserted: number
   batches: number
   durationMs: number
+  /** Fatal issues: files that were left unindexed by this run. */
   errors: string[]
+  /**
+   * Non-fatal issues that did not leave files unindexed (e.g. stale-point
+   * cleanup failed). Reported to the user but never poison completion.
+   */
+  warnings: string[]
   /** Non-fatal notes (e.g. truncated scans skipped deletion detection). */
   notes?: string[]
   /** Set when the build seeded from a Kilo Code index instead of embedding. */

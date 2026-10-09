@@ -230,6 +230,7 @@ export function importReportToIndexReport(report: ImportReport): IndexReport {
     batches: report.batches,
     durationMs: report.durationMs,
     errors: [...report.errors],
+    warnings: [],
   }
 }
 

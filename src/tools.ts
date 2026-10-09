@@ -368,6 +368,7 @@ function formatReport(kind: "refresh" | "build", report: {
   batches: number
   durationMs: number
   errors: string[]
+  warnings: string[]
   imported?: { source: string; kind: string; chunks: number }
 }): string {
   const lines = [
@@ -384,6 +385,11 @@ function formatReport(kind: "refresh" | "build", report: {
   )
   if (report.errors.length > 0) {
     lines.push(`Errors (${report.errors.length}): ${report.errors.slice(0, 5).join("; ")}${report.errors.length > 5 ? " …" : ""}`)
+  }
+  if (report.warnings.length > 0) {
+    lines.push(
+      `Warnings (${report.warnings.length}): ${report.warnings.slice(0, 5).join("; ")}${report.warnings.length > 5 ? " …" : ""} — the index is complete, but stale points may linger.`,
+    )
   }
   return lines.join("\n")
 }

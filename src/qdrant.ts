@@ -61,6 +61,13 @@ export interface Qdrant {
 
 type PointRow = { id: string | number; payload: Record<string, unknown> | null; vector?: number[] }
 
+interface RequestOptions {
+  /** Override the shared request timeout for this call (milliseconds). */
+  timeoutMs?: number
+  /** Retry attempts after a timeout; only set on idempotent calls. */
+  retriesOnTimeout?: number
+}
+
 const DEFAULT_URL = "http://localhost:6333"
 const DEFAULT_USER_AGENT = "opencode-indexing/0.1.0"
 const DEFAULT_INCLUDE = [
@@ -72,6 +79,19 @@ const DEFAULT_INCLUDE = [
   "pathSegments",
 ]
 const REQUEST_TIMEOUT_MS = 60_000
+/**
+ * Deletes are issued mid-build while Qdrant is already loaded, so they can
+ * exceed the shared 60 s budget (a single-file delete already takes ~464 ms).
+ * They therefore get a longer, dedicated timeout instead of raising the limit
+ * for every request.
+ */
+const DELETE_TIMEOUT_MS = 180_000
+/**
+ * A delete is idempotent (re-applying the same filter matches nothing the
+ * second time), so retrying once after a timeout is safe and turns a transient
+ * stall into a success instead of a recorded warning.
+ */
+const DELETE_TIMEOUT_RETRIES = 1
 const BODY_SNIPPET_MAX = 500
 
 function truncateBody(text: string): string {
@@ -86,6 +106,24 @@ class QdrantHttpError extends Error {
     this.name = "QdrantHttpError"
     this.status = status
   }
+}
+
+class QdrantTimeoutError extends Error {
+  constructor(method: string, path: string, reason: string) {
+    super(`Qdrant ${method} ${path} failed: ${reason}`)
+    this.name = "QdrantTimeoutError"
+  }
+}
+
+/**
+ * True when a fetch failure was caused by the request timeout aborting.
+ * Accepts the raw abort reason as well as the error this module wraps it in.
+ */
+export function isTimeoutError(error: unknown): boolean {
+  if (error instanceof QdrantTimeoutError) return true
+  if (!(error instanceof Error)) return false
+  if (error.name === "TimeoutError" || error.name === "AbortError") return true
+  return /timed out|timeout/i.test(error.message)
 }
 
 /** Trim, default when empty, add protocol when missing, strip trailing slashes. */
@@ -117,7 +155,29 @@ export function createQdrant(config: QdrantConfig): Qdrant {
   const apiKey = config.apiKey?.trim() ? config.apiKey.trim() : undefined
   const userAgent = config.userAgent?.trim() ? config.userAgent.trim() : DEFAULT_USER_AGENT
 
-  async function request(method: string, path: string, body?: unknown): Promise<any> {
+  async function request(
+    method: string,
+    path: string,
+    body?: unknown,
+    options: RequestOptions = {},
+  ): Promise<any> {
+    const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS
+    const retries = options.retriesOnTimeout ?? 0
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await requestOnce(method, path, body, timeoutMs)
+      } catch (error) {
+        if (attempt >= retries || !isTimeoutError(error)) throw error
+      }
+    }
+  }
+
+  async function requestOnce(
+    method: string,
+    path: string,
+    body: unknown,
+    timeoutMs: number,
+  ): Promise<any> {
     const headers: Record<string, string> = {
       accept: "application/json",
       "user-agent": userAgent,
@@ -131,10 +191,11 @@ export function createQdrant(config: QdrantConfig): Qdrant {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       })
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
+      if (isTimeoutError(error)) throw new QdrantTimeoutError(method, path, reason)
       throw new Error(`Qdrant ${method} ${path} failed: ${reason}`)
     }
 
@@ -259,7 +320,10 @@ export function createQdrant(config: QdrantConfig): Qdrant {
   ): Promise<void> {
     // For an unscoped delete Qdrant expects a filter; an empty `must` matches all.
     const body = filter === undefined ? { filter: { must: [] } } : { filter }
-    await request("POST", `${pointsPath(name)}/delete?wait=${wait}`, body)
+    await request("POST", `${pointsPath(name)}/delete?wait=${wait}`, body, {
+      timeoutMs: DELETE_TIMEOUT_MS,
+      retriesOnTimeout: DELETE_TIMEOUT_RETRIES,
+    })
   }
 
   async function createPayloadIndex(

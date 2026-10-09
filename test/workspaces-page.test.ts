@@ -30,7 +30,7 @@ function fakeRpc(rows: WorkspaceRow[], forget?: (store: string) => { summary: st
     "workspaces.list": async () => ({ workspaces: rows }),
     "workspace.forget": async (input: { store: string }) => {
       forgotten.push(input.store)
-      return forget ? forget(input.store) : { summary: `Forgot ${input.store}`, pointsDeleted: 10 }
+      return forget ? forget(input.store) : { ok: true, summary: `Forgot ${input.store}`, pointsDeleted: 10 }
     },
   } as WorkspacesRpc
   return { rpc, forgotten }
@@ -96,7 +96,7 @@ describe("loadWorkspaces", () => {
       "workspaces.list": async () => {
         throw new Error("qdrant down")
       },
-      "workspace.forget": async () => ({ summary: "", pointsDeleted: null }),
+      "workspace.forget": async () => ({ ok: false, summary: "", pointsDeleted: null }),
     } as WorkspacesRpc
     const view = await loadWorkspaces(rpc)
     assert.deepEqual(view.rows, [])

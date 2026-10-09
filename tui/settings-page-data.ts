@@ -52,7 +52,7 @@ export interface SettingsPageRpc {
   "index.refresh": (input: { maxFiles?: number }) => Promise<{ summary: string }>
   "index.import": (input: { source?: string; rebuild?: boolean }) => Promise<{ summary: string }>
   "workspaces.list": (input: Record<string, never>) => Promise<{ workspaces: WorkspaceRow[] }>
-  "workspace.forget": (input: { store: string }) => Promise<{ summary: string; pointsDeleted: number | null }>
+  "workspace.forget": (input: { store: string }) => Promise<{ ok: boolean; summary: string; pointsDeleted: number | null }>
 }
 
 /**

@@ -66,6 +66,8 @@ class FakeStore implements VectorStoreAdapter {
   points = new Map<string, QdrantPoint>()
   profile?: EmbeddingProfile
   complete: boolean | null = null
+  /** When set, `deleteByFilePaths` rejects to simulate a cleanup outage. */
+  failDeletes = false
 
   constructor(dbPath: string) {
     this.name = dbPath
@@ -98,6 +100,7 @@ class FakeStore implements VectorStoreAdapter {
   }
 
   async deleteByFilePaths(relPaths: string[]) {
+    if (this.failDeletes) throw new Error("simulated cleanup timeout")
     const wanted = new Set(relPaths)
     for (const [id, point] of this.points) {
       if (wanted.has(String(point.payload.filePath))) this.points.delete(id)
@@ -258,5 +261,62 @@ describe("M3-related regression: refresh after separator-mixed deletes", () => {
     const refresh = await runIndex({ kv, root, settings, store, embedder }, { mode: "refresh" })
     assert.equal(refresh.changedFiles, 1)
     assert.equal(refresh.errors.length, 0)
+  })
+})
+
+const successEmbedder = {
+  provider: "mistral" as const,
+  modelId: PROFILE.modelId,
+  dimension: 4,
+  async embed(texts: string[]): Promise<number[][]> {
+    return texts.map(() => [1, 0, 0, 0])
+  },
+}
+
+describe("completion flag reflects fatal errors, not cleanup warnings", () => {
+  test("a failing deleteByFilePaths still ends the run COMPLETE and reports a warning", async () => {
+    const root = makeWorkspace()
+    const store = new FakeStore(path.join(root, ".lancedb", "db"))
+    store.failDeletes = true
+    const kv = createMemoryStorage()
+    const settings = makeSettings(root)
+    writeFileSync(path.join(root, "src", "a.ts"), fileContent("a", 1))
+
+    const report = await runIndex({ kv, root, settings, store, embedder: successEmbedder }, { mode: "build", skipImport: true })
+
+    assert.equal(report.errors.length, 0, report.errors.join("; "))
+    assert.ok(
+      report.warnings.some((warning) => warning.includes("clearing changed files")),
+      `cleanup failure must be surfaced as a warning; warnings=${JSON.stringify(report.warnings)}`,
+    )
+    assert.equal(store.complete, true, "store marked complete despite the cleanup warning")
+
+    const manifest = await loadManifest(kv, root)
+    assert.equal(manifest!.complete, true, "manifest marked complete despite the cleanup warning")
+  })
+
+  test("a genuine embed failure still marks the run INCOMPLETE", async () => {
+    const root = makeWorkspace()
+    const store = new FakeStore(path.join(root, ".lancedb", "db"))
+    const kv = createMemoryStorage()
+    const settings = makeSettings(root)
+    writeFileSync(path.join(root, "src", "a.ts"), fileContent("a", 1))
+
+    const failingEmbedder = {
+      provider: "mistral" as const,
+      modelId: PROFILE.modelId,
+      dimension: 4,
+      async embed(): Promise<number[][]> {
+        throw new Error("simulated embedding outage")
+      },
+    }
+
+    const report = await runIndex({ kv, root, settings, store, embedder: failingEmbedder }, { mode: "build", skipImport: true })
+
+    assert.ok(report.errors.length >= 1, "the failed batch must be reported as a fatal error")
+    assert.equal(store.complete, false, "store marked incomplete when a batch failed")
+
+    const manifest = await loadManifest(kv, root)
+    assert.equal(manifest!.complete, false, "manifest marked incomplete when a batch failed")
   })
 })

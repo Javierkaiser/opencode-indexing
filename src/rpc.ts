@@ -181,10 +181,11 @@ export const IndexingRpc = {
       output: {
         type: "object",
         properties: {
+          ok: { type: "boolean" },
           summary: { type: "string" },
           pointsDeleted: { type: ["number", "null"] },
         },
-        required: ["summary", "pointsDeleted"],
+        required: ["ok", "summary", "pointsDeleted"],
         additionalProperties: false,
       },
     },

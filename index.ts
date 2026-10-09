@@ -116,11 +116,13 @@ function summarizeReport(report: {
   batches: number
   imported?: { source: string; kind: string; chunks: number }
   errors: string[]
+  warnings: string[]
 }): string {
   const parts = [`Finished in ${(report.durationMs / 1000).toFixed(1)}s`]
   if (report.imported) parts.push(`imported ${report.imported.chunks} chunks from ${report.imported.kind} ${report.imported.source} (no embedding calls)`)
   parts.push(`${report.chunksUpserted} chunks in ${report.batches} batch(es)`)
   if (report.errors.length > 0) parts.push(`errors: ${report.errors.slice(0, 3).join("; ")}`)
+  if (report.warnings.length > 0) parts.push(`warnings: ${report.warnings.slice(0, 3).join("; ")}`)
   return parts.join(" · ")
 }
 
@@ -325,7 +327,9 @@ const plugin = {
      * Qdrant may be deleted from here. A collection that is already gone is not
      * an error — the registry entry is stale bookkeeping worth removing anyway.
      */
-    async function forgetOwnWorkspace(store: string): Promise<{ summary: string; pointsDeleted: number | null }> {
+    async function forgetOwnWorkspace(
+    store: string,
+  ): Promise<{ ok: boolean; summary: string; pointsDeleted: number | null }> {
       const name = store.trim()
       if (!name.startsWith(OWN_COLLECTION_PREFIX) || name.length === OWN_COLLECTION_PREFIX.length) {
         throw new Error(`Only the plugin's own collections (${OWN_COLLECTION_PREFIX}…) can be forgotten, not "${store}"`)
@@ -340,11 +344,11 @@ const plugin = {
       const forgotten = forgetWorkspace(name)
 
       if (!info && !forgotten) {
-        return { summary: `Nothing to forget for ${label}: no such collection and no registry entry.`, pointsDeleted: null }
+        return { ok: true, summary: `Nothing to forget for ${label}: no such collection and no registry entry.`, pointsDeleted: null }
       }
       const parts = [info ? `${info.pointsCount} points deleted` : "collection did not exist"]
       if (forgotten) parts.push("registry entry removed")
-      return { summary: `Forgot ${label}: ${parts.join(", ")}.`, pointsDeleted: info?.pointsCount ?? null }
+      return { ok: true, summary: `Forgot ${label}: ${parts.join(", ")}.`, pointsDeleted: info?.pointsCount ?? null }
     }
 
     /** Renders the configuration report used by `show` and by the bare form. */
@@ -440,7 +444,14 @@ const plugin = {
                   return
                 }
                 case "import": {
-                  await reply(await runImport(parsed.source))
+                  // The session knows which workspace the user is in; the plugin
+                  // instance directory is the one the service runs in, which is
+                  // usually a different directory entirely.
+                  const sessionDirectory = await ctx.session
+                    .get({ sessionID } as never)
+                    .then((info: { location?: { directory?: string } }) => info?.location?.directory)
+                    .catch(() => undefined)
+                  await reply(await runImport(sessionDirectory, parsed.source))
                   return
                 }
               }
@@ -553,7 +564,18 @@ const plugin = {
         },
 
         "workspace.forget": async (input: unknown) => {
-          return forgetOwnWorkspace((input as { store?: string }).store ?? "")
+          try {
+            return await forgetOwnWorkspace((input as { store?: string }).store ?? "")
+          } catch (error) {
+            // A refusal (a name that is not ours) is a caller mistake, not a
+            // server fault: returning it as data keeps the message readable
+            // instead of collapsing it into an opaque internal RPC error.
+            return {
+              ok: false,
+              summary: error instanceof Error ? error.message : String(error),
+              pointsDeleted: null,
+            }
+          }
         },
       } as never)
     } catch (error) {

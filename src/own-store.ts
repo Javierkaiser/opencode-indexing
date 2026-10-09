@@ -36,6 +36,14 @@ const REQUIRED_CHUNK_FIELDS: readonly string[] = ["filePath", "fileHash", "codeC
 /** How many leading path segments get a dedicated payload index. */
 const INDEXED_PATH_SEGMENT_COUNT = 5
 
+/**
+ * Files per delete request. Each file contributes one `should` clause, and a
+ * single huge `should` array makes Qdrant's round trip slow and timeout-prone
+ * under load, so deletes are split into batches. 100 keeps each filter small
+ * while avoiding excessive round trips.
+ */
+export const DELETE_CHUNK_SIZE = 100
+
 export interface OwnStoreInfo {
   collection: string
   pointsCount: number
@@ -133,16 +141,43 @@ export async function deleteOwnByFilePaths(
   relPaths: string[],
 ): Promise<void> {
   void root // reserved for callers that pass absolute paths; relPaths are already workspace-relative
-  const should = relPaths.map((relPath) => ({ must: pathConditions(relPath) }))
-  if (should.length === 0) return
-  await client.deletePoints(
-    collection,
-    {
-      should,
-      must_not: [{ key: "type", match: { value: METADATA_TYPE } }],
-    },
-    true,
-  )
+  if (relPaths.length === 0) return
+
+  // Split the filter into batches. Batches that succeed are kept (a partial
+  // delete is better than none), and only after the loop do we surface a
+  // failure that names how many batches failed, so the caller can warn.
+  const batches = chunkPaths(relPaths, DELETE_CHUNK_SIZE)
+  let failed = 0
+  let lastError: unknown
+  for (const batch of batches) {
+    try {
+      await client.deletePoints(collection, buildDeleteFilter(batch), true)
+    } catch (error) {
+      failed++
+      lastError = error
+    }
+  }
+  if (failed > 0) {
+    const reason = lastError instanceof Error ? lastError.message : String(lastError)
+    throw new Error(
+      `deleteOwnByFilePaths: ${failed}/${batches.length} batches failed (${relPaths.length} files): ${reason}`,
+    )
+  }
+}
+
+/**
+ * Split a list into consecutive batches of at most `size` entries, preserving
+ * order. Returns `[]` for empty input.
+ */
+export function chunkPaths<T>(items: readonly T[], size: number): T[][] {
+  if (!Number.isInteger(size) || size <= 0) {
+    throw new RangeError(`chunk size must be a positive integer, got ${size}`)
+  }
+  const batches: T[][] = []
+  for (let i = 0; i < items.length; i += size) {
+    batches.push(items.slice(i, i + size))
+  }
+  return batches
 }
 
 /** Query our own collection. Missing collections yield an empty result. */
@@ -234,6 +269,14 @@ function pathConditions(pathPrefix: string): QdrantFieldCondition[] {
     key: `pathSegments.${index}`,
     match: { value: segment },
   }))
+}
+
+/** Filter matching every chunk of the given files, excluding the metadata point. */
+function buildDeleteFilter(relPaths: string[]): QdrantFilter {
+  return {
+    should: relPaths.map((relPath) => ({ must: pathConditions(relPath) })),
+    must_not: [{ key: "type", match: { value: METADATA_TYPE } }],
+  }
 }
 
 function buildSearchFilter(pathPrefix: string | undefined): QdrantFilter {
