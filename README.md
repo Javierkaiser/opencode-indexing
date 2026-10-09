@@ -1,5 +1,9 @@
 # opencode-indexing
 
+[![ci](https://github.com/Javierkaiser/opencode-indexing/actions/workflows/ci.yml/badge.svg)](https://github.com/Javierkaiser/opencode-indexing/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![node: >=22.6](https://img.shields.io/badge/node-%3E%3D22.6-brightgreen.svg)](https://nodejs.org)
+
 OpenCode plugin that adds **semantic code search** by reusing the code index created by [Kilo Code](https://kilo.ai) and maintaining its **own independent index** (Qdrant or embedded LanceDB), so search keeps working even when Kilo isn't installed, is disabled, or its index is stale.
 
 ## How it works
@@ -110,6 +114,22 @@ Settings are stored in `~/.config/opencode/indexing.json` (plugin options → `i
 
 ## Install
 
+### From npm
+
+```bash
+npm install @javierkaiser/opencode-indexing
+```
+
+Then reference the package from `opencode.json`:
+
+```jsonc
+{
+  "plugins": [
+    { "package": "@javierkaiser/opencode-indexing" }
+  ]
+}
+```
+
 ### Global (recommended)
 
 The installer is cross-platform; it only needs Node >= 22.6.
@@ -196,11 +216,11 @@ npm install
 node --test "test/*.test.ts"   # unit tests (Node 26 runs TS natively)
 
 # CLI harness against the real environment:
-node test/cli.ts status     --root D:\Proyectos
-node test/cli.ts search "database connection pooling" --root D:\Proyectos
-node test/cli.ts build      --root D:\Proyectos            # import from Kilo when possible
-node test/cli.ts import     --root D:\Proyectos --source ws-43dfc9b3ee33fcfd
-node test/cli.ts build      --vector-store lancedb --root D:\Proyectos\opencode-indexing
+node test/cli.ts status     --root .
+node test/cli.ts search "database connection pooling" --root .
+node test/cli.ts build      --root .            # import from Kilo when possible
+node test/cli.ts import     --root . --source ws-43dfc9b3ee33fcfd
+node test/cli.ts build      --vector-store lancedb --root .
 ```
 
 ## Acknowledgements
