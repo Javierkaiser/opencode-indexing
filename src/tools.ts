@@ -1,6 +1,7 @@
 import { runIndex } from "./indexer.ts"
 import { searchCode } from "./search.ts"
 import { getStatus } from "./status.ts"
+import { indexStatusLine } from "./index-state.ts"
 import { discoverKiloSources, importFromKilo, type KiloSourceInfo } from "./import.ts"
 import { createOwnStore, createSettingsQdrant } from "./store-factory.ts"
 import { assessScope } from "./scope.ts"
@@ -21,6 +22,14 @@ export interface ToolDefinition {
   name: string
   description: string
   input: Record<string, unknown>
+  /**
+   * Permission the host asks the user for before this tool runs.
+   *
+   * Only set on tools that write. Reading needs no gate, and a tool that both
+   * reads and writes could not ask for one without blocking the read too, which
+   * is why configuration read and write are separate tools.
+   */
+  permission?: string
   execute: (
     input: Record<string, unknown>,
     context: { signal?: AbortSignal; progress?: (m: unknown) => Promise<void> },
@@ -149,6 +158,20 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
           "",
         ])
         if (errors.length > 0) body.push(`Warnings: ${errors.join("; ")}`)
+        // Chat clients have no footer slot and the Desktop app has no status
+        // area at all, so the index state travels with the results. The
+        // empty-result branch above already reports it in more detail, together
+        // with the action to take, and does not repeat the line.
+        body.push(
+          indexStatusLine({
+            enabled: settings.enabled !== false,
+            ownPoints: meta.own.points,
+            ownComplete: meta.own.complete,
+            hasKilo: meta.kilo.collection !== null,
+            kiloPoints: meta.kilo.points,
+            root: meta.root,
+          }),
+        )
         return {
           output: [header, "", ...body].join("\n").trim(),
           metadata: { root: meta.root, results: hits, state: { kilo: meta.kilo, own: meta.own } },

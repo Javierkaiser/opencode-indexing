@@ -22,9 +22,10 @@ OpenCode ──► indexing_search ──┬──► Kilo's index (read-only)  
 
 | Tool | Purpose |
 | --- | --- |
-| `indexing_search` | Semantic search across Kilo's index + own index. `{ query, path? }` |
+| `indexing_search` | Semantic search across Kilo's index + own index. `{ query, path? }`. Ends with a one-line index status |
 | `indexing_status` | Backends, Kilo sources available for import, both indexes, freshness, recommendation |
 | `indexing_config` | Effective configuration: backend, provider/model, credentials (masked), search and behavior settings, settings file, Kilo sources. Read-only |
+| `indexing_config_set` | Change one setting and persist it. `{ key, value }`. Refuses credentials |
 | `indexing_refresh` | Incremental update of the own index (new/changed/deleted files only) |
 | `indexing_build` | Build the own index: imports from Kilo when compatible, otherwise embeds from scratch. `{ rebuild?, skipImport? }` |
 | `indexing_import` | Import a specific Kilo source without re-embedding. `{ source?, rebuild? }` |
@@ -91,7 +92,15 @@ The terminal footer shows whether the current workspace is indexed, in one glyph
 
 *Indexing: start, pause or resume indexing* in the command palette — or `/indexing-config set enabled=false` — controls it. The footer is a status line only: the host's `prompt.footer` slot exposes no interaction surface, so it is not clickable. Pausing leaves `indexing_search` working (it still reads Kilo's index), but `indexing_build`, `indexing_refresh`, `indexing_import` and auto-refresh refuse to write until you resume. The command has a stable id, so a key can be assigned in `cli.json`.
 
-The indicator is terminal-only. The host exposes no status surface to a server plugin — the SDK's toast belongs to the TUI context — and the Desktop app has no footer, so there the index state is read with `indexing_status` or `indexing_config` instead.
+The indicator is terminal-only, and that is a host limitation rather than a missing feature. Every slot that renders status (`prompt.footer`, `sidebar.content`, `session.panel`, …) belongs to a **CLI plugin**, and the Desktop app does not load CLI plugins at all — its palette shows none of this plugin's entries, and it has no status area under the prompt. A server plugin has no UI surface of its own: the SDK's toast lives in the TUI context, and plugins can only subscribe to events, never publish one.
+
+What works in every client instead is the tool layer:
+
+- **Status** — every `indexing_search` result ends with a line like `Index: ◐ index stale · own 2.2k pts · /path/to/project`, using the same glyphs as the footer. It costs no extra message and adds no noise: a reader who ignores it sees exactly the output they saw before. It refreshes on every search.
+- **Read** — `indexing_config`.
+- **Change** — `indexing_config_set { key, value }`, validated by the same rules as `/indexing-config set`. Credentials are refused: a tool call is recorded in the conversation, and the settings file never stores keys in plain text.
+
+The index-state vocabulary is shared, so the footer and the chat line can never describe the same state differently.
 
 ### Editing settings
 
@@ -101,7 +110,7 @@ Settings are edited in a dialog-based flow, reachable three ways:
 - The command **Indexing: settings (dialogs)** in the command palette (a manual escape hatch if the page ever fails to render).
 - Automatically: if the host has no JSX runtime, `/indexing` opens this flow instead of the page.
 
-`indexing_config` (the tool) reports the same configuration as `/indexing-config` and works in every client, because tools run server-side. It is read-only: to change a value, use the command where it is dispatched, the settings file, or the TUI page.
+`indexing_config` (the tool) reports the same configuration as `/indexing-config` and works in every client, because tools run server-side, and `indexing_config_set` changes a value the same way. Together they are the whole configuration surface for clients that do not dispatch slash commands.
 
 Configurable from all three:
 
@@ -148,7 +157,9 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 node install.mjs
 ```
 
-It copies the plugin to the global config directory (`$XDG_CONFIG_HOME/opencode` or `~/.config/opencode`, same path used on Windows), installs runtime deps (`ignore`, plus optional `@lancedb/lancedb@0.26.2` and the tree-sitter WASM packages), merges `permission` entries for the tools into `opencode.json`, and restarts the OpenCode service.
+It copies the plugin to the global config directory (`$XDG_CONFIG_HOME/opencode` or `~/.config/opencode`, same path used on Windows), installs runtime deps (`ignore`, plus optional `@lancedb/lancedb@0.26.2` and the tree-sitter WASM packages), adds one `permissions` rule per tool to `opencode.json` (read tools `allow`, `indexing_config_set` `ask`), and restarts the OpenCode service.
+
+Those are V2 rules — `{ "action": "indexing_search", "resource": "*", "effect": "allow" }` inside the `permissions` array. The older `permission` action map is a V1 shape that V2 ignores, so the installer removes any of its own entries from that map rather than leaving something that looks configured but grants nothing.
 
 Options: `--skip-deps` (copy files only), `--no-restart`. PowerShell accepts `-SkipDeps` / `-NoRestart` too.
 

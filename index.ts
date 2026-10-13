@@ -27,6 +27,7 @@ import { IndexingRpc } from "./src/rpc.ts"
 import {
   COMMAND_USAGE,
   applySettingValue,
+  applySettingsChange,
   describeSettingValue,
   parseIndexingCommand,
   settingReport,
@@ -75,6 +76,14 @@ plugin's own incremental index (Qdrant or LanceDB backend).
 - Reading a known file: use Read.
 - Verifying whether code exists that must be fresh: the index may lag behind
   recent edits; check \`indexing_status\` (freshness) or use Grep for certainty.
+
+## Configuration
+
+\`indexing_config\` reports the effective settings (backend, model, credentials —
+masked, search and behaviour). \`indexing_config_set { key, value }\` changes one
+and persists it. Use them when the user asks what the indexing configuration is,
+or asks to change it. Credentials are refused by design: an API key has to come
+from the environment or from plugin options, never from a tool call.
 
 ## Freshness
 
@@ -176,6 +185,63 @@ Use this whenever the user asks to see, review or check the indexing configurati
       execute: async () => ({ output: await renderConfigReport() }),
     })
 
+    /**
+     * Writing configuration, for the clients that cannot dispatch a slash
+     * command.
+     *
+     * Read and write are separate tools on purpose: the permission gate is what
+     * makes a write safe to expose to a model, and a tool that both read and
+     * wrote could not carry one without also gating the read.
+     */
+    const CONFIG_SET_TOOL_DESCRIPTION = `Change one semantic indexing setting and persist it to the settings file.
+
+Use this when the user asks to change a setting: switching the vector store, changing the embedding provider or model, adjusting search limits, toggling import-from-Kilo or auto-refresh, or pausing/resuming indexing. Run \`indexing_config\` first to see the current values and the exact key names.
+
+Behavior:
+- Validated with the same rules as \`/indexing-config set <key>=<value>\`, and persisted immediately.
+- Credentials are refused. A tool call is recorded in the conversation, and the settings file never stores keys in plain text, so an API key has to come from the environment or from plugin options in \`opencode.json\`.
+- The host asks the user to confirm before this runs; nothing is written unless they approve.`
+
+    tools.push({
+      name: "config_set",
+      description: CONFIG_SET_TOOL_DESCRIPTION,
+      permission: "indexing_config_set",
+      input: {
+        type: "object",
+        properties: {
+          key: { type: "string", description: "Setting name, case-insensitive. Run indexing_config for the list." },
+          value: {
+            type: "string",
+            description: "New value as a string: booleans as true/false, numbers as digits, extension lists comma-separated.",
+          },
+        },
+        required: ["key", "value"],
+        additionalProperties: false,
+      },
+      execute: async (input) => {
+        const key = String(input.key ?? "")
+          .trim()
+          .toLowerCase()
+        const value = String(input.value ?? "")
+
+        const applied = applySettingsChange(key, value)
+        if (!applied.ok) return { output: applied.error }
+
+        const { writeSettingsFile } = await import("./src/settings.ts")
+        writeSettingsFile(applied.patch as never)
+
+        // Read back rather than echoing what was asked for: the file may clamp
+        // or normalise a value, and reporting the request would hide that.
+        const settings = await getSettings()
+        const current = describeSettingValue(key, settings)
+        const warnings = settings.warnings.length > 0 ? `\n\nWarnings: ${settings.warnings.join("; ")}` : ""
+        return {
+          output: `Saved: ${key} = ${current ?? applied.display}${warnings}`,
+          metadata: { key, value: current ?? applied.display },
+        }
+      },
+    })
+
     try {
       await ctx.tool.transform((editor) => {
         editor.namespace({ name: "indexing", description: "Semantic code index tools" })
@@ -184,7 +250,7 @@ Use this whenever the user asks to see, review or check the indexing configurati
             name: tool.name,
             description: tool.description,
             input: tool.input as never,
-            options: { namespace: "indexing" },
+            options: { namespace: "indexing", ...(tool.permission ? { permission: tool.permission } : {}) },
             execute: async (input, context) => {
               const result = await tool.execute(input as Record<string, unknown>, {
                 signal: context.signal,
@@ -509,6 +575,13 @@ class ForgetRefusedError extends Error {}
           },
         } as never)
       })
+
+      // Reading the registry already sees the command; this is for clients.
+      // They keep their own copy of the command list, and a client that
+      // snapshotted it before this plugin loaded never shows the command at
+      // all. Reloading marks the registry changed so the `command.updated`
+      // event reaches them.
+      await ctx.command.reload()
     } catch (error) {
       console.warn(`[opencode-indexing] command registration failed: ${error instanceof Error ? error.message : String(error)}`)
     }

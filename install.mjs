@@ -182,17 +182,39 @@ function stripJsonc(input) {
   return out.replace(/,(\s*[}\]])/g, "$1")
 }
 
-const TOOLS = ["indexing_search", "indexing_status", "indexing_config", "indexing_refresh", "indexing_build", "indexing_import"]
+// V2 permissions are an ordered rule list of { action, resource, effect }, not a
+// flat action map. The old `permission` object is the V1 shape and V2 ignores it
+// entirely, so entries written in it never applied.
+const TOOLS = ["indexing_search", "indexing_status", "indexing_config", "indexing_config_set", "indexing_refresh", "indexing_build", "indexing_import"]
+// Everything else only reads. This one writes the settings file, so the host
+// asks the user before it runs instead of taking it on trust.
+const ASK_BEFORE_RUN = new Set(["indexing_config_set"])
 try {
   let cfg = {}
   if (existsSync(configFile)) {
     cfg = JSON.parse(stripJsonc(readFileSync(configFile, "utf8")))
     if (typeof cfg !== "object" || cfg === null || Array.isArray(cfg)) cfg = {}
   }
-  if (typeof cfg.permission !== "object" || cfg.permission === null || Array.isArray(cfg.permission)) {
-    cfg.permission = {}
+
+  // Drop the V1 entries this installer used to write. Anything else the user
+  // put there is left untouched.
+  if (cfg.permission && typeof cfg.permission === "object" && !Array.isArray(cfg.permission)) {
+    for (const tool of TOOLS) delete cfg.permission[tool]
+    if (Object.keys(cfg.permission).length === 0) delete cfg.permission
   }
-  for (const tool of TOOLS) cfg.permission[tool] = "allow"
+
+  if (!Array.isArray(cfg.permissions)) cfg.permissions = []
+  for (const tool of TOOLS) {
+    const effect = ASK_BEFORE_RUN.has(tool) ? "ask" : "allow"
+    const rule = cfg.permissions.find((entry) => entry && entry.action === tool)
+    if (rule) {
+      rule.resource = "*"
+      rule.effect = effect
+    } else {
+      cfg.permissions.push({ action: tool, resource: "*", effect })
+    }
+  }
+
   mkdirSync(configDir, { recursive: true })
   writeFileSync(configFile, JSON.stringify(cfg, null, 2) + "\n", "utf8")
   log(`  permissions added to ${configFile}`)

@@ -3,6 +3,7 @@ import { describe, test } from "node:test"
 
 import {
   applySettingValue,
+  applySettingsChange,
   describeSettingValue,
   listSettingKeys,
   parseIndexingCommand,
@@ -231,5 +232,53 @@ describe("settingReport", () => {
       assert.ok(group.title.length > 0, "group without a title")
       assert.ok(group.entries.length > 0, `empty group: ${group.id}`)
     }
+  })
+})
+
+describe("applySettingsChange", () => {
+  test("applies an ordinary setting with the same rules as the command", () => {
+    const result = applySettingsChange("SearchMaxResults", "25")
+    assert.equal(result.ok, true)
+    if (result.ok) assert.deepEqual(result.patch, { searchMaxResults: 25 })
+  })
+
+  test("refuses every credential key", () => {
+    const secrets = [
+      "mistralkey",
+      "openaikey",
+      "geminikey",
+      "voyagekey",
+      "openrouterkey",
+      "openaicompatiblekey",
+      "qdrantapikey",
+    ]
+    for (const key of secrets) {
+      const result = applySettingsChange(key, "sk-should-never-be-written")
+      assert.equal(result.ok, false, `${key} should be refused`)
+      if (!result.ok) {
+        assert.match(result.error, /credential/i, `${key}: refusal should name the reason`)
+        // The refusal is what the model reads back; a key echoed there would
+        // defeat the point of refusing it.
+        assert.ok(!result.error.includes("sk-should-never-be-written"), `${key}: the value leaked`)
+      }
+    }
+  })
+
+  test("reports an unknown key the way the command does", () => {
+    const result = applySettingsChange("nope", "1")
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.match(result.error, /Unknown setting/)
+  })
+
+  test("still validates the value of an allowed key", () => {
+    const result = applySettingsChange("vectorstore", "postgres")
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.match(result.error, /must be one of/)
+  })
+
+  test("tolerates surrounding whitespace and mixed case", () => {
+    const result = applySettingsChange("  VectorStore  ", "lancedb")
+    assert.equal(result.ok, true)
+    if (result.ok) assert.deepEqual(result.patch, { vectorStore: "lancedb" })
   })
 })

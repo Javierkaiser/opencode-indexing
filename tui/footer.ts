@@ -10,35 +10,27 @@
  */
 
 import type { PageColor, PagePalette } from "./page-style.ts"
+import {
+  DETAILS,
+  GLYPHS,
+  LABELS,
+  formatPoints,
+  indexState,
+  type IndexingState,
+  type StatusInput,
+} from "../src/index-state.ts"
 
-export type IndexingState =
-  /** Status not fetched yet. */
-  | "loading"
-  /** An index run is in flight. */
-  | "working"
-  /** Indexing paused by the user (`enabled: false`). */
-  | "paused"
-  /** Own index exists and is complete. */
-  | "ready"
-  /** Own index exists but is incomplete, so it needs a refresh. */
-  | "stale"
-  /** Nothing indexed for this workspace. */
-  | "empty"
-  /** No Kilo index either, so searches would find nothing. */
-  | "unavailable"
-  /** The status call failed. */
-  | "error"
-
-export interface StatusInput {
-  /** `enabled` flag from the resolved settings. */
-  enabled: boolean
-  /** Points in the own index; null/undefined when it does not exist. */
-  ownPoints?: number | null
-  /** Whether the own index finished indexing. */
-  ownComplete?: boolean | null
-  /** Whether a readable Kilo index exists. */
-  hasKilo: boolean
-}
+// The state vocabulary is shared with the chat-side status line, so a state
+// never reads one way in the TUI and another in a chat client. Re-exported here
+// because the TUI's public surface has always owned it.
+export {
+  GLYPHS,
+  LABELS,
+  formatPoints,
+  indexState as footerState,
+  type IndexingState,
+  type StatusInput,
+} from "../src/index-state.ts"
 
 export interface FooterView {
   state: IndexingState
@@ -113,102 +105,31 @@ export function footerAction(state: IndexingState): FooterAction {
   }
 }
 
-const GLYPHS: Record<IndexingState, string> = {
-  loading: "◌",
-  working: "◍",
-  paused: "⏸",
-  ready: "●",
-  stale: "◐",
-  empty: "○",
-  unavailable: "✕",
-  error: "!",
-}
-
-/** 12345 → "12.3k"; keeps the footer one short token. */
-export function formatPoints(points: number): string {
-  if (!Number.isFinite(points) || points < 0) return "?"
-  if (points < 1000) return String(Math.floor(points))
-  if (points < 1_000_000) return `${(points / 1000).toFixed(1)}k`
-  return `${(points / 1_000_000).toFixed(1)}M`
-}
-
-/** Maps a status payload to the footer state. */
-export function footerState(input: StatusInput): IndexingState {
-  if (!input.enabled) return "paused"
-  if (input.ownPoints !== undefined && input.ownPoints !== null) {
-    return input.ownComplete === true ? "ready" : "stale"
-  }
-  return input.hasKilo ? "empty" : "unavailable"
+/**
+ * Colours per state.
+ *
+ * The wording is not repeated here on purpose: the glyph, label and detail all
+ * come from `src/index-state.ts`, which the chat-side status line also reads.
+ */
+const COLORS: Record<IndexingState, (palette: PagePalette) => PageColor> = {
+  loading: (palette) => palette.muted,
+  working: (palette) => palette.accent,
+  paused: (palette) => palette.muted,
+  ready: (palette) => palette.success,
+  stale: (palette) => palette.accent,
+  empty: (palette) => palette.muted,
+  unavailable: (palette) => palette.error,
+  error: (palette) => palette.error,
 }
 
 /** Builds the footer view for a state, including its theme color. */
 export function footerView(state: IndexingState): FooterView {
-  const glyph = GLYPHS[state]
-  switch (state) {
-    case "paused":
-      return {
-        state,
-        glyph,
-        label: "paused",
-        detail: "click to resume indexing",
-        color: (palette) => palette.muted,
-      }
-    case "working":
-      return {
-        state,
-        glyph,
-        label: "indexing…",
-        detail: "an index run is in progress",
-        color: (palette) => palette.accent,
-      }
-    case "ready":
-      return {
-        state,
-        glyph,
-        label: "indexed",
-        detail: "index up to date",
-        color: (palette) => palette.success,
-      }
-    case "stale":
-      return {
-        state,
-        glyph,
-        label: "index stale",
-        detail: "index needs a refresh",
-        color: (palette) => palette.accent,
-      }
-    case "empty":
-      return {
-        state,
-        glyph,
-        label: "not indexed",
-        detail: "no own index yet",
-        color: (palette) => palette.muted,
-      }
-    case "unavailable":
-      return {
-        state,
-        glyph,
-        label: "no index",
-        detail: "no index available for this workspace",
-        color: (palette) => palette.error,
-      }
-    case "error":
-      return {
-        state,
-        glyph,
-        label: "index error",
-        detail: "could not read index status",
-        color: (palette) => palette.error,
-      }
-    default:
-      return {
-        state,
-        glyph,
-        label: "…",
-        detail: "reading index status",
-        color: (palette) => palette.muted,
-      }
+  return {
+    state,
+    glyph: GLYPHS[state],
+    label: LABELS[state],
+    detail: DETAILS[state],
+    color: COLORS[state],
   }
 }
 

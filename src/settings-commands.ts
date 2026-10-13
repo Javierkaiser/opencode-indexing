@@ -410,6 +410,36 @@ export function describeSettingValue(key: string, settings: IndexingSettings): s
   return spec.display(settings)
 }
 
+/**
+ * Whether a key holds a credential.
+ *
+ * Credentials are deliberately refused by the chat-facing write tool: the call
+ * would land in the session transcript, and the settings file never stores them
+ * in plain text anyway. They are set through the environment or plugin options.
+ */
+export function isSecretSetting(key: string): boolean {
+  return KEY_SPECS[key]?.kind === "key"
+}
+
+/** Why a credential cannot be set through a chat tool call. */
+export const CREDENTIAL_REFUSAL =
+  "holds a credential and cannot be set from a tool call: the call is recorded in this conversation, and the settings file never stores keys in plain text.\n\nSet it through the environment (`KILO_INDEX_*`) or from the plugin options in `opencode.json`. Every other indexing setting can be changed here."
+
+/**
+ * Validates a settings change that arrived through a chat tool call.
+ *
+ * Same rules as the slash command's `set`, plus the credential refusal. Kept
+ * here rather than in the tool so the decision is unit-testable without a
+ * running server, and so both paths share one set of rules.
+ */
+export function applySettingsChange(key: string, rawValue: string): ApplyResult {
+  const normalized = key.trim().toLowerCase()
+  if (isSecretSetting(normalized)) {
+    return { ok: false, error: `\`${normalized}\` ${CREDENTIAL_REFUSAL}` }
+  }
+  return applySettingValue(normalized, rawValue)
+}
+
 /** Suggested fix when the user typo'd a key (Levenshtein-ish prefix match). */
 export function suggestKey(input: string): string | undefined {
   const normalized = input.toLowerCase()
