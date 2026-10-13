@@ -80,6 +80,15 @@ describe("config", () => {
     assert.deepEqual(parsed.list, [1, 2])
   })
 
+  test("stripJsonComments drops a UTF-8 BOM", () => {
+    // PowerShell and several Windows editors write a BOM by default. Left in
+    // place, JSON.parse throws and the caller silently falls back to defaults.
+    const bom = "\uFEFF"
+    assert.deepEqual(JSON.parse(stripJsonComments(`${bom}{ "a": 1 }`)), { a: 1 })
+    assert.deepEqual(JSON.parse(stripJsonComments(`${bom}${bom}[1, 2]`)), [1, 2])
+    assert.doesNotThrow(() => stripJsonComments(bom))
+  })
+
   test("resolveSettings defaults to mistral/codestral and localhost qdrant", () => {
     const settings = resolveSettings({ ignoreKiloConfig: true })
     assert.equal(settings.provider, "mistral")

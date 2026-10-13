@@ -1,5 +1,9 @@
 /** Minimal JSONC → JSON (strips // and block comments and trailing commas, preserving strings). */
 export function stripJsonComments(input: string): string {
+  // A UTF-8 BOM is not valid JSON and is what PowerShell and several Windows
+  // editors write by default. Left in place, JSON.parse throws and the caller
+  // silently falls back to defaults, losing whatever the file held.
+  if (input.charCodeAt(0) === 0xfeff) input = input.replace(/^\uFEFF+/, "")
   let out = ""
   let inString = false
   let inLine = false
