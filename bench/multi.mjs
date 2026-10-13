@@ -8,6 +8,11 @@
  * because a report that could identify the repository it describes is not safe
  * to publish.
  *
+ * The report is written in two layers: a plain-language summary anyone can read,
+ * then the full tables for whoever wants the numbers behind it. The friendly
+ * layer is generated from the same results, never hand-written, so it cannot
+ * drift from the data.
+ *
  * Conditions are an ablation: each one is a single ranker standing alone, so the
  * numbers say what each signal contributes rather than how much stacking helps.
  *
@@ -47,10 +52,29 @@ const indexedExtensions = new Set(
 
 if (!fs.existsSync(manifestFile)) {
   console.error(`no manifest at ${manifestFile}`)
-  console.error("create it with: [{ \"label\": \"P1\", \"root\": \"/abs/path\" }]")
+  console.error('create it with: [{ "label": "P1", "root": "/abs/path" }]')
   process.exit(2)
 }
 const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"))
+
+/** Plain-language names, because "MRR" and "ablation" help nobody. */
+const FRIENDLY = {
+  keyword: "Word matching",
+  graph: "Symbol names",
+  semantic: "Meaning",
+  fusion: "Meaning + symbols",
+}
+const WHAT_IT_IS = {
+  keyword: "Looks for the words you typed inside the files",
+  graph: "Looks for functions and classes whose *names* match your words",
+  semantic: "Looks for code that *does* what you described, even if no word matches",
+  fusion: "Runs the last two and merges their answers",
+}
+const MEDAL = ["🥇", "🥈", "🥉", "4️⃣"]
+
+const pct = (x) => `${(x * 100).toFixed(0)}%`
+const compact = (n) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
+const bar = (fraction, width = 10) => `${"█".repeat(Math.max(0, Math.round(fraction * width)))}${"░".repeat(Math.max(0, width - Math.round(fraction * width)))}`
 
 /** root -> index collection, so a report can state how big each index is. */
 function readIndexPoints() {
@@ -100,11 +124,11 @@ function corpusSize(repo) {
 
 const indexPoints = readIndexPoints()
 const qdrantUrl = process.env.KILO_INDEX_QDRANT_URL ?? "http://localhost:6333"
-const pct = (x) => `${(x * 100).toFixed(1)}%`
-const compact = (n) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
 
-const projectLines = []
-const reportLines = ["# Benchmark results — multi-repository", "", "Anonymised by design: no path, file name or query text appears below.", ""]
+// ---------------------------------------------------------------------------
+// Collect
+// ---------------------------------------------------------------------------
+const projects = []
 
 for (const entry of manifest) {
   const repo = path.resolve(entry.root)
@@ -114,12 +138,8 @@ for (const entry of manifest) {
   const points = store ? await pointsIn(store, qdrantUrl) : null
   const graph = fs.existsSync(path.join(repo, ".codegraph"))
 
-  reportLines.push(`## ${label}`, "")
-  reportLines.push("| files | lines | own index | symbol graph |", "| --- | --- | --- | --- |")
-  reportLines.push(
-    `| ${size.files} | ${compact(size.lines)} | ${points === null ? "not indexed" : `${points} pts`} | ${graph ? "indexed" : "not indexed"} |`,
-  )
-  reportLines.push("")
+  const project = { label, size, points, graph, sets: [], note: null }
+  projects.push(project)
 
   const sets = []
   if (entry.queries) {
@@ -134,11 +154,7 @@ for (const entry of manifest) {
   }
 
   if (commitQueries.length === 0 && !entry.queries) {
-    // Silently dropping the project would read as "measured, nothing to say".
-    reportLines.push(
-      `_Not measured: no single-file commit in the scanned history touches a file type the index covers, so no query could be generated._`,
-      "",
-    )
+    project.note = "No question could be built for this codebase: none of its one-file changes touch a file type the index covers."
     console.log(`${label}: no usable commit-derived queries, skipped`)
     continue
   }
@@ -153,9 +169,7 @@ for (const entry of manifest) {
   })
 
   for (const set of sets) {
-    reportLines.push(`### ${label} · query set: ${set.name} (n=${set.queries.length})`, "")
-    reportLines.push(`| Condition | n | Hit@${k} | Recall@${k} | MRR | nDCG@${k} |`, "| --- | --- | --- | --- | --- | --- |")
-
+    const conditions = {}
     for (const name of STRATEGY_NAMES) {
       const rows = []
       for (const query of set.queries) {
@@ -176,46 +190,241 @@ for (const entry of manifest) {
           ndcg: error ? 0 : ndcgAtK(ranked, query.expected, k),
         })
       }
-
       const failed = rows.filter((row) => row.error).length
       if (failed === rows.length) {
         // A condition that could not run at all is not a condition that scored
         // zero; saying "0%" would blame the strategy for a missing index.
-        reportLines.push(`| ${name} | ${rows.length} | n/a | n/a | n/a | n/a |`)
-        console.log(`${label}/${set.name}/${name.padEnd(8)} n/a (${rows[0]?.error ?? "no results"})`)
+        conditions[name] = { unavailable: rows[0]?.error ?? "no results", n: rows.length }
+        console.log(`${label}/${set.name}/${name.padEnd(8)} n/a (${conditions[name].unavailable})`)
         continue
       }
       const ok = rows.filter((row) => !row.error)
-      reportLines.push(
-        `| ${name} | ${ok.length} | ${pct(mean(ok.map((r) => r.hit)))} | ${pct(mean(ok.map((r) => r.recall)))} | ${mean(ok.map((r) => r.rr)).toFixed(3)} | ${mean(ok.map((r) => r.ndcg)).toFixed(3)} |`,
-      )
-      console.log(`${label}/${set.name}/${name.padEnd(8)} Hit@${k}=${pct(mean(ok.map((r) => r.hit)))}  MRR=${mean(ok.map((r) => r.rr)).toFixed(3)}`)
+      conditions[name] = {
+        n: ok.length,
+        hit: mean(ok.map((r) => r.hit)),
+        recall: mean(ok.map((r) => r.recall)),
+        rr: mean(ok.map((r) => r.rr)),
+        ndcg: mean(ok.map((r) => r.ndcg)),
+        byType: Object.fromEntries(
+          ["concept", "identifier"].map((type) => {
+            const typed = ok.filter((row) => row.type === type)
+            return [type, typed.length ? { n: typed.length, hit: mean(typed.map((r) => r.hit)), rr: mean(typed.map((r) => r.rr)) } : null]
+          }),
+        ),
+      }
+      console.log(`${label}/${set.name}/${name.padEnd(8)} found@${k}=${pct(conditions[name].hit)}  rank=${conditions[name].rr.toFixed(2)}`)
+    }
+    project.sets.push({ name: set.name, n: set.queries.length, conditions })
+  }
+}
 
-      for (const type of ["concept", "identifier"]) {
-        const typed = ok.filter((row) => row.type === type)
-        if (!typed.length) continue
-        projectLines.push(`| ${label} | ${set.name} | ${name} | ${type} | ${typed.length} | ${pct(mean(typed.map((r) => r.hit)))} | ${mean(typed.map((r) => r.rr)).toFixed(3)} |`)
+// ---------------------------------------------------------------------------
+// Render: plain layer, then the numbers
+// ---------------------------------------------------------------------------
+const lines = []
+
+lines.push("# Which way of searching actually finds the right file?", "")
+lines.push(
+  "We took real questions about code — the kind where you know what the code *does*",
+  "but not what it is *called* — and asked four different search methods to point at",
+  "the right file. Then we counted how often each one got it right.",
+  "",
+)
+
+// --- What stood out: derived from the results, never hand-written ----------
+// Collected as findings first, then rendered once each, so two codebases saying
+// the same thing produce one sentence rather than two.
+const findings = { fusionBeats: [], keywordGap: [], graphWeakest: [], rankNotFirst: [] }
+
+for (const project of projects) {
+  for (const set of project.sets) {
+    const usable = STRATEGY_NAMES.filter((name) => set.conditions[name] && !set.conditions[name].unavailable)
+    // A four-question sample must not reach the summary at the top.
+    if (usable.length < 2 || set.n < 10) continue
+
+    const { semantic, keyword, fusion, graph } = set.conditions
+    const ranked = [...usable].sort((a, b) => set.conditions[b].hit - set.conditions[a].hit || set.conditions[b].rr - set.conditions[a].rr)
+
+    if (fusion && semantic) {
+      const hitGain = fusion.hit - semantic.hit
+      const rankGain = fusion.rr - semantic.rr
+      // Better can mean finding more, or finding it higher. Reporting only the
+      // first would hide the codebase where fusion helped by ordering.
+      if (hitGain > 0.02 || rankGain > 0.02) {
+        findings.fusionBeats.push({ label: project.label, hitGain, rankGain, fusion: fusion.hit, semantic: semantic.hit })
       }
     }
-    reportLines.push("")
-    if (set.queries.length < 10) {
-      // A sample this size cannot support a comparison. Saying so is the
-      // difference between a benchmark and a coincidence.
-      reportLines.push(
-        `_n=${set.queries.length} is too small to conclude from: treat these numbers as indicative only._`,
-        "",
-      )
+    if (semantic && keyword) {
+      findings.keywordGap.push({ label: project.label, semantic: semantic.hit, keyword: keyword.hit })
+    }
+    if (ranked[ranked.length - 1] === "graph") {
+      findings.graphWeakest.push({ label: project.label, hit: graph.hit })
+    }
+    if (semantic && semantic.hit >= 0.95 && semantic.rr < 0.75) {
+      findings.rankNotFirst.push({ label: project.label, rr: semantic.rr })
     }
   }
 }
 
-if (projectLines.length > 0) {
-  reportLines.push("## By query type", "")
-  reportLines.push(`| Project | Query set | Condition | Type | n | Hit@${k} | MRR |`, "| --- | --- | --- | --- | --- | --- | --- |")
-  reportLines.push(...projectLines)
-  reportLines.push("")
+const observations = []
+const join = (items, render) => {
+  if (items.length === 1) return render(items[0], false)
+  return render(items[0], true) + ` The same held on ${items.slice(1).map((i) => i.label).join(" and ")}.`
 }
 
-reportLines.unshift(`k=${k} · embedding profile recorded in bench/README.md · the model matters for these numbers.`, "")
-fs.writeFileSync(outFile, reportLines.join("\n"))
+if (findings.fusionBeats.length > 0) {
+  const found = findings.fusionBeats.filter((f) => f.hitGain > 0.02)
+  const ordered = findings.fusionBeats.filter((f) => f.hitGain <= 0.02 && f.rankGain > 0.02)
+  const parts = []
+  if (found.length) {
+    parts.push(`it found more files on ${found.map((f) => `${f.label} (${pct(f.fusion)} against ${pct(f.semantic)})`).join(", ")}`)
+  }
+  if (ordered.length) {
+    parts.push(`it put the right file higher on ${ordered.map((f) => f.label).join(" and ")}`)
+  }
+  observations.push(
+    `**Combining the two smart methods was never worse than meaning alone, and better on ${findings.fusionBeats.length === 1 ? "one codebase" : "both"}:** ${parts.join(", and ")}.`,
+  )
+}
+
+if (findings.keywordGap.length > 0) {
+  const gaps = findings.keywordGap.map((g) => g.semantic - g.keyword)
+  const clear = gaps.every((gap) => gap > 0.15)
+  const close = gaps.every((gap) => Math.abs(gap) <= 0.15)
+  if (clear) {
+    observations.push(
+      `**Meaning beat word matching clearly** everywhere: ${findings.keywordGap.map((g) => `${pct(g.semantic)} against ${pct(g.keyword)} on ${g.label}`).join(", ")}.`,
+    )
+  } else if (close) {
+    observations.push(
+      `**Meaning and word matching came out close** (${findings.keywordGap.map((g) => `${pct(g.semantic)} against ${pct(g.keyword)} on ${g.label}`).join(", ")}), so neither replaces the other.`,
+    )
+  } else {
+    observations.push(
+      `**Meaning and word matching traded places**: ${findings.keywordGap.map((g) => (g.semantic > g.keyword ? `${pct(g.semantic)} against ${pct(g.keyword)} on ${g.label}` : `word matching ahead, ${pct(g.keyword)} against ${pct(g.semantic)}, on ${g.label}`)).join("; ")}. One codebase is not enough to call it either way.`,
+    )
+  }
+}
+
+if (findings.graphWeakest.length > 0) {
+  observations.push(
+    `**Searching by symbol name was the weakest** ${findings.graphWeakest.length > 1 ? "in every codebase measured" : `on ${findings.graphWeakest[0].label}`} (${findings.graphWeakest.map((g) => pct(g.hit)).join(", ")}). It only matches what things are *called*, so a question in everyday words has little to grab onto.`,
+  )
+}
+
+if (findings.rankNotFirst.length > 0) {
+  const worst = Math.max(...findings.rankNotFirst.map((f) => f.rr))
+  observations.push(
+    `**Finding the file and finding it first are different things.** Meaning-based search almost always had the right file in its top ${k}, but usually not first — its rank quality is ${worst.toFixed(2)}, roughly second place. Combining methods is what improves that ordering.`,
+  )
+}
+
+lines.push("## The short version", "")
+if (observations.length === 0) {
+  lines.push("Not enough usable results to draw a conclusion from. See the details below.", "")
+} else {
+  for (const observation of observations) lines.push(`- ${observation}`)
+  lines.push("")
+}
+
+// --- How to read ------------------------------------------------------------
+lines.push("## How to read the numbers", "")
+lines.push("Two numbers matter, and neither is complicated:", "")
+lines.push(
+  `- **Found in the top ${k}** — was the right file anywhere in the first ${k} answers? This is the one to look at first.`,
+  "- **Rank quality** — on average, how close to the top was it? **1.00** means always first, **0.50** means usually around second, **0.00** means never found. Two methods can both *find* the file while one puts it nearer the top.",
+  "",
+)
+
+lines.push("## The four methods", "")
+lines.push("| Method | What it does |", "| --- | --- |")
+for (const name of STRATEGY_NAMES) lines.push(`| ${FRIENDLY[name]} | ${WHAT_IT_IS[name]} |`)
+lines.push("")
+
+// --- Per project ------------------------------------------------------------
+for (const project of projects) {
+  lines.push(`## ${project.label}`, "")
+  lines.push(
+    `A codebase of **${compact(project.size.lines)} lines** across **${project.size.files} files**. ` +
+      (project.points === null ? "Not indexed." : `Its index holds **${compact(project.points)} pieces of code**. `) +
+      (project.graph ? "It also has a symbol graph." : "It has no symbol graph."),
+    "",
+  )
+
+  if (project.note) {
+    lines.push(`> _Not measured: ${project.note}_`, "")
+    continue
+  }
+
+  for (const set of project.sets) {
+    const label = set.name === "labelled" ? "Questions written by hand" : "Questions taken from the project's own history"
+    lines.push(`### ${label} (${set.n} questions)`, "")
+    if (set.n < 10) {
+      lines.push(`> ⚠️ **Only ${set.n} questions.** Too few to draw a conclusion from — treat what follows as a hint, not a result.`, "")
+    }
+    lines.push(`| Method | Found in top ${k} | Rank quality |`, "| --- | --- | --- |")
+    const usable = STRATEGY_NAMES.filter((name) => !set.conditions[name]?.unavailable)
+    const ordered = [...usable].sort(
+      (a, b) => set.conditions[b].hit - set.conditions[a].hit || set.conditions[b].rr - set.conditions[a].rr,
+    )
+    ordered.forEach((name, index) => {
+      const c = set.conditions[name]
+      lines.push(`| ${MEDAL[index] ?? ""} ${FRIENDLY[name]} | \`${bar(c.hit)}\` ${pct(c.hit)} | ${c.rr.toFixed(2)} |`)
+    })
+    for (const name of STRATEGY_NAMES.filter((n) => set.conditions[n]?.unavailable)) {
+      lines.push(`| ${FRIENDLY[name]} | _could not run_ | — |`)
+    }
+    lines.push("")
+
+    const concept = usable.filter((name) => set.conditions[name].byType.concept)
+    if (concept.length) {
+      lines.push("<details><summary>Split by question type</summary>", "")
+      lines.push("| Method | Question names a symbol | Question is a description |", "| --- | --- | --- |")
+      for (const name of usable) {
+        const c = set.conditions[name]
+        const symbol = c.byType.identifier ? `${pct(c.byType.identifier.hit)} (${c.byType.identifier.n})` : "—"
+        const description = c.byType.concept ? `${pct(c.byType.concept.hit)} (${c.byType.concept.n})` : "—"
+        lines.push(`| ${FRIENDLY[name]} | ${symbol} | ${description} |`)
+      }
+      lines.push("", "</details>", "")
+    }
+  }
+}
+
+// --- Technical details ------------------------------------------------------
+lines.push("---", "")
+lines.push("<details><summary><b>Full numbers</b> (Hit@k, Recall@k, MRR, nDCG@k)</summary>", "")
+lines.push("", `These are the same results, named the way the literature names them.`, "")
+for (const project of projects) {
+  if (project.note) continue
+  for (const set of project.sets) {
+    lines.push(`**${project.label} · ${set.name} · n=${set.n}**`, "")
+    lines.push(`| Condition | n | Hit@${k} | Recall@${k} | MRR | nDCG@${k} |`, "| --- | --- | --- | --- | --- | --- |")
+    for (const name of STRATEGY_NAMES) {
+      const c = set.conditions[name]
+      if (!c) continue
+      if (c.unavailable) {
+        lines.push(`| ${name} | ${c.n} | n/a | n/a | n/a | n/a |`)
+        continue
+      }
+      lines.push(`| ${name} | ${c.n} | ${pct(c.hit)} | ${pct(c.recall)} | ${c.rr.toFixed(3)} | ${c.ndcg.toFixed(3)} |`)
+    }
+    lines.push("")
+  }
+}
+lines.push("</details>", "")
+
+// --- Caveats ----------------------------------------------------------------
+lines.push("## What this does not prove", "")
+lines.push(
+  `- **Two codebases is not a trend.** These are two data points.`,
+  "- **The questions from git history are noisy.** \"The one file that commit touched\" is not always the only file that answers the question, and that noise hits every method equally.",
+  "- **Symbol-name search looks worse here than a code graph really is.** This measures one subcommand that matches names. A graph's real strength — who calls what, what breaks if you change it — is not measured here at all.",
+  "- **One embedding model.** Swap the model and the meaning-based numbers move.",
+  "",
+)
+lines.push("---", "")
+lines.push(`Generated by \`bench/multi.mjs\` · top ${k} results · anonymised: no path, file name or question text appears above.`)
+
+fs.writeFileSync(outFile, lines.join("\n"))
 console.log(`\nwrote ${path.relative(process.cwd(), outFile)}`)

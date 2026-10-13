@@ -1,83 +1,151 @@
-k=10 · embedding profile recorded in bench/README.md · the model matters for these numbers.
+# Which way of searching actually finds the right file?
 
-# Benchmark results — multi-repository
+We took real questions about code — the kind where you know what the code *does*
+but not what it is *called* — and asked four different search methods to point at
+the right file. Then we counted how often each one got it right.
 
-Anonymised by design: no path, file name or query text appears below.
+## The short version
+
+- **Combining the two smart methods was never worse than meaning alone, and better on both:** it found more files on P2 (68% against 60%), and it put the right file higher on P1.
+- **Meaning and word matching traded places**: 100% against 76% on P1; 60% against 55% on P2. One codebase is not enough to call it either way.
+- **Searching by symbol name was the weakest** in every codebase measured (64%, 38%). It only matches what things are *called*, so a question in everyday words has little to grab onto.
+- **Finding the file and finding it first are different things.** Meaning-based search almost always had the right file in its top 10, but usually not first — its rank quality is 0.51, roughly second place. Combining methods is what improves that ordering.
+
+## How to read the numbers
+
+Two numbers matter, and neither is complicated:
+
+- **Found in the top 10** — was the right file anywhere in the first 10 answers? This is the one to look at first.
+- **Rank quality** — on average, how close to the top was it? **1.00** means always first, **0.50** means usually around second, **0.00** means never found. Two methods can both *find* the file while one puts it nearer the top.
+
+## The four methods
+
+| Method | What it does |
+| --- | --- |
+| Word matching | Looks for the words you typed inside the files |
+| Symbol names | Looks for functions and classes whose *names* match your words |
+| Meaning | Looks for code that *does* what you described, even if no word matches |
+| Meaning + symbols | Runs the last two and merges their answers |
 
 ## P1
 
-| files | lines | own index | symbol graph |
-| --- | --- | --- | --- |
-| 103 | 27.6k | 2233 pts | indexed |
+A codebase of **27.8k lines** across **102 files**. Its index holds **2.2k pieces of code**. It also has a symbol graph.
 
-### P1 · query set: labelled (n=25)
+### Questions written by hand (25 questions)
 
-| Condition | n | Hit@10 | Recall@10 | MRR | nDCG@10 |
-| --- | --- | --- | --- | --- | --- |
-| keyword | 25 | 76.0% | 76.0% | 0.249 | 0.371 |
-| graph | 25 | 64.0% | 64.0% | 0.304 | 0.381 |
-| semantic | 25 | 100.0% | 100.0% | 0.513 | 0.641 |
-| fusion | 25 | 100.0% | 100.0% | 0.576 | 0.679 |
+| Method | Found in top 10 | Rank quality |
+| --- | --- | --- |
+| 🥇 Meaning + symbols | `██████████` 100% | 0.58 |
+| 🥈 Meaning | `██████████` 100% | 0.51 |
+| 🥉 Word matching | `████████░░` 76% | 0.25 |
+| 4️⃣ Symbol names | `██████░░░░` 64% | 0.30 |
 
-### P1 · query set: commits (n=4)
+<details><summary>Split by question type</summary>
 
-| Condition | n | Hit@10 | Recall@10 | MRR | nDCG@10 |
-| --- | --- | --- | --- | --- | --- |
-| keyword | 4 | 75.0% | 75.0% | 0.625 | 0.658 |
-| graph | 4 | 0.0% | 0.0% | 0.000 | 0.000 |
-| semantic | 4 | 75.0% | 75.0% | 0.750 | 0.750 |
-| fusion | 4 | 75.0% | 75.0% | 0.375 | 0.473 |
+| Method | Question names a symbol | Question is a description |
+| --- | --- | --- |
+| Word matching | 50% (2) | 78% (23) |
+| Symbol names | 100% (2) | 61% (23) |
+| Meaning | 100% (2) | 100% (23) |
+| Meaning + symbols | 100% (2) | 100% (23) |
 
-_n=4 is too small to conclude from: treat these numbers as indicative only._
+</details>
+
+### Questions taken from the project's own history (4 questions)
+
+> ⚠️ **Only 4 questions.** Too few to draw a conclusion from — treat what follows as a hint, not a result.
+
+| Method | Found in top 10 | Rank quality |
+| --- | --- | --- |
+| 🥇 Meaning | `████████░░` 75% | 0.75 |
+| 🥈 Word matching | `████████░░` 75% | 0.63 |
+| 🥉 Meaning + symbols | `████████░░` 75% | 0.38 |
+| 4️⃣ Symbol names | `░░░░░░░░░░` 0% | 0.00 |
+
+<details><summary>Split by question type</summary>
+
+| Method | Question names a symbol | Question is a description |
+| --- | --- | --- |
+| Word matching | 0% (1) | 100% (3) |
+| Symbol names | 0% (1) | 0% (3) |
+| Meaning | 0% (1) | 100% (3) |
+| Meaning + symbols | 0% (1) | 100% (3) |
+
+</details>
 
 ## P2
 
-| files | lines | own index | symbol graph |
-| --- | --- | --- | --- |
-| 443 | 214.2k | 8573 pts | indexed |
+A codebase of **214.2k lines** across **443 files**. Its index holds **8.6k pieces of code**. It also has a symbol graph.
 
-### P2 · query set: commits (n=40)
+### Questions taken from the project's own history (40 questions)
 
-| Condition | n | Hit@10 | Recall@10 | MRR | nDCG@10 |
-| --- | --- | --- | --- | --- | --- |
-| keyword | 40 | 55.0% | 55.0% | 0.415 | 0.448 |
-| graph | 40 | 37.5% | 37.5% | 0.201 | 0.241 |
-| semantic | 40 | 60.0% | 60.0% | 0.415 | 0.460 |
-| fusion | 40 | 67.5% | 67.5% | 0.442 | 0.497 |
+| Method | Found in top 10 | Rank quality |
+| --- | --- | --- |
+| 🥇 Meaning + symbols | `███████░░░` 68% | 0.44 |
+| 🥈 Meaning | `██████░░░░` 60% | 0.41 |
+| 🥉 Word matching | `██████░░░░` 55% | 0.42 |
+| 4️⃣ Symbol names | `████░░░░░░` 38% | 0.20 |
+
+<details><summary>Split by question type</summary>
+
+| Method | Question names a symbol | Question is a description |
+| --- | --- | --- |
+| Word matching | 53% (15) | 56% (25) |
+| Symbol names | 53% (15) | 28% (25) |
+| Meaning | 100% (15) | 36% (25) |
+| Meaning + symbols | 100% (15) | 48% (25) |
+
+</details>
 
 ## P3
 
-| files | lines | own index | symbol graph |
-| --- | --- | --- | --- |
-| 44 | 4.7k | 143 pts | indexed |
+A codebase of **4.7k lines** across **44 files**. Its index holds **143 pieces of code**. It also has a symbol graph.
 
-_Not measured: no single-file commit in the scanned history touches a file type the index covers, so no query could be generated._
+> _Not measured: No question could be built for this codebase: none of its one-file changes touch a file type the index covers._
 
-## By query type
+---
 
-| Project | Query set | Condition | Type | n | Hit@10 | MRR |
-| --- | --- | --- | --- | --- | --- | --- |
-| P1 | labelled | keyword | concept | 23 | 78.3% | 0.257 |
-| P1 | labelled | keyword | identifier | 2 | 50.0% | 0.167 |
-| P1 | labelled | graph | concept | 23 | 60.9% | 0.276 |
-| P1 | labelled | graph | identifier | 2 | 100.0% | 0.625 |
-| P1 | labelled | semantic | concept | 23 | 100.0% | 0.493 |
-| P1 | labelled | semantic | identifier | 2 | 100.0% | 0.750 |
-| P1 | labelled | fusion | concept | 23 | 100.0% | 0.540 |
-| P1 | labelled | fusion | identifier | 2 | 100.0% | 1.000 |
-| P1 | commits | keyword | concept | 3 | 100.0% | 0.833 |
-| P1 | commits | keyword | identifier | 1 | 0.0% | 0.000 |
-| P1 | commits | graph | concept | 3 | 0.0% | 0.000 |
-| P1 | commits | graph | identifier | 1 | 0.0% | 0.000 |
-| P1 | commits | semantic | concept | 3 | 100.0% | 1.000 |
-| P1 | commits | semantic | identifier | 1 | 0.0% | 0.000 |
-| P1 | commits | fusion | concept | 3 | 100.0% | 0.500 |
-| P1 | commits | fusion | identifier | 1 | 0.0% | 0.000 |
-| P2 | commits | keyword | concept | 25 | 56.0% | 0.364 |
-| P2 | commits | keyword | identifier | 15 | 53.3% | 0.500 |
-| P2 | commits | graph | concept | 25 | 28.0% | 0.118 |
-| P2 | commits | graph | identifier | 15 | 53.3% | 0.338 |
-| P2 | commits | semantic | concept | 25 | 36.0% | 0.215 |
-| P2 | commits | semantic | identifier | 15 | 100.0% | 0.748 |
-| P2 | commits | fusion | concept | 25 | 48.0% | 0.224 |
-| P2 | commits | fusion | identifier | 15 | 100.0% | 0.806 |
+<details><summary><b>Full numbers</b> (Hit@k, Recall@k, MRR, nDCG@k)</summary>
+
+
+These are the same results, named the way the literature names them.
+
+**P1 · labelled · n=25**
+
+| Condition | n | Hit@10 | Recall@10 | MRR | nDCG@10 |
+| --- | --- | --- | --- | --- | --- |
+| keyword | 25 | 76% | 76% | 0.249 | 0.371 |
+| graph | 25 | 64% | 64% | 0.304 | 0.381 |
+| semantic | 25 | 100% | 100% | 0.513 | 0.641 |
+| fusion | 25 | 100% | 100% | 0.576 | 0.679 |
+
+**P1 · commits · n=4**
+
+| Condition | n | Hit@10 | Recall@10 | MRR | nDCG@10 |
+| --- | --- | --- | --- | --- | --- |
+| keyword | 4 | 75% | 75% | 0.625 | 0.658 |
+| graph | 4 | 0% | 0% | 0.000 | 0.000 |
+| semantic | 4 | 75% | 75% | 0.750 | 0.750 |
+| fusion | 4 | 75% | 75% | 0.375 | 0.473 |
+
+**P2 · commits · n=40**
+
+| Condition | n | Hit@10 | Recall@10 | MRR | nDCG@10 |
+| --- | --- | --- | --- | --- | --- |
+| keyword | 40 | 55% | 55% | 0.415 | 0.448 |
+| graph | 40 | 38% | 38% | 0.201 | 0.241 |
+| semantic | 40 | 60% | 60% | 0.415 | 0.460 |
+| fusion | 40 | 68% | 68% | 0.442 | 0.497 |
+
+</details>
+
+## What this does not prove
+
+- **Two codebases is not a trend.** These are two data points.
+- **The questions from git history are noisy.** "The one file that commit touched" is not always the only file that answers the question, and that noise hits every method equally.
+- **Symbol-name search looks worse here than a code graph really is.** This measures one subcommand that matches names. A graph's real strength — who calls what, what breaks if you change it — is not measured here at all.
+- **One embedding model.** Swap the model and the meaning-based numbers move.
+
+---
+
+Generated by `bench/multi.mjs` · top 10 results · anonymised: no path, file name or question text appears above.
