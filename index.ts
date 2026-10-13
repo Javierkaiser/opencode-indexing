@@ -29,6 +29,7 @@ import {
   applySettingValue,
   describeSettingValue,
   parseIndexingCommand,
+  settingReport,
 } from "./src/settings-commands.ts"
 import type { IndexingSettings, KVStore } from "./src/types.ts"
 import type { Qdrant } from "./src/qdrant.ts"
@@ -155,6 +156,26 @@ const plugin = {
 
     // ---- Tools ----
     const tools: ToolDefinition[] = createTools({ kv, root, getSettings })
+
+    /**
+     * Configuration has to be readable from every client.
+     *
+     * Slash commands are only dispatched by clients that choose to: the Desktop
+     * app submits `/indexing-config` to the model instead of executing it, and
+     * the server plugin has no UI surface (the SDK's toast lives in the TUI
+     * context). A tool runs server-side, so it works everywhere.
+     */
+    const CONFIG_TOOL_DESCRIPTION = `Show the current semantic indexing configuration: the vector store, the embedding provider and model, which credentials are configured (always masked), search and behavior settings, the settings file path, and which Kilo Code index sources exist for this workspace.
+
+Use this whenever the user asks to see, review or check the indexing configuration, or before suggesting a change to it. It is read-only and never writes settings. To change a value, use \`/indexing-config set <key>=<value>\` in a client that dispatches commands, or edit the settings file.`
+
+    tools.push({
+      name: "config",
+      description: CONFIG_TOOL_DESCRIPTION,
+      input: { type: "object", properties: {}, additionalProperties: false },
+      execute: async () => ({ output: await renderConfigReport() }),
+    })
+
     try {
       await ctx.tool.transform((editor) => {
         editor.namespace({ name: "indexing", description: "Semantic code index tools" })
@@ -361,7 +382,12 @@ const plugin = {
  */
 class ForgetRefusedError extends Error {}
 
-/** Renders the configuration report used by `show` and by the bare form. */
+    /**
+     * Renders the configuration report.
+     *
+     * Shared by `show`, the bare command form and the `indexing_config` tool so
+     * all three always agree.
+     */
     async function renderConfigReport(): Promise<string> {
       const settings = await getSettings()
       const lines: string[] = [
@@ -374,6 +400,18 @@ class ForgetRefusedError extends Error {}
         `- **Indexing:** ${settings.enabled === false ? "PAUSED (nothing is written or refreshed; search still reads Kilo's index)" : "ON"}`,
         `- **Settings file:** \`${settingsFilePath()}\``,
       ]
+
+      // Every settable key, so a value can be verified from the same command
+      // that set it. Derived from the catalogue: a key cannot be hidden by
+      // being left out of a hand-written list.
+      lines.push("", "### All settings", "")
+      for (const group of settingReport(settings)) {
+        lines.push(`**${group.title}**`)
+        for (const entry of group.entries) {
+          lines.push(`- \`${entry.key}\` = \`${entry.value}\` — ${entry.description}`)
+        }
+        lines.push("")
+      }
       const sources = await discoverKiloSources(root, {
         qdrant: createSettingsQdrant(settings),
         homeDir: undefined,

@@ -6,6 +6,7 @@ import {
   describeSettingValue,
   listSettingKeys,
   parseIndexingCommand,
+  settingReport,
   suggestKey,
 } from "../src/settings-commands.ts"
 import type { IndexingSettings } from "../src/types.ts"
@@ -175,6 +176,60 @@ describe("descriptions and suggestions", () => {
     const keys = listSettingKeys().map((entry) => entry.key)
     for (const expected of ["vectorstore", "qdranturl", "provider", "model", "importfromkilo", "autorefresh"]) {
       assert.ok(keys.includes(expected), `missing ${expected}`)
+    }
+  })
+})
+
+describe("settingReport", () => {
+  const entries = (report: ReturnType<typeof settingReport>) => report.flatMap((group) => group.entries)
+  const valueOf = (report: ReturnType<typeof settingReport>, key: string) =>
+    entries(report).find((entry) => entry.key === key)?.value
+
+  test("reports every configurable key exactly once", () => {
+    const report = settingReport(settings())
+    const reported = entries(report).map((entry) => entry.key)
+    const declared = listSettingKeys().map((entry) => entry.key)
+
+    // The report used to hard-code five fields and hide the other sixteen, so a
+    // value could be set and then never verified. Deriving it from the same
+    // catalogue `set` validates against is what keeps them in step.
+    assert.deepEqual(reported.slice().sort(), declared.slice().sort())
+    assert.equal(new Set(reported).size, reported.length, "a key is reported twice")
+  })
+
+  test("shows values the hand-written report used to hide", () => {
+    const report = settingReport(settings({ searchMaxResults: 25, embeddingBatchSize: 90 }))
+    assert.equal(valueOf(report, "searchmaxresults"), "25")
+    assert.equal(valueOf(report, "embeddingbatchsize"), "90")
+  })
+
+  test("summarises a long extension list instead of burying the report", () => {
+    // The built-in allowlist is ~70 entries; printed in full it drowns out
+    // every other setting.
+    const many = Array.from({ length: 70 }, (_, index) => `.ext${index}`)
+    const value = valueOf(settingReport(settings({ fileExtensions: many })), "fileextensions")
+    assert.ok(value && value.includes("(70 total)"), `expected a summary, got: ${value}`)
+    assert.ok(value.length < 80, `summary too long: ${value.length} chars`)
+  })
+
+  test("lists a short extension list in full", () => {
+    const value = valueOf(settingReport(settings({ fileExtensions: [".ts", ".cs"] })), "fileextensions")
+    assert.equal(value, ".ts,.cs")
+  })
+
+  test("never prints a credential in the clear", () => {
+    const report = settingReport(settings())
+    const value = valueOf(report, "mistralkey")
+    assert.ok(value && value !== "(not set)", "a configured key should report as set")
+    assert.ok(!value.includes("test-mistral-key-0000000000000000"), `credential leaked: ${value}`)
+  })
+
+  test("every group is titled and non-empty", () => {
+    const report = settingReport(settings())
+    assert.ok(report.length > 1, "the report should be grouped, not a single flat list")
+    for (const group of report) {
+      assert.ok(group.title.length > 0, "group without a title")
+      assert.ok(group.entries.length > 0, `empty group: ${group.id}`)
     }
   })
 })

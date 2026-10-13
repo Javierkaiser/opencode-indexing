@@ -182,7 +182,7 @@ function stripJsonc(input) {
   return out.replace(/,(\s*[}\]])/g, "$1")
 }
 
-const TOOLS = ["indexing_search", "indexing_status", "indexing_refresh", "indexing_build", "indexing_import"]
+const TOOLS = ["indexing_search", "indexing_status", "indexing_config", "indexing_refresh", "indexing_build", "indexing_import"]
 try {
   let cfg = {}
   if (existsSync(configFile)) {

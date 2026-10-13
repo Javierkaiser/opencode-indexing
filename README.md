@@ -24,17 +24,18 @@ OpenCode ──► indexing_search ──┬──► Kilo's index (read-only)  
 | --- | --- |
 | `indexing_search` | Semantic search across Kilo's index + own index. `{ query, path? }` |
 | `indexing_status` | Backends, Kilo sources available for import, both indexes, freshness, recommendation |
+| `indexing_config` | Effective configuration: backend, provider/model, credentials (masked), search and behavior settings, settings file, Kilo sources. Read-only |
 | `indexing_refresh` | Incremental update of the own index (new/changed/deleted files only) |
 | `indexing_build` | Build the own index: imports from Kilo when compatible, otherwise embeds from scratch. `{ rebuild?, skipImport? }` |
 | `indexing_import` | Import a specific Kilo source without re-embedding. `{ source?, rebuild? }` |
 
 ## Settings
 
-Three surfaces, all writing the same file through the server plugin's RPC.
+Three surfaces write the same file through the server plugin's RPC; a fourth, read-only one reports it.
 
-### `/indexing-config` — works in every client (terminal, Desktop, web)
+### `/indexing-config` — slash command
 
-A server command, so it is available anywhere, including clients without a JSX renderer.
+Registered as a server command, so the host lists it in every client. Whether typing it *runs* it depends on the client: the terminal TUI and the Desktop app submit the line to the model instead of dispatching the command, so there it does nothing. To read the configuration from those, ask the assistant — it calls `indexing_config`, which returns the same report. The subcommands below apply wherever the command is dispatched.
 
 | Subcommand | Purpose |
 | --- | --- |
@@ -90,6 +91,8 @@ The terminal footer shows whether the current workspace is indexed, in one glyph
 
 *Indexing: start, pause or resume indexing* in the command palette — or `/indexing-config set enabled=false` — controls it. The footer is a status line only: the host's `prompt.footer` slot exposes no interaction surface, so it is not clickable. Pausing leaves `indexing_search` working (it still reads Kilo's index), but `indexing_build`, `indexing_refresh`, `indexing_import` and auto-refresh refuse to write until you resume. The command has a stable id, so a key can be assigned in `cli.json`.
 
+The indicator is terminal-only. The host exposes no status surface to a server plugin — the SDK's toast belongs to the TUI context — and the Desktop app has no footer, so there the index state is read with `indexing_status` or `indexing_config` instead.
+
 ### Editing settings
 
 Settings are edited in a dialog-based flow, reachable three ways:
@@ -98,7 +101,7 @@ Settings are edited in a dialog-based flow, reachable three ways:
 - The command **Indexing: settings (dialogs)** in the command palette (a manual escape hatch if the page ever fails to render).
 - Automatically: if the host has no JSX runtime, `/indexing` opens this flow instead of the page.
 
-`/indexing-config` covers the same ground as text subcommands and works in every client, including Desktop and web.
+`indexing_config` (the tool) reports the same configuration as `/indexing-config` and works in every client, because tools run server-side. It is read-only: to change a value, use the command where it is dispatched, the settings file, or the TUI page.
 
 Configurable from all three:
 

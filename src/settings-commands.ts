@@ -77,6 +77,8 @@ export function parseIndexingCommand(text: string): ParsedCommand {
 type ValueKind = "string" | "url" | "boolean" | "integer" | "score" | "enum" | "key" | "extensions"
 
 interface KeySpec {
+  /** Report group this key belongs to (see SETTING_GROUPS). */
+  group: SettingGroupId
   /** Value type for parsing/validation. */
   kind: ValueKind
   /** One-line description shown in help and errors. */
@@ -88,6 +90,21 @@ interface KeySpec {
   /** Current effective value for `set <key>` without a value. */
   display(settings: IndexingSettings): string
 }
+
+/**
+ * Report grouping. Order here is the order shown, so the report reads from the
+ * outside in: which backend, which model, which credentials, how it searches.
+ */
+export const SETTING_GROUPS = [
+  { id: "backend", title: "Backend" },
+  { id: "embedding", title: "Embedding" },
+  { id: "credentials", title: "Credentials" },
+  { id: "search", title: "Search" },
+  { id: "behavior", title: "Behavior" },
+  { id: "performance", title: "Performance" },
+] as const
+
+export type SettingGroupId = (typeof SETTING_GROUPS)[number]["id"]
 
 const PROVIDERS = [
   "mistral",
@@ -106,8 +123,21 @@ function parseBoolean(raw: string): boolean | undefined {
   return undefined
 }
 
+/**
+ * Extensions are summarised rather than listed in full.
+ *
+ * The built-in allowlist has around seventy entries, and printing all of them
+ * buries every other setting in the configuration report.
+ */
+function summarizeExtensions(extensions: readonly string[]): string {
+  const shown = 8
+  if (extensions.length <= shown) return extensions.join(",")
+  return `${extensions.slice(0, shown).join(",")}, … (${extensions.length} total)`
+}
+
 const KEY_SPECS: Record<string, KeySpec> = {
   vectorstore: {
+    group: "backend",
     kind: "enum",
     values: ["qdrant", "lancedb"],
     description: "Backend for the plugin's own index",
@@ -115,24 +145,28 @@ const KEY_SPECS: Record<string, KeySpec> = {
     display: (settings) => settings.vectorStore,
   },
   qdranturl: {
+    group: "backend",
     kind: "url",
     description: "Qdrant server URL (local or remote, e.g. http://localhost:6333)",
     toPatch: (value) => ({ qdrant: { url: String(value) } }),
     display: (settings) => settings.qdrantUrl,
   },
   qdrantapikey: {
+    group: "backend",
     kind: "key",
     description: "Qdrant API key (empty string clears it)",
     toPatch: (value) => ({ qdrant: { apiKey: String(value) } }),
     display: (settings) => maskSecret(settings.qdrantApiKey) ?? "(not set)",
   },
   lancedbdirectory: {
+    group: "backend",
     kind: "string",
     description: "Directory for the plugin's own LanceDB databases",
     toPatch: (value) => ({ lancedb: { directory: String(value) } }),
     display: (settings) => settings.lancedbDirectory,
   },
   provider: {
+    group: "embedding",
     kind: "enum",
     values: PROVIDERS,
     description: "Embedding provider",
@@ -146,101 +180,154 @@ const KEY_SPECS: Record<string, KeySpec> = {
     display: (settings) => settings.provider,
   },
   model: {
+    group: "embedding",
     kind: "string",
     description: "Embedding model id (provider default when unset)",
     toPatch: (value) => ({ model: String(value) }),
     display: (settings) => settings.modelId,
   },
   mistralkey: {
+    group: "credentials",
     kind: "key",
     description: "Mistral API key",
     toPatch: (value) => ({ apiKeys: { mistral: String(value) } }),
     display: (settings) => maskSecret(settings.credentials.mistralApiKey) ?? "(not set)",
   },
   openaikey: {
+    group: "credentials",
     kind: "key",
     description: "OpenAI API key",
     toPatch: (value) => ({ apiKeys: { openai: String(value) } }),
     display: (settings) => maskSecret(settings.credentials.openAiApiKey) ?? "(not set)",
   },
   geminikey: {
+    group: "credentials",
     kind: "key",
     description: "Gemini API key",
     toPatch: (value) => ({ apiKeys: { gemini: String(value) } }),
     display: (settings) => maskSecret(settings.credentials.geminiApiKey) ?? "(not set)",
   },
   voyagekey: {
+    group: "credentials",
     kind: "key",
     description: "Voyage API key",
     toPatch: (value) => ({ apiKeys: { voyage: String(value) } }),
     display: (settings) => maskSecret(settings.credentials.voyageApiKey) ?? "(not set)",
   },
   openrouterkey: {
+    group: "credentials",
     kind: "key",
     description: "OpenRouter API key",
     toPatch: (value) => ({ apiKeys: { openrouter: String(value) } }),
     display: (settings) => maskSecret(settings.credentials.openRouterApiKey) ?? "(not set)",
   },
   ollamaurl: {
+    group: "credentials",
     kind: "url",
     description: "Ollama base URL",
     toPatch: (value) => ({ apiKeys: { ollama: { baseUrl: String(value) } } }),
     display: (settings) => settings.credentials.ollamaBaseUrl ?? "(not set)",
   },
   openaicompatibleurl: {
+    group: "credentials",
     kind: "url",
     description: "OpenAI-compatible base URL",
     toPatch: (value) => ({ apiKeys: { "openai-compatible": { baseUrl: String(value) } } }),
     display: (settings) => settings.credentials.openAiCompatibleBaseUrl ?? "(not set)",
   },
   openaicompatiblekey: {
+    group: "credentials",
     kind: "key",
     description: "OpenAI-compatible API key",
     toPatch: (value) => ({ apiKeys: { "openai-compatible": { apiKey: String(value) } } }),
     display: (settings) => maskSecret(settings.credentials.openAiCompatibleApiKey) ?? "(not set)",
   },
   importfromkilo: {
+    group: "behavior",
     kind: "boolean",
     description: "Import compatible Kilo indexes on build (no embedding cost)",
     toPatch: (value) => ({ importFromKilo: Boolean(value) }),
     display: (settings) => (settings.importFromKilo ? "true" : "false"),
   },
   autorefresh: {
+    group: "behavior",
     kind: "boolean",
     description: "Refresh the index inline on search when few files changed",
     toPatch: (value) => ({ autoRefresh: Boolean(value) }),
     display: (settings) => (settings.autoRefresh ? "true" : "false"),
   },
   enabled: {
+    group: "behavior",
     kind: "boolean",
     description: "Master switch: when false nothing is written to nor refreshed in the own index",
     toPatch: (value) => ({ enabled: Boolean(value) }),
     display: (settings) => (settings.enabled === false ? "false" : "true"),
   },
   searchmaxresults: {
+    group: "search",
     kind: "integer",
     description: "Maximum search results (default 50)",
     toPatch: (value) => ({ searchMaxResults: Number(value) }),
     display: (settings) => String(settings.searchMaxResults),
   },
   embeddingbatchsize: {
+    group: "performance",
     kind: "integer",
     description: "Chunks per embedding batch (default 60)",
     toPatch: (value) => ({ embeddingBatchSize: Number(value) }),
     display: (settings) => String(settings.embeddingBatchSize),
   },
   searchminscore: {
+    group: "search",
     kind: "score",
     description: "Minimum similarity score 0..1 (or `default` to reset)",
     toPatch: (value) => ({ searchMinScore: value === null ? null : Number(value) }),
     display: (settings) => (settings.searchMinScore === undefined ? "(model default)" : String(settings.searchMinScore)),
   },
   fileextensions: {
+    group: "search",
     kind: "extensions",
     description: "Comma-separated extension allowlist (e.g. .ts,.cs,.php; `default` resets)",
     toPatch: (value) => ({ fileExtensions: value === null ? null : (value as string[]) }),
-    display: (settings) => settings.fileExtensions.join(","),
+    display: (settings) => summarizeExtensions(settings.fileExtensions),
   },
+}
+
+export interface SettingReportEntry {
+  key: string
+  description: string
+  value: string
+}
+
+export interface SettingReportGroup {
+  id: string
+  title: string
+  entries: SettingReportEntry[]
+}
+
+/**
+ * Every settable key with its current value, grouped for display.
+ *
+ * Derived from KEY_SPECS rather than hand-listed, so the report cannot drift
+ * from what `set` accepts: a key added to KEY_SPECS shows up here by itself.
+ * The previous report hard-coded five fields and silently hid the other
+ * sixteen, which made `set` unverifiable from the command that set it.
+ */
+export function settingReport(settings: IndexingSettings): SettingReportGroup[] {
+  const groups: SettingReportGroup[] = SETTING_GROUPS.map((group) => ({
+    id: group.id,
+    title: group.title,
+    entries: [],
+  }))
+  const byId = new Map(groups.map((group) => [group.id, group]))
+  for (const [key, spec] of Object.entries(KEY_SPECS)) {
+    const entry: SettingReportEntry = { key, description: spec.description, value: spec.display(settings) }
+    const bucket = byId.get(spec.group)
+    if (bucket) bucket.entries.push(entry)
+    // Defensive: a key declaring an unknown group is still reported, never lost.
+    else groups.push({ id: spec.group, title: spec.group, entries: [entry] })
+  }
+  return groups.filter((group) => group.entries.length > 0)
 }
 
 export function listSettingKeys(): Array<{ key: string; description: string }> {
