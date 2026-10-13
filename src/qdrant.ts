@@ -80,6 +80,19 @@ const DEFAULT_INCLUDE = [
 ]
 const REQUEST_TIMEOUT_MS = 60_000
 /**
+ * The first write into a collection carries a large fixed cost: measured ~31 s
+ * on a local Qdrant, and reproduced on five consecutive fresh collections, so it
+ * is paid per collection rather than once per process. At that size it eats over
+ * half of the shared 60 s budget on every newly indexed workspace, leaving too
+ * little room before the request is abandoned mid-import.
+ */
+const UPSERT_TIMEOUT_MS = 180_000
+/**
+ * Upserts are idempotent — point ids are stable across a retry — so retrying
+ * once after a timeout cannot duplicate anything.
+ */
+const UPSERT_TIMEOUT_RETRIES = 1
+/**
  * Deletes are issued mid-build while Qdrant is already loaded, so they can
  * exceed the shared 60 s budget (a single-file delete already takes ~464 ms).
  * They therefore get a longer, dedicated timeout instead of raising the limit
@@ -314,7 +327,10 @@ export function createQdrant(config: QdrantConfig): Qdrant {
   }
 
   async function upsert(name: string, points: QdrantPoint[], wait = true): Promise<void> {
-    await request("PUT", `${pointsPath(name)}?wait=${wait}`, { points })
+    await request("PUT", `${pointsPath(name)}?wait=${wait}`, { points }, {
+      timeoutMs: UPSERT_TIMEOUT_MS,
+      retriesOnTimeout: UPSERT_TIMEOUT_RETRIES,
+    })
   }
 
   async function deletePoints(

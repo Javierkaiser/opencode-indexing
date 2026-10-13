@@ -116,6 +116,12 @@ export interface ImportOptions {
 /**
  * Copy every chunk point from the source into `target`.
  * Vectors are copied verbatim; no embedding API is involved.
+ *
+ * The caller must have created `target` first, with `target.ensure(dimension,
+ * profile)`. Skipping that step does not fail here: it surfaces later as a bare
+ * "collection doesn't exist" on the first upsert.
+ *
+ * Throws when the import copied nothing, rather than reporting an empty run.
  */
 export async function importFromKilo(options: ImportOptions): Promise<ImportReport> {
   const started = Date.now()
@@ -195,6 +201,17 @@ export async function importFromKilo(options: ImportOptions): Promise<ImportRepo
       offset += page.points.length
       if (page.done) break
     }
+  }
+
+  if (report.imported === 0) {
+    // Marking complete here would turn a silent failure into a healthy-looking
+    // empty index: the manifest would claim the workspace is fully indexed
+    // while holding nothing, and the freshness check would agree with it.
+    throw new Error(
+      `Imported 0 chunks from ${source.kind} ${source.name}, which reports ` +
+        `${source.pointsCount ?? "?"} points. Either the payload shape is not recognised, or every point was ` +
+        `filtered out as metadata. Nothing was written.`,
+    )
   }
 
   await target.markComplete(targetProfile, true, targetProfile.dimension)

@@ -154,6 +154,28 @@ describe("importFromKilo (qdrant source)", () => {
     assert.equal(target.points[0]!.id, "3")
   })
 
+  test("fails instead of marking the index complete when nothing was imported", async () => {
+    // Every point filtered out as metadata. Marking the manifest complete here
+    // would make an empty index look healthy: the manifest would claim the
+    // workspace is fully indexed and the freshness check would agree.
+    const fake = makeFakeQdrant([
+      { points: [{ id: "1", vector: [1, 2, 3, 4], payload: { type: "metadata", indexing_complete: true } }] },
+    ])
+    const target = new FakeTarget()
+    await assert.rejects(
+      importFromKilo({
+        root: "D:\\proj",
+        source: { kind: "qdrant", name: "ws-x", pointsCount: 1, profile: PROFILE, compatible: true },
+        target,
+        targetProfile: PROFILE,
+        qdrant: fake.client,
+      }),
+      /Imported 0 chunks/,
+    )
+    assert.equal(target.upserts, 0)
+    assert.deepEqual(target.markedComplete, [], "an import that copied nothing must not mark complete")
+  })
+
   test("rejects incompatible profiles before touching the target", async () => {
     const target = new FakeTarget()
     await assert.rejects(
