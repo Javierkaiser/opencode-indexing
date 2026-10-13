@@ -12,6 +12,9 @@ coverage/
 # Working notes kept local, not published
 docs/publication-plan.md
 
+# Benchmark manifest: maps anonymous labels to real paths, so it must not be published
+bench/projects.local.json
+
 # OS cruft
 .DS_Store
 Thumbs.db

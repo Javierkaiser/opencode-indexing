@@ -1,0 +1,31 @@
+{
+  "corpus": ".",
+  "description": "Labeled natural-language queries over this repository. `expected` lists the file(s) that answer the query. `type` is 'concept' (no identifier from the code appears in the query — the case semantic search is meant to win) or 'identifier' (a symbol name is present — where grep is expected to win).",
+  "queries": [
+    { "id": "q01", "type": "concept", "query": "where are workspace files discovered and filtered before they are indexed", "expected": ["src/scanner.ts"] },
+    { "id": "q02", "type": "concept", "query": "how is a source file split into pieces before being embedded", "expected": ["src/chunker.ts", "src/chunking.ts"] },
+    { "id": "q03", "type": "concept", "query": "how does it decide between parsing with tree-sitter and a simple line-based fallback", "expected": ["src/chunking.ts"] },
+    { "id": "q04", "type": "concept", "query": "where are embeddings requested from the remote provider over http", "expected": ["src/embedder.ts"] },
+    { "id": "q05", "type": "concept", "query": "catalog of embedding models with their dimensions and query prefixes", "expected": ["src/registry.ts"] },
+    { "id": "q06", "type": "concept", "query": "copying existing vectors without paying for new embeddings", "expected": ["src/import.ts"] },
+    { "id": "q07", "type": "concept", "query": "incremental update that only reprocesses the files that changed", "expected": ["src/indexer.ts"] },
+    { "id": "q08", "type": "concept", "query": "per file hash records used to detect additions changes and deletions", "expected": ["src/manifest.ts"] },
+    { "id": "q09", "type": "concept", "query": "remove comments and trailing commas from a configuration file before parsing it", "expected": ["src/jsonc.ts"] },
+    { "id": "q10", "type": "concept", "query": "embedded local vector database stored on disk", "expected": ["src/lancedb-store.ts"] },
+    { "id": "q11", "type": "concept", "query": "http client for the vector database that tells timeouts apart from server errors", "expected": ["src/qdrant.ts"] },
+    { "id": "q12", "type": "concept", "query": "resolve the effective configuration from plugin options file environment and defaults", "expected": ["src/config.ts"] },
+    { "id": "q13", "type": "concept", "query": "read and write the user settings file honoring the xdg config directory", "expected": ["src/settings.ts"] },
+    { "id": "q14", "type": "concept", "query": "merge results coming from two different indexes and drop hits for deleted files", "expected": ["src/search.ts"] },
+    { "id": "q15", "type": "concept", "query": "warn the user when the directory being indexed is too broad", "expected": ["src/scope.ts"] },
+    { "id": "q16", "type": "concept", "query": "definitions of the tools exposed to the coding agent", "expected": ["src/tools.ts"] },
+    { "id": "q17", "type": "identifier", "query": "uuidv5 point identifiers for chunks", "expected": ["src/uuid.ts"] },
+    { "id": "q18", "type": "concept", "query": "glyphs and wording for the prompt footer index indicator", "expected": ["tui/footer.ts"] },
+    { "id": "q19", "type": "concept", "query": "settings page selection state driven by keyboard navigation", "expected": ["tui/page-store.ts"] },
+    { "id": "q20", "type": "concept", "query": "remote procedure call contract shared between the server plugin and the terminal interface", "expected": ["src/rpc.ts"] },
+    { "id": "q21", "type": "concept", "query": "tree-sitter query strings one per programming language", "expected": ["src/treesitter/queries.ts"] },
+    { "id": "q22", "type": "concept", "query": "extract headings and sections from markdown documents", "expected": ["src/treesitter/markdown.ts"] },
+    { "id": "q23", "type": "concept", "query": "delete stored points that belong to specific files", "expected": ["src/own-store.ts"] },
+    { "id": "q24", "type": "concept", "query": "adapt the host plugin key value storage to the internal interface", "expected": ["src/storage.ts"] },
+    { "id": "q25", "type": "identifier", "query": "chunkPaths batching of file paths for delete requests", "expected": ["src/own-store.ts"] }
+  ]
+}
