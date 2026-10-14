@@ -198,6 +198,44 @@ first use. See the next section for how far each one has actually been tested.
 | `ollama` | `nomic-embed-text` | `mxbai-embed-large`, `all-minilm`, `bge-m3` | 512 – 8,192 |
 | `openai-compatible` | none | whatever your endpoint serves | probed |
 
+#### Getting an API key (Mistral)
+
+Mistral is the default provider and the only one tested end to end here, so it is
+the shortest path to a working index. API access is enabled by default on a free
+account — **no credit card** — with a usage limit that is enough to index a
+repository.
+
+1. Create an account at <https://console.mistral.ai> if you do not have one.
+2. Open the **Studio** console and click **API Keys** in the left sidebar.
+3. Click **Create new key**: give it a name, set an expiration date, and choose the
+   connector access scope (*Shared connectors only* is enough for an API key).
+4. Click **Create new key** and **copy the key right away** — it is shown once and
+   cannot be retrieved later.
+
+Then hand it to the plugin. The simplest way keeps the key out of any file:
+
+```bash
+export KILO_INDEX_MISTRAL_KEY=...          # Linux / macOS
+# PowerShell: $env:KILO_INDEX_MISTRAL_KEY = "..."
+```
+
+Equivalently, set it from **`/indexing-config`** in any client or the `/indexing`
+page in the terminal (the field is masked), or through the plugin's options in
+`opencode.json` — see
+[Configuration](#configuration-optional-opencodejson). Settings resolve in the
+order *plugin options → `indexing.json` → environment → defaults*, so an
+environment variable is overridden by anything set in the file or in the options.
+
+To check the key before indexing:
+
+```bash
+curl -s https://api.mistral.ai/v1/models \
+  -H "Authorization: Bearer $KILO_INDEX_MISTRAL_KEY" | head -c 200
+```
+
+A list of models means it works; a `401` means the key is wrong or the header is
+missing.
+
 #### How far each provider has actually been tested
 
 Worth stating plainly, because "implemented" and "seen working" are not the
