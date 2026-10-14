@@ -26,12 +26,23 @@ index is still installed.
 
 ## Install
 
-> **Temporary: install from the repository.** There is no published npm package
-> yet, so the installer below is how you install the plugin today. An npm package
-> is planned — once it is out, `npm install @javierkaiser/opencode-indexing` will
-> replace these steps, and the installer will stay as a fallback.
+### From npm (recommended)
 
-### Global (recommended)
+```bash
+npm install @javierkaiser/opencode-indexing
+```
+
+Then reference it from `opencode.json`:
+
+```jsonc
+{
+  "plugins": [
+    { "package": "@javierkaiser/opencode-indexing" }
+  ]
+}
+```
+
+### Global installer (alternative)
 
 The installer is cross-platform; it only needs Node >= 22.6.
 
@@ -53,24 +64,6 @@ Those are V2 rules — `{ "action": "indexing_search", "resource": "*", "effect"
 Options: `--skip-deps` (copy files only), `--no-restart`. PowerShell accepts `-SkipDeps` / `-NoRestart` too.
 
 If no package manager is available the copy still happens and the plugin runs with reduced features (line chunker instead of tree-sitter, no LanceDB).
-
-### From npm (coming soon)
-
-Not published yet. When the package is out:
-
-```bash
-npm install @javierkaiser/opencode-indexing
-```
-
-and reference it from `opencode.json`:
-
-```jsonc
-{
-  "plugins": [
-    { "package": "@javierkaiser/opencode-indexing" }
-  ]
-}
-```
 
 ## How it works
 
