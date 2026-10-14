@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-14
+
+### Changed
+
+- npm releases are now automated: pushing a `v*` tag triggers a GitHub Actions
+  workflow that publishes through npm trusted publishing (OIDC), with no
+  long-lived token.
+
 ## [0.1.0] - 2026-10-09
 
 First public release.
@@ -29,5 +37,6 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.1.0
