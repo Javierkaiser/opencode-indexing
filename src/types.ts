@@ -39,6 +39,15 @@ export interface ProviderCredentials {
 export interface IndexingSettings extends EmbeddingProfile {
   /** Backend for the plugin's OWN index. */
   vectorStore: "qdrant" | "lancedb"
+  /**
+   * Store Kilo keeps its own index in, when kilo.jsonc says so.
+   *
+   * Kept alongside `vectorStore` rather than folded into it: Kilo decides where
+   * an import reads from, the own index decides where it writes, and the status
+   * report needs both to know whether an unreachable Qdrant is a problem here or
+   * simply not this user's business.
+   */
+  kiloVectorStore: "qdrant" | "lancedb" | null
   qdrantUrl: string
   qdrantApiKey?: string
   /** Base directory for the plugin's own LanceDB stores. */

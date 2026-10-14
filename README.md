@@ -4,7 +4,7 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![node: >=22.6](https://img.shields.io/badge/node-%3E%3D22.6-brightgreen.svg)](https://nodejs.org)
 
-OpenCode plugin that adds **semantic code search** by reusing the code index created by [Kilo Code](https://kilo.ai) and maintaining its **own independent index** (Qdrant or embedded LanceDB), so search keeps working even when Kilo isn't installed, is disabled, or its index is stale.
+OpenCode plugin that adds **semantic code search** by reusing the code index created by [Kilo Code](https://kilo.ai) and maintaining its **own independent index** (embedded LanceDB by default, or Qdrant if you prefer), so search keeps working even when Kilo isn't installed, is disabled, or its index is stale.
 
 ## TL;DR
 
@@ -69,7 +69,7 @@ If no package manager is available the copy still happens and the plugin runs wi
 
 ```
 OpenCode ──► indexing_search ──┬──► Kilo's index (read-only)      Qdrant ws-*  ·  Kilo LanceDB
-                               └──► own index (read/write)        Qdrant oc-*  ·  own LanceDB
+                               └──► own index (read/write)        own LanceDB (default)  ·  Qdrant oc-*
 ```
 
 - **Read-only reuse**: the plugin computes the same collection name Kilo uses (`ws-` + sha256 of the workspace path, first 16 hex chars), validates the embedding profile stored in the metadata point, and queries with an embedding from the *same* model (e.g. Mistral `codestral-embed-2505`, 1536d).
@@ -181,7 +181,9 @@ Configurable from all three:
 - **Auto-refresh on search** toggle.
 - Build / refresh / import actions and a status summary.
 
-Settings are stored in `~/.config/opencode/indexing.json` (plugin options → `indexing.json` → environment → `~/.config/kilo/kilo.jsonc` → defaults). Plugin options in `opencode.json` still work and take precedence. API keys are never written to `indexing.json` in plain text; set them through the environment or plugin options.
+Settings are stored in `~/.config/opencode/indexing.json` (plugin options → `indexing.json` → environment → defaults). Plugin options in `opencode.json` still work and take precedence. API keys are never written to `indexing.json` in plain text; set them through the environment or plugin options.
+
+`~/.config/kilo/kilo.jsonc` is still read, and still supplies the embedding provider, model, dimensions and API keys — and it still says where *Kilo* keeps its index. It no longer decides where this plugin's own index is written; that stopped being coupled so that the default could actually take effect for people running Kilo. See [Where each index lives](#where-each-index-lives).
 
 ## Configuration (optional, `opencode.json`)
 
@@ -200,7 +202,7 @@ Settings are stored in `~/.config/opencode/indexing.json` (plugin options → `i
 
 | Variable | Meaning |
 | --- | --- |
-| `KILO_INDEX_VECTOR_STORE` | `qdrant` (default) or `lancedb` for the own index |
+| `KILO_INDEX_VECTOR_STORE` | `lancedb` (default) or `qdrant` for the own index |
 | `KILO_INDEX_QDRANT_URL` / `KILO_INDEX_QDRANT_API_KEY` | Qdrant connection |
 | `KILO_INDEX_LANCEDB_DIR` | Base directory for the own LanceDB stores |
 | `KILO_INDEX_KILO_LANCEDB_DIR` | Override Kilo's LanceDB directory (import source) |
@@ -211,8 +213,55 @@ Word about data safety: Kilo's indexes (`ws-*` collections and its LanceDB direc
 ## Requirements
 
 - OpenCode v2 (plugin API `@opencode/plugin@2.x`).
-- For search/index: a Qdrant server (default `http://localhost:6333`) and/or the optional LanceDB module (`@lancedb/lancedb@0.26.2`).
+- **For the own index: nothing to run.** The default store is embedded LanceDB
+  (`@lancedb/lancedb@0.26.2`), so there is no server to start, no port to free and
+  no container to keep alive.
+- **A Qdrant server is only needed if you ask for it**, either by setting
+  `vectorStore=qdrant` or because a Kilo index you want to import lives in Qdrant.
+  In that case the default URL is `http://localhost:6333`.
 - Embedding credentials compatible with the collection you search (the profile is read from the metadata point).
+
+### Where each index lives
+
+The own index and Kilo's index are independent, and each one is chosen on its
+own:
+
+| Index | Default | Configured by |
+| --- | --- | --- |
+| Own index | embedded LanceDB, under `~/.local/state/opencode-indexing/lancedb` | `vectorStore` |
+| Kilo index (read-only) | whatever `kilo.jsonc` says | Kilo itself |
+
+Kilo's `vectorStore` used to decide where this plugin's own index was written,
+because both were read from the same setting chain. That is no longer the case:
+Kilo decides where an import **reads from**, and your own index decides where it
+**writes to**. If Kilo is on Qdrant and you have not set `vectorStore` yourself,
+the own index still goes to LanceDB and `indexing_status` says so.
+
+### Platform support for the embedded store
+
+`@lancedb/lancedb` is a JavaScript wrapper around a native library, with one
+prebuilt binary per platform and no WebAssembly fallback. The platforms it ships
+a binary for are:
+
+| Platform | `platform-arch` | Own index on LanceDB |
+| --- | --- | --- |
+| Windows x64 / arm64 | `win32-x64`, `win32-arm64` | yes |
+| Linux x64 / arm64 (glibc and musl) | `linux-x64`, `linux-arm64` | yes |
+| macOS Apple Silicon | `darwin-arm64` | yes |
+| **macOS Intel** | `darwin-x64` | **no binary is published** |
+
+On macOS Intel the default store cannot load, and installing it again will not
+help. The plugin says so explicitly and asks you to pick Qdrant:
+
+```
+LanceDB is the default store for the own index but has no native binary for
+darwin-x64. It cannot run on this platform and reinstalling will not change
+that. Set vectorStore=qdrant explicitly in
+~/.config/opencode/indexing.json to use a Qdrant server instead.
+```
+
+Set `vectorStore=qdrant` in `~/.config/opencode/indexing.json` (or run
+`/indexing-config set vectorstore=qdrant`) to use a Qdrant server instead.
 
 ## Semantic search vs. code graphs (roadmap)
 

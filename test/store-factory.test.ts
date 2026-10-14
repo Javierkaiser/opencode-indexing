@@ -12,6 +12,7 @@ function settings(overrides: Partial<IndexingSettings> = {}): IndexingSettings {
     modelId: "codestral-embed-2505",
     dimension: 1536,
     vectorStore: "qdrant",
+    kiloVectorStore: null,
     qdrantUrl: "http://localhost:6333",
     lancedbDirectory: path.join(os.tmpdir(), "oi-factory-lancedb"),
     scoreThreshold: 0.35,

@@ -1,7 +1,8 @@
 import * as os from "node:os"
 
 import type { EmbedderProvider, IndexingSettings, ProviderCredentials } from "./types.ts"
-import { defaultLanceDbDirectory, readSettingsFile, type SettingsFile } from "./settings.ts"
+import { defaultLanceDbDirectory, readSettingsFile, settingsFilePath, type SettingsFile } from "./settings.ts"
+import { lanceDbSupport } from "./lancedb-support.ts"
 import { stripJsonComments } from "./jsonc.ts"
 import {
   DEFAULT_EMBEDDING_BATCH_SIZE,
@@ -184,9 +185,33 @@ export function resolveSettings(options: PluginOptionsInput): IndexingSettings {
       nonEmpty(kilo?.openrouter?.apiKey),
   }
 
-  const vectorStore =
-    pickVectorStore(options.vectorStore, file?.vectorStore, process.env.KILO_INDEX_VECTOR_STORE, kilo?.vectorStore) ??
-    "qdrant"
+  // Kilo decides where an import reads FROM; it does not decide where the own
+  // index writes TO. Those were coupled through this one chain, and that is
+  // what made "LanceDB by default" unreachable for exactly the people most
+  // likely to have Kilo installed: kilo.jsonc's vectorStore sat above the
+  // fallback, so a Kilo-on-Qdrant setup silently kept pinning the own index to
+  // Qdrant. The coupling is reported below rather than dropped in silence.
+  const kiloVectorStore = pickVectorStore(kilo?.vectorStore)
+  const ownVectorStore = pickVectorStore(
+    options.vectorStore,
+    file?.vectorStore,
+    process.env.KILO_INDEX_VECTOR_STORE,
+  )
+  if (kiloVectorStore && !ownVectorStore && kiloVectorStore !== "lancedb") {
+    warnings.push(
+      `Kilo indexes with ${kiloVectorStore}; your own index no longer inherits that. ` +
+        `Set vectorStore explicitly in ${settingsFilePath(options.homeDir)} to change it.`,
+    )
+  }
+  const vectorStore = ownVectorStore ?? "lancedb"
+
+  if (vectorStore === "lancedb" && !lanceDbSupport().supported) {
+    const { id } = lanceDbSupport()
+    warnings.push(
+      `LanceDB is the default store but has no native binary for ${id}. ` +
+        `Indexing will fail until you set vectorStore=qdrant in ${settingsFilePath(options.homeDir)}.`,
+    )
+  }
 
   const qdrantUrl =
     nonEmpty(options.qdrantUrl) ??
@@ -264,6 +289,7 @@ export function resolveSettings(options: PluginOptionsInput): IndexingSettings {
     modelId,
     dimension: dimension ?? 0,
     vectorStore,
+    kiloVectorStore: kiloVectorStore ?? null,
     qdrantUrl,
     qdrantApiKey,
     lancedbDirectory,

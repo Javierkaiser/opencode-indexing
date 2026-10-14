@@ -56,13 +56,26 @@ const KILO_CACHE_PREFIX = "kiloCollection/"
 
 export async function getStatus(deps: StatusDeps, options?: { checkFreshness?: boolean }): Promise<IndexStatus> {
   const { qdrant, kv, root, settings } = deps
-  const warnings: string[] = []
+  // Configuration warnings are produced once per resolution and were previously
+  // never shown, so a store that cannot work on this platform looked simply
+  // absent rather than misconfigured.
+  const warnings: string[] = [...settings.warnings]
   let reachable = true
   try {
     await qdrant.listCollections()
   } catch (error) {
     reachable = false
-    warnings.push(`Qdrant unreachable at ${settings.qdrantUrl}: ${describeError(error)}`)
+    // Only worth reporting when Qdrant is actually part of this setup. With the
+    // own index on LanceDB and no Qdrant-backed Kilo index, a dead Qdrant is
+    // not a problem the user has, and saying so would train them to ignore it.
+    const qdrantIsOurs = settings.vectorStore === "qdrant" || settings.kiloVectorStore === "qdrant"
+    if (qdrantIsOurs) {
+      warnings.push(
+        settings.vectorStore === "qdrant"
+          ? `Qdrant unreachable at ${settings.qdrantUrl}: ${describeError(error)}`
+          : `Qdrant unreachable at ${settings.qdrantUrl}, so a Kilo index stored there cannot be imported: ${describeError(error)}`,
+      )
+    }
   }
 
   const ownStore = createOwnStore(settings, root)

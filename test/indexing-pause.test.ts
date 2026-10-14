@@ -10,6 +10,7 @@ function settings(overrides: Partial<IndexingSettings> = {}): IndexingSettings {
     modelId: "codestral-embed-2505",
     dimension: 1536,
     vectorStore: "qdrant",
+    kiloVectorStore: null,
     qdrantUrl: "http://127.0.0.1:1", // unreachable: nothing here should reach the network
     lancedbDirectory: "unused",
     scoreThreshold: 0.35,

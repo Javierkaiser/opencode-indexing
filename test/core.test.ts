@@ -152,6 +152,74 @@ describe("config", () => {
   })
 })
 
+describe("own store selection", () => {
+  test("defaults to the embedded store, with no server to run", () => {
+    // Nothing pinned this before, which is how the default could be flipped by
+    // accident without a single test noticing.
+    const settings = resolveSettings({ ignoreKiloConfig: true })
+    assert.equal(settings.vectorStore, "lancedb")
+  })
+
+  test("an explicit vectorStore in indexing.json wins over the default", () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), "oi-store-"))
+    try {
+      mkdirSync(path.join(home, ".config", "opencode"), { recursive: true })
+      writeFileSync(path.join(home, ".config", "opencode", "indexing.json"), JSON.stringify({ vectorStore: "qdrant" }))
+      const settings = resolveSettings({ homeDir: home })
+      assert.equal(settings.vectorStore, "qdrant", "an installed user keeps the index they already built")
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  test("plugin options win over the default", () => {
+    const settings = resolveSettings({ ignoreKiloConfig: true, vectorStore: "qdrant" })
+    assert.equal(settings.vectorStore, "qdrant")
+  })
+
+  test("Kilo's store no longer decides where the own index is written", () => {
+    // Kilo keeps its index in Qdrant. That used to be read as a preference for
+    // this plugin's own index too, because kilo.jsonc sat above the fallback,
+    // which meant "embedded by default" never applied to anyone running Kilo.
+    const home = mkdtempSync(path.join(os.tmpdir(), "oi-kilo-store-"))
+    try {
+      mkdirSync(path.join(home, ".config", "opencode"), { recursive: true })
+      mkdirSync(path.join(home, ".config", "kilo"), { recursive: true })
+      writeFileSync(path.join(home, ".config", "opencode", "indexing.json"), "{}")
+      writeFileSync(
+        path.join(home, ".config", "kilo", "kilo.jsonc"),
+        JSON.stringify({ indexing: { vectorStore: "qdrant" } }),
+      )
+      const settings = resolveSettings({ homeDir: home })
+      assert.equal(settings.vectorStore, "lancedb", "the own index is independent of Kilo's")
+      assert.equal(settings.kiloVectorStore, "qdrant", "Kilo's choice is still known, for import and for status")
+      assert.ok(
+        settings.warnings.some((w) => /Kilo indexes with qdrant/.test(w)),
+        "dropping the inheritance silently would be a surprise; it has to be reported",
+      )
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  test("an explicit vectorStore silences the Kilo-inheritance warning", () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), "oi-kilo-explicit-"))
+    try {
+      mkdirSync(path.join(home, ".config", "opencode"), { recursive: true })
+      mkdirSync(path.join(home, ".config", "kilo"), { recursive: true })
+      writeFileSync(path.join(home, ".config", "opencode", "indexing.json"), JSON.stringify({ vectorStore: "lancedb" }))
+      writeFileSync(
+        path.join(home, ".config", "kilo", "kilo.jsonc"),
+        JSON.stringify({ indexing: { vectorStore: "qdrant" } }),
+      )
+      const settings = resolveSettings({ homeDir: home })
+      assert.equal(settings.warnings.some((w) => /Kilo indexes with/.test(w)), false)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+})
+
 describe("manifest", () => {
   const root = "D:\\Projects\\demo"
   const collection = "oc-deadbeefdeadbeef"

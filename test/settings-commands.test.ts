@@ -18,6 +18,7 @@ function settings(overrides: Partial<IndexingSettings> = {}): IndexingSettings {
     modelId: "codestral-embed-2505",
     dimension: 1536,
     vectorStore: "qdrant",
+    kiloVectorStore: null,
     qdrantUrl: "http://localhost:6333",
     lancedbDirectory: "C:\\Users\\test\\.local\\state\\opencode-indexing\\lancedb",
     scoreThreshold: 0.35,

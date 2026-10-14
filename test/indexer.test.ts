@@ -35,6 +35,7 @@ function makeSettings(root: string, overrides: Partial<IndexingSettings> = {}): 
     modelId: PROFILE.modelId,
     dimension: PROFILE.dimension,
     vectorStore: "lancedb",
+    kiloVectorStore: null,
     qdrantUrl: "http://localhost:6333",
     lancedbDirectory: path.join(root, ".lancedb"),
     scoreThreshold: 0.35,
