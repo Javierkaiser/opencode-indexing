@@ -1,31 +1,38 @@
 /**
  * Embedding providers implemented with the global `fetch` (no SDKs).
  *
- * Mirrors Kilo Code's request/response shapes:
- * - mistral / openai-compatible request `encoding_format: "base64"` and accept
- *   either base64-encoded Float32 vectors or plain number arrays.
- * - openai requests plain float arrays (a base64 string is tolerated anyway,
- *   some gateways return it).
- * - ollama uses the newer `/api/embed` batch endpoint.
+ * Four of the seven share one wire shape - `POST {base}/embeddings`, bearer
+ * auth, `{ input, model }` in and `{ data: [{ embedding, index }] }` out - so
+ * they run through a single parameterised adapter rather than four near-copies:
+ * OpenAI, Mistral, Voyage and OpenRouter. Gemini and Ollama differ enough to
+ * need their own: Gemini authenticates with a header, takes its own request
+ * shape and returns vectors under a different key, and Ollama has no auth and
+ * returns a bare positional array.
  *
- * Batching: texts are split into requests of at most `embeddingBatchSize`
- * items and at most `MAX_BATCH_TOKENS` estimated tokens (ceil(chars / 4)).
- * Unlike Kilo (which drops oversized texts and thereby desynchronizes the
- * embedding count), items estimated above `MAX_ITEM_TOKENS` are truncated to
- * `MAX_ITEM_CHARS` characters, so input/output alignment is always preserved.
+ * Batching is bounded per provider. A single global item count was wrong the
+ * moment more than one provider existed: OpenAI caps a request at 300,000
+ * tokens regardless of item count, Gemini accepts a fixed number of items per
+ * call, and Voyage has both ceilings. Bounds come from each provider's own
+ * documentation and are combined with the user's `embeddingBatchSize`.
+ *
+ * Unlike Kilo - which drops oversized texts and thereby desynchronizes the
+ * embedding count - items above the model's input ceiling are truncated, so
+ * input/output alignment is always preserved.
  *
  * Retries: up to `MAX_ATTEMPTS` attempts per batch for HTTP 429/5xx and
  * network failures (including timeouts), with exponential backoff
  * `500ms * 2^attempt`. Other 4xx responses fail immediately.
  */
 
-import { DEFAULT_EMBEDDING_BATCH_SIZE, getModelDimension, getModelQueryPrefix } from "./registry.ts"
-import type { Embedder, IndexingSettings } from "./types.ts"
+import {
+  DEFAULT_EMBEDDING_BATCH_SIZE,
+  getModelDimension,
+  getModelMaxInputTokens,
+  getModelProfile,
+  getModelQueryPrefix,
+} from "./registry.ts"
+import type { Embedder, EmbedderProvider, IndexingSettings } from "./types.ts"
 import { describeError } from "./errors.ts"
-
-const MISTRAL_EMBEDDINGS_URL = "https://api.mistral.ai/v1/embeddings"
-const OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
-const DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 
 const REQUEST_TIMEOUT_MS = 60_000
 const OLLAMA_TIMEOUT_MS = 120_000
@@ -33,15 +40,92 @@ const OLLAMA_TIMEOUT_MS = 120_000
 const MAX_ATTEMPTS = 3
 const RETRY_BASE_DELAY_MS = 500
 
-/** Model token limit (all catalog models). */
-const MAX_ITEM_TOKENS = 8191
-/** ~4 chars/token with a safety margin below MAX_ITEM_TOKENS. */
-const MAX_ITEM_CHARS = 32_000
-/** Token budget for a single request. */
-const MAX_BATCH_TOKENS = 100_000
+/** ~4 characters per token, the same estimate the batch budget uses. */
+const CHARS_PER_TOKEN = 4
+/**
+ * Fraction of the model's documented input ceiling we are willing to send.
+ *
+ * The characters-per-token figure is an estimate, so filling a chunk to exactly
+ * the ceiling risks a rejection from any model whose tokenizer is slightly
+ * denser than assumed. The cost of this margin is a few percent of a chunk; the
+ * cost of getting it wrong is a whole indexing run failing on a long file.
+ */
+const INPUT_SAFETY = 0.95
+/** Token budget for a request when neither the user nor the provider sets one. */
+const FALLBACK_MAX_BATCH_TOKENS = 100_000
+/** Item ceiling for a request when neither the user nor the provider sets one. */
+const FALLBACK_MAX_BATCH_ITEMS = 64
 /** Do not prepend a prefix when it would blow up an otherwise valid text. */
-const MAX_PREFIXED_CHARS = 4 * MAX_ITEM_TOKENS
+const MAX_PREFIXED_CHARS = 4 * 8_192
 const ERROR_BODY_SNIPPET_CHARS = 500
+
+/** Name of the request field that asks a provider for a specific output width. */
+type DimensionParam = "dimensions" | "output_dimension" | "none"
+
+interface ProviderSpec {
+  /** Label used in retries and error messages. */
+  label: string
+  /** Endpoint, ignoring any per-provider variation resolved at call time. */
+  url: string
+  /** Header carrying the credential, or undefined for an unauthenticated local server. */
+  authHeader?: string
+  /** Requested response encoding, where asking for it is worth the bytes. */
+  encodingFormat?: "base64"
+  /** Defaults merged into every request body. */
+  baseBody?: Record<string, unknown>
+  /** Refuses over-long input instead of truncating it, where the API offers the choice. */
+  refuseOversizedInput?: boolean
+}
+
+const PROVIDER_SPECS: Partial<Record<EmbedderProvider, ProviderSpec>> = {
+  openai: {
+    label: "openai",
+    url: "https://api.openai.com/v1/embeddings",
+    authHeader: "Authorization",
+  },
+  mistral: {
+    label: "mistral",
+    url: "https://api.mistral.ai/v1/embeddings",
+    authHeader: "Authorization",
+    encodingFormat: "base64",
+  },
+  voyage: {
+    label: "voyage",
+    url: "https://api.voyageai.com/v1/embeddings",
+    authHeader: "Authorization",
+    // Voyage documents that embeddings made with and without `input_type` are
+    // interchangeable, so it can be left off without breaking a Kilo-imported
+    // index. Setting it to "document" is the single largest quality lever the
+    // provider offers for retrieval, so it is on for documents.
+    baseBody: { input_type: "document", truncation: false },
+  },
+  openrouter: {
+    label: "openrouter",
+    url: "https://openrouter.ai/api/v1/embeddings",
+    authHeader: "Authorization",
+  },
+  gemini: {
+    label: "gemini",
+    url: "",
+    authHeader: "x-goog-api-key",
+  },
+  // The URL is whatever the user configured, resolved at call time. Asking for
+  // base64 is the same gamble this adapter makes for Mistral; the response
+  // parser accepts either form, so a server that ignores the field still works.
+  "openai-compatible": {
+    label: "openai-compatible",
+    url: "",
+    authHeader: "Authorization",
+    encodingFormat: "base64",
+  },
+  ollama: {
+    label: "ollama",
+    url: "",
+    // Truncating a code chunk without saying so produces a vector that looks
+    // fine and retrieves the wrong thing forever, so the failure has to be loud.
+    baseBody: { truncate: false },
+  },
+}
 
 class HttpError extends Error {
   readonly status: number
@@ -153,15 +237,49 @@ function parseVector(value: unknown): number[] {
   throw new Error("unexpected embedding format (expected number[] or base64 string)")
 }
 
-/** Parse an OpenAI/mistral-style `{ data: [{ embedding }] }` payload. */
+/**
+ * Parse an OpenAI-shaped `{ data: [{ embedding, index }] }` payload.
+ *
+ * Results are placed by `index`, not by array position. OpenAI's own samples
+ * fetch by `embedding.index`, and its documentation describes the field rather
+ * than promising order, so trusting the position is trusting something the
+ * vendor never did. A response with no `index` on any entry keeps its order,
+ * which is the best that can be done for a gateway that omits it.
+ */
 function parseDataEmbeddings(payload: unknown, expected: number): number[][] {
   const data = (payload as { data?: unknown } | null)?.data
   if (!Array.isArray(data)) throw new Error("response is missing the data array")
-  const embeddings = data.map((entry) => parseVector((entry as { embedding?: unknown } | null)?.embedding))
-  if (embeddings.length !== expected) {
-    throw new Error(`embedding count mismatch (${embeddings.length} != ${expected})`)
+  if (data.length !== expected) {
+    throw new Error(`embedding count mismatch (${data.length} != ${expected})`)
   }
-  return embeddings
+
+  const entries = data.map((entry, position) => ({
+    position,
+    index: toFiniteIndex((entry as { index?: unknown } | null)?.index),
+    vector: parseVector((entry as { embedding?: unknown } | null)?.embedding),
+  }))
+
+  const indexed = entries.every((entry) => entry.index !== undefined)
+  if (indexed) {
+    const out: (number[] | undefined)[] = new Array(expected)
+    for (const entry of entries) {
+      const index = entry.index as number
+      if (index < 0 || index >= expected || out[index] !== undefined) {
+        throw new Error(`response returned an out-of-range or repeated embedding index (${index})`)
+      }
+      out[index] = entry.vector
+    }
+    if (out.some((vector) => vector === undefined)) {
+      throw new Error("response is missing one or more embedding indices")
+    }
+    return out as number[][]
+  }
+
+  return entries.map((entry) => entry.vector)
+}
+
+function toFiniteIndex(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined
 }
 
 /** Parse Ollama's `{ embeddings: number[][] }` payload. */
@@ -179,6 +297,26 @@ function parseOllamaEmbeddings(payload: unknown, expected: number): number[][] {
 }
 
 /**
+ * The shape Gemini's batch endpoint returns: `{ embeddings: [{ values }] }`.
+ *
+ * `values` rather than `embedding`, and documented as coming back in the same
+ * order as the requests. There is no `index` to verify that against, so the
+ * count check is the only guard there is.
+ */
+function parseGeminiEmbeddings(payload: unknown, expected: number): number[][] {
+  const embeddings = (payload as { embeddings?: unknown } | null)?.embeddings
+  if (!Array.isArray(embeddings)) throw new Error("response is missing the embeddings array")
+  if (embeddings.length !== expected) {
+    throw new Error(`embedding count mismatch (${embeddings.length} != ${expected})`)
+  }
+  return embeddings.map((entry, index) => {
+    const values = (entry as { values?: unknown } | null)?.values
+    if (!Array.isArray(values)) throw new Error(`embedding ${index} has no values array`)
+    return values.map((value) => Number(value))
+  })
+}
+
+/**
  * Apply the model query prefix to every text. Already-prefixed texts are left
  * untouched (Kilo applies the same prefix for indexing and querying). Texts
  * that would exceed the model limit only due to the prefix are kept as-is.
@@ -192,21 +330,35 @@ function applyPrefix(texts: readonly string[], prefix: string | undefined): stri
   })
 }
 
-function fitToTokenLimit(text: string): string {
-  if (Math.ceil(text.length / 4) <= MAX_ITEM_TOKENS) return text
-  return text.slice(0, MAX_ITEM_CHARS)
+/** Per-request ceilings, after combining the user's setting with the provider's. */
+export interface BatchLimits {
+  maxItems: number
+  maxTokens: number
 }
 
-/** Split texts into batches bounded by item count and estimated token budget. */
-function buildBatches(texts: string[], batchSize: number): string[][] {
+/**
+ * Split texts into batches bounded by item count and estimated token budget.
+ *
+ * Both ceilings are per provider. OpenAI accepts at most 300,000 tokens in one
+ * request however many items that is, so at 8,192 tokens per chunk a batch is
+ * about 36 items - well under the configured `embeddingBatchSize` of 60, and
+ * a fixed item count would have produced 400,000 tokens and a 400.
+ */
+function buildBatches(texts: string[], limits: BatchLimits, maxItemTokens: number): string[][] {
+  const maxItemChars = Math.floor(maxItemTokens * CHARS_PER_TOKEN * INPUT_SAFETY)
   const batches: string[][] = []
   let current: string[] = []
   let currentTokens = 0
 
   for (const raw of texts) {
-    const text = fitToTokenLimit(raw)
-    const tokens = Math.ceil(text.length / 4)
-    if (current.length > 0 && (current.length >= batchSize || currentTokens + tokens > MAX_BATCH_TOKENS)) {
+    // Truncating keeps the output aligned with the input, which dropping the
+    // item would not.
+    const text = raw.length <= maxItemChars ? raw : raw.slice(0, maxItemChars)
+    const tokens = Math.ceil(text.length / CHARS_PER_TOKEN)
+    if (
+      current.length > 0 &&
+      (current.length >= limits.maxItems || currentTokens + tokens > limits.maxTokens)
+    ) {
       batches.push(current)
       current = []
       currentTokens = 0
@@ -238,80 +390,142 @@ function requireCredential(value: string | undefined, description: string): stri
 
 type BatchRequest = (texts: string[]) => Promise<number[][]>
 
-function createMistralRequest(settings: IndexingSettings): BatchRequest {
-  const apiKey = requireCredential(settings.credentials.mistralApiKey, "Mistral API key (credentials.mistralApiKey)")
+/**
+ * One adapter for every provider that speaks the OpenAI wire shape.
+ *
+ * The endpoint, the auth header and a couple of optional body fields are the
+ * only things that differ between OpenAI, Mistral, Voyage, OpenRouter and an
+ * arbitrary OpenAI-compatible server, so they are what varies. Mistral's raw
+ * HTTP body takes `input` (singular) even though every Mistral SDK and every
+ * example in their documentation uses `inputs`; generating the body from those
+ * examples sends the wrong field and produces an empty input.
+ */
+function createOpenAIShapedRequestImpl(
+  spec: ProviderSpec,
+  settings: IndexingSettings,
+  options: { url: string; auth?: string },
+): BatchRequest {
   const modelId = settings.modelId
+  const headers: Record<string, string> = {}
+  if (spec.authHeader && options.auth) headers[spec.authHeader] = `Bearer ${options.auth}`
+
   return async (texts) => {
-    const payload = await withRetries("mistral", () =>
-      fetchJson(
-        MISTRAL_EMBEDDINGS_URL,
-        {
-          method: "POST",
-          headers: { Authorization: `Bearer ${apiKey}` },
-          body: JSON.stringify({ model: modelId, input: texts, encoding_format: "base64" }),
-        },
-        REQUEST_TIMEOUT_MS,
-      ),
+    const body: Record<string, unknown> = {
+      ...spec.baseBody,
+      model: modelId,
+      input: texts,
+      ...(spec.encodingFormat ? { encoding_format: spec.encodingFormat } : {}),
+    }
+    const payload = await withRetries(spec.label, () =>
+      fetchJson(options.url, { method: "POST", headers, body: JSON.stringify(body) }, REQUEST_TIMEOUT_MS),
     )
     return parseDataEmbeddings(payload, texts.length)
   }
+}
+
+function createMistralRequest(settings: IndexingSettings): BatchRequest {
+  const spec = requireSpec("mistral")
+  return createOpenAIShapedRequestImpl(spec, settings, {
+    url: spec.url,
+    auth: requireCredential(settings.credentials.mistralApiKey, "Mistral API key (credentials.mistralApiKey)"),
+  })
 }
 
 function createOpenAiRequest(settings: IndexingSettings): BatchRequest {
-  const apiKey = requireCredential(settings.credentials.openAiApiKey, "OpenAI API key (credentials.openAiApiKey)")
-  const modelId = settings.modelId
-  return async (texts) => {
-    const payload = await withRetries("openai", () =>
-      fetchJson(
-        OPENAI_EMBEDDINGS_URL,
-        {
-          method: "POST",
-          headers: { Authorization: `Bearer ${apiKey}` },
-          body: JSON.stringify({ model: modelId, input: texts }),
-        },
-        REQUEST_TIMEOUT_MS,
-      ),
-    )
-    return parseDataEmbeddings(payload, texts.length)
-  }
+  const spec = requireSpec("openai")
+  return createOpenAIShapedRequestImpl(spec, settings, {
+    url: spec.url,
+    auth: requireCredential(settings.credentials.openAiApiKey, "OpenAI API key (credentials.openAiApiKey)"),
+  })
+}
+
+function createVoyageRequest(settings: IndexingSettings): BatchRequest {
+  const spec = requireSpec("voyage")
+  return createOpenAIShapedRequestImpl(spec, settings, {
+    url: spec.url,
+    auth: requireCredential(settings.credentials.voyageApiKey, "Voyage API key (credentials.voyageApiKey)"),
+  })
+}
+
+function createOpenRouterRequest(settings: IndexingSettings): BatchRequest {
+  const spec = requireSpec("openrouter")
+  return createOpenAIShapedRequestImpl(spec, settings, {
+    url: spec.url,
+    auth: requireCredential(settings.credentials.openRouterApiKey, "OpenRouter API key (credentials.openRouterApiKey)"),
+  })
 }
 
 function createOpenAiCompatibleRequest(settings: IndexingSettings): BatchRequest {
+  const spec = requireSpec("openai-compatible")
   const baseUrl = requireCredential(
     settings.credentials.openAiCompatibleBaseUrl,
     "OpenAI-compatible base URL (credentials.openAiCompatibleBaseUrl)",
   )
-  const endpoint = resolveEmbeddingsEndpoint(baseUrl)
-  const apiKey = settings.credentials.openAiCompatibleApiKey?.trim()
-  const modelId = settings.modelId
+  // A generic endpoint may or may not honour `encoding_format`; asking is the
+  // same gamble this adapter already makes for Mistral, and the response parser
+  // accepts either form, so a server that ignores it still works.
+  return createOpenAIShapedRequestImpl(
+    spec,
+    settings,
+    { url: resolveEmbeddingsEndpoint(baseUrl), auth: settings.credentials.openAiCompatibleApiKey?.trim() },
+  )
+}
+
+const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+
+/**
+ * Gemini's batch endpoint, with every input wrapped in its own `Content`.
+ *
+ * The wrapping is not decoration. `gemini-embedding-001` embeds a list of
+ * strings one vector per string, but `gemini-embedding-2` aggregates a plain
+ * list into a single vector. Sending the list unwrapped therefore returns one
+ * vector for N inputs and writes N-1 missing chunks into the index, with no
+ * error anywhere. Wrapping makes both models behave the same way.
+ */
+function createGeminiRequest(settings: IndexingSettings): BatchRequest {
+  const spec = requireSpec("gemini")
+  const apiKey = requireCredential(settings.credentials.geminiApiKey, "Gemini API key (credentials.geminiApiKey)")
+  const model = encodeURIComponent(settings.modelId)
+  const url = `${GEMINI_API_BASE}/models/${model}:batchEmbedContents`
+  const headers = { [spec.authHeader as string]: apiKey }
+
   return async (texts) => {
-    const headers: Record<string, string> = {}
-    if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`
-    const payload = await withRetries("openai-compatible", () =>
-      fetchJson(
-        endpoint,
-        {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ model: modelId, input: texts, encoding_format: "base64" }),
-        },
-        REQUEST_TIMEOUT_MS,
-      ),
+    const body = {
+      requests: texts.map((text) => ({
+        model: `models/${settings.modelId}`,
+        content: { parts: [{ text }] },
+      })),
+    }
+    const payload = await withRetries(spec.label, () =>
+      fetchJson(url, { method: "POST", headers, body: JSON.stringify(body) }, REQUEST_TIMEOUT_MS),
     )
-    return parseDataEmbeddings(payload, texts.length)
+    return parseGeminiEmbeddings(payload, texts.length)
   }
 }
 
+const DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+
+/**
+ * Ollama's `/api/embed`, which returns a bare positional array.
+ *
+ * There is no `index` field and no documented ordering guarantee, so
+ * correspondence is positional and unverifiable. `truncate: false` makes an
+ * over-long chunk fail loudly: with the default of `true`, `mxbai-embed-large`
+ * would quietly embed the first 512 tokens of every function in the repository
+ * and store the result as though it were the whole thing.
+ */
 function createOllamaRequest(settings: IndexingSettings): BatchRequest {
+  const spec = requireSpec("ollama")
   const configured = settings.credentials.ollamaBaseUrl?.trim()
   const baseUrl = stripTrailingSlashes(configured && configured.length > 0 ? configured : DEFAULT_OLLAMA_BASE_URL)
   const endpoint = `${baseUrl}/api/embed`
   const modelId = settings.modelId
+
   return async (texts) => {
-    const payload = await withRetries("ollama", () =>
+    const payload = await withRetries(spec.label, () =>
       fetchJson(
         endpoint,
-        { method: "POST", body: JSON.stringify({ model: modelId, input: texts }) },
+        { method: "POST", body: JSON.stringify({ ...spec.baseBody, model: modelId, input: texts }) },
         OLLAMA_TIMEOUT_MS,
       ),
     )
@@ -319,14 +533,38 @@ function createOllamaRequest(settings: IndexingSettings): BatchRequest {
   }
 }
 
+function requireSpec(provider: EmbedderProvider): ProviderSpec {
+  const spec = PROVIDER_SPECS[provider]
+  if (!spec) throw new Error(`Unsupported embedder provider: ${provider}`)
+  return spec
+}
+
+/**
+ * Combine the user's `embeddingBatchSize` with the provider's own ceilings.
+ *
+ * `embeddingBatchSize` is an item ceiling, so it is compared against the
+ * provider's item ceiling. The token ceiling is not derived from the item
+ * count: the two are independent limits, and deriving one from the other
+ * silently caps throughput at whatever arithmetic happens to produce.
+ */
+export function resolveBatchLimits(settings: IndexingSettings): BatchLimits {
+  const profile = getModelProfile(settings.provider, settings.modelId)
+  const configured =
+    Number.isFinite(settings.embeddingBatchSize) && settings.embeddingBatchSize > 0
+      ? Math.floor(settings.embeddingBatchSize)
+      : DEFAULT_EMBEDDING_BATCH_SIZE
+  return {
+    maxItems: Math.max(1, Math.min(configured, profile?.maxBatchItems ?? FALLBACK_MAX_BATCH_ITEMS)),
+    maxTokens: Math.max(1, profile?.maxBatchTokens ?? FALLBACK_MAX_BATCH_TOKENS),
+  }
+}
+
 function createEmbedderImpl(settings: IndexingSettings, request: BatchRequest, prefix: string | undefined): Embedder {
   const provider = settings.provider
   const modelId = settings.modelId
   const dimension = settings.dimension || getModelDimension(provider, modelId) || 0
-  const batchSize =
-    Number.isFinite(settings.embeddingBatchSize) && settings.embeddingBatchSize > 0
-      ? Math.floor(settings.embeddingBatchSize)
-      : DEFAULT_EMBEDDING_BATCH_SIZE
+  const limits = resolveBatchLimits(settings)
+  const maxItemTokens = getModelMaxInputTokens(provider, modelId)
 
   return {
     provider,
@@ -334,7 +572,7 @@ function createEmbedderImpl(settings: IndexingSettings, request: BatchRequest, p
     dimension,
     async embed(texts) {
       const prepared = applyPrefix(texts, prefix)
-      const batches = buildBatches(prepared, batchSize)
+      const batches = buildBatches(prepared, limits, maxItemTokens)
       const vectors: number[][] = []
       for (const batch of batches) {
         const embedded = await request(batch)
@@ -360,24 +598,26 @@ function createEmbedderImpl(settings: IndexingSettings, request: BatchRequest, p
  */
 export function createEmbedder(settings: IndexingSettings): Embedder {
   const provider = settings.provider
+  // The prefix comes from the catalog for models that declare one (nomic and
+  // friends); otherwise the resolved setting, which only an explicit override
+  // sets. Mistral and OpenAI declare none.
+  const prefix = getModelQueryPrefix(provider, settings.modelId) ?? settings.queryPrefix
   switch (provider) {
     case "mistral":
       return createEmbedderImpl(settings, createMistralRequest(settings), undefined)
     case "openai":
       return createEmbedderImpl(settings, createOpenAiRequest(settings), undefined)
+    case "voyage":
+      return createEmbedderImpl(settings, createVoyageRequest(settings), undefined)
+    case "openrouter":
+      return createEmbedderImpl(settings, createOpenRouterRequest(settings), undefined)
+    case "gemini":
+      return createEmbedderImpl(settings, createGeminiRequest(settings), undefined)
     case "openai-compatible":
-      return createEmbedderImpl(
-        settings,
-        createOpenAiCompatibleRequest(settings),
-        getModelQueryPrefix(provider, settings.modelId) ?? settings.queryPrefix,
-      )
+      return createEmbedderImpl(settings, createOpenAiCompatibleRequest(settings), prefix)
     case "ollama":
-      return createEmbedderImpl(
-        settings,
-        createOllamaRequest(settings),
-        getModelQueryPrefix(provider, settings.modelId) ?? settings.queryPrefix,
-      )
+      return createEmbedderImpl(settings, createOllamaRequest(settings), prefix)
     default:
-      throw new Error(`Unsupported embedder provider: ${provider}`)
+      throw new Error(`Unsupported embedder provider: ${provider as string}`)
   }
 }

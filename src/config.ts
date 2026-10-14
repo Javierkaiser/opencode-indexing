@@ -63,7 +63,7 @@ interface KiloConfigIndexing {
   openrouter?: { apiKey?: string }
 }
 
-const VALID_PROVIDERS: readonly EmbedderProvider[] = [
+export const VALID_PROVIDERS: readonly EmbedderProvider[] = [
   "mistral",
   "openai",
   "ollama",

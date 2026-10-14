@@ -1,8 +1,10 @@
 import assert from "node:assert/strict"
 import { after, before, beforeEach, test } from "node:test"
 
-import { createEmbedder } from "../src/embedder.ts"
-import type { IndexingSettings } from "../src/types.ts"
+import { createEmbedder, resolveBatchLimits } from "../src/embedder.ts"
+import { getModelMaxInputTokens } from "../src/registry.ts"
+import { VALID_PROVIDERS } from "../src/config.ts"
+import type { EmbedderProvider, IndexingSettings } from "../src/types.ts"
 
 interface FetchCall {
   url: string
@@ -191,7 +193,12 @@ test("batching: truncates oversized texts instead of dropping them", async () =>
 
   const sent = calls[0]!.body.input as string[]
   assert.equal(sent.length, 1)
-  assert.equal(sent[0]!.length, 32_000)
+  const estimatedTokens = Math.ceil(sent[0]!.length / 4)
+  assert.ok(
+    estimatedTokens <= 8192,
+    `a chunk must fit the model's input ceiling, estimated ${estimatedTokens} tokens`,
+  )
+  assert.ok(estimatedTokens > 8192 * 0.9, "and the margin must not throw away a meaningful share of the chunk")
 })
 
 test("retry: a 429 is retried once and then succeeds", async () => {
@@ -269,7 +276,13 @@ test("ollama: posts to /api/embed and parses the embeddings array", async () => 
   const call = calls[0]!
   assert.equal(call.url, "http://localhost:11434/api/embed")
   assert.equal(call.headers.get("authorization"), null)
-  assert.deepEqual(call.body, { model: "mxbai-embed-large", input: ["one", "two"] })
+  assert.deepEqual(call.body, {
+    // Ollama truncates by default and says nothing when it does; with a 512
+    // token model that quietly indexes a prefix of every chunk.
+    truncate: false,
+    model: "mxbai-embed-large",
+    input: ["one", "two"],
+  })
 })
 
 test("ollama: prefixes query text for nomic-embed-text without double-prefixing", async () => {
@@ -286,11 +299,239 @@ test("ollama: prefixes query text for nomic-embed-text without double-prefixing"
   assert.deepEqual(calls[0]!.body.input, ["search_query: hello", "search_query: already prefixed"])
 })
 
-test("unknown provider throws", () => {
-  assert.throws(
-    () => createEmbedder(baseSettings({ provider: "gemini" })),
-    /Unsupported embedder provider: gemini/,
+test("gemini: wraps each input in its own Content so N inputs give N vectors", async () => {
+  // gemini-embedding-001 embeds a plain string list one vector per string;
+  // gemini-embedding-2 aggregates that same list into a single vector. Sending
+  // the list unwrapped therefore returns 1 vector for N inputs and writes N-1
+  // missing chunks into the index, with no error raised anywhere.
+  respond = () => jsonResponse({ embeddings: [{ values: [0.1, 0.2] }, { values: [0.3, 0.4] }] })
+  const embedder = createEmbedder(
+    baseSettings({ provider: "gemini", modelId: "gemini-embedding-2", dimension: 3072, credentials: { geminiApiKey: "k" } }),
   )
+
+  const vectors = await embedder.embed(["alpha", "beta"])
+
+  assert.equal(vectors.length, 2, "one vector per input, never an aggregate")
+  assert.deepEqual(vectors, [
+    [0.1, 0.2],
+    [0.3, 0.4],
+  ])
+  const call = calls[0]!
+  assert.equal(
+    call.url,
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:batchEmbedContents",
+  )
+  assert.equal(call.headers.get("x-goog-api-key"), "k")
+  const requests = call.body.requests as Array<{ content: { parts: Array<{ text: string }> } }>
+  assert.equal(requests.length, 2)
+  assert.deepEqual(
+    requests.map((r) => r.content.parts[0]!.text),
+    ["alpha", "beta"],
+    "each request carries exactly one text, wrapped as a Content object",
+  )
+})
+
+test("gemini: rejects a response that aggregates several inputs into one vector", async () => {
+  respond = () => jsonResponse({ embeddings: [{ values: [0.1, 0.2] }] })
+  const embedder = createEmbedder(
+    baseSettings({ provider: "gemini", modelId: "gemini-embedding-2", dimension: 3072, credentials: { geminiApiKey: "k" } }),
+  )
+
+  await assert.rejects(() => embedder.embed(["alpha", "beta"]), /embedding count mismatch \(1 != 2\)/)
+})
+
+test("gemini: requires an API key", () => {
+  assert.throws(() => createEmbedder(baseSettings({ provider: "gemini" })), /Gemini API key/i)
+})
+
+test("voyage: sends input_type and refuses silent truncation", async () => {
+  respond = () => jsonResponse({ data: [{ embedding: [0.5], index: 0 }] })
+  const embedder = createEmbedder(
+    baseSettings({ provider: "voyage", modelId: "voyage-code-4", dimension: 1024, credentials: { voyageApiKey: "vk" } }),
+  )
+
+  await embedder.embed(["fn main() {}"])
+
+  const call = calls[0]!
+  assert.equal(call.url, "https://api.voyageai.com/v1/embeddings")
+  assert.equal(call.headers.get("authorization"), "Bearer vk")
+  // Voyage truncates by default; a truncated code chunk indexes as a valid but
+  // wrong vector, so the adapter asks for an error instead.
+  assert.equal(call.body.truncation, false)
+  assert.equal(call.body.input_type, "document")
+})
+
+test("openrouter: posts to its own endpoint with the routed model id", async () => {
+  respond = () => jsonResponse({ data: [{ embedding: [1, 2, 3], index: 0 }] })
+  const embedder = createEmbedder(
+    baseSettings({
+      provider: "openrouter",
+      modelId: "openai/text-embedding-3-small",
+      dimension: 1536,
+      credentials: { openRouterApiKey: "ork" },
+    }),
+  )
+
+  await embedder.embed(["hello"])
+
+  const call = calls[0]!
+  assert.equal(call.url, "https://openrouter.ai/api/v1/embeddings")
+  assert.equal(call.headers.get("authorization"), "Bearer ork")
+  assert.equal(call.body.model, "openai/text-embedding-3-small")
+})
+
+test("every declared provider has an implementation", () => {
+  // This used to assert the opposite for gemini: the provider was offered by
+  // the dropdown, accepted by validation, and only failed once indexing started
+  // and had already been billed for a probe.
+  const implemented: Array<
+    [EmbedderProvider, Partial<IndexingSettings>, Partial<IndexingSettings["credentials"]>]
+  > = [
+    ["mistral", {}, { mistralApiKey: "k" }],
+    ["openai", { modelId: "text-embedding-3-small", dimension: 1536 }, { openAiApiKey: "k" }],
+    ["voyage", { modelId: "voyage-code-4", dimension: 1024 }, { voyageApiKey: "k" }],
+    ["openrouter", { modelId: "openai/text-embedding-3-small", dimension: 1536 }, { openRouterApiKey: "k" }],
+    ["gemini", { modelId: "gemini-embedding-2", dimension: 3072 }, { geminiApiKey: "k" }],
+    ["ollama", { modelId: "nomic-embed-text", dimension: 768 }, {}],
+    ["openai-compatible", { modelId: "custom", dimension: 768 }, { openAiCompatibleBaseUrl: "http://x/v1" }],
+  ]
+  for (const [provider, overrides, credentials] of implemented) {
+    const embedder = createEmbedder(baseSettings({ provider, ...overrides, credentials }))
+    assert.equal(embedder.provider, provider, `${provider} must build an embedder`)
+  }
+  // The type union and the catalog must not grow a provider nobody can embed.
+  for (const provider of VALID_PROVIDERS) {
+    assert.ok(
+      implemented.some(([name]) => name === provider),
+      `${provider} is selectable but has no adapter`,
+    )
+  }
+})
+
+test("ollama: refuses to truncate an over-long chunk instead of embedding a prefix", async () => {
+  // `truncate` defaults to true, and mxbai-embed-large accepts 512 tokens, so
+  // the default silently indexes the first 512 tokens of every function.
+  respond = () => jsonResponse({ embeddings: [[0.1]] })
+  const embedder = createEmbedder(
+    baseSettings({ provider: "ollama", modelId: "mxbai-embed-large", dimension: 1024 }),
+  )
+
+  await embedder.embed(["x".repeat(40_000)])
+
+  const call = calls[0]!
+  assert.equal(call.body.truncate, false)
+  assert.equal(call.url, "http://localhost:11434/api/embed")
+})
+
+test("results are placed by index, not by array position", async () => {
+  // OpenAI documents an `index` field rather than promising response order, and
+  // its own samples fetch by that field.
+  respond = () => jsonResponse({
+    data: [
+      { embedding: [30], index: 2 },
+      { embedding: [10], index: 0 },
+      { embedding: [20], index: 1 },
+    ],
+  })
+  const embedder = createEmbedder(baseSettings({ credentials: { mistralApiKey: "k" } }))
+
+  const vectors = await embedder.embed(["a", "b", "c"])
+
+  assert.deepEqual(vectors, [[10], [20], [30]])
+})
+
+test("a response with no index keeps its order", async () => {
+  respond = () => jsonResponse({ data: [{ embedding: [10] }, { embedding: [20] }] })
+  const embedder = createEmbedder(baseSettings({ credentials: { mistralApiKey: "k" } }))
+
+  assert.deepEqual(await embedder.embed(["a", "b"]), [[10], [20]])
+})
+
+test("a repeated index is an error, not a silently shifted result", async () => {
+  respond = () => jsonResponse({
+    data: [
+      { embedding: [10], index: 0 },
+      { embedding: [20], index: 0 },
+    ],
+  })
+  const embedder = createEmbedder(baseSettings({ credentials: { mistralApiKey: "k" } }))
+
+  await assert.rejects(() => embedder.embed(["a", "b"]), /out-of-range or repeated embedding index/)
+})
+
+test("batch size is capped by the provider, not only by the user setting", async () => {
+  // OpenAI accepts at most 300,000 tokens per request however many items that
+  // is. A fixed item count would have sent 500 x 2,000 tokens and been refused;
+  // the token ceiling has to cut the batch too.
+  const settings = baseSettings({
+    provider: "openai",
+    modelId: "text-embedding-3-small",
+    dimension: 1536,
+    embeddingBatchSize: 500,
+    credentials: { openAiApiKey: "k" },
+  })
+  const limits = resolveBatchLimits(settings)
+  assert.equal(limits.maxItems, 500, "the user's item ceiling is honoured when the provider allows it")
+  assert.equal(limits.maxTokens, 300_000, "and the provider's token ceiling applies too")
+
+  respond = (call) => {
+    const input = call.body.input as string[]
+    return jsonResponse({
+      data: input.map((_, index) => ({ embedding: [index], index })),
+    })
+  }
+  const embedder = createEmbedder(settings)
+  // 100 chunks of 2,000 estimated tokens is 200,000 tokens total: one request
+  // would exceed nothing, so this asserts the ordinary path stays in one batch
+  // and the per-item input ceiling is what actually splits oversized work.
+  const texts = Array.from({ length: 100 }, (_, i) => `${i}${"x".repeat(8000)}`)
+  const vectors = await embedder.embed(texts)
+  assert.equal(vectors.length, 100)
+  assert.equal(calls.length, 1, "200,000 tokens fits under the 300,000 ceiling")
+
+  // Now exceed it: 400 chunks of 8,000 characters is about 800,000 tokens.
+  calls.length = 0
+  const many = Array.from({ length: 400 }, (_, i) => `${i}${"x".repeat(8000)}`)
+  await embedder.embed(many)
+  assert.ok(calls.length >= 3, `expected the token ceiling to split the batch, got ${calls.length} request(s)`)
+  for (const call of calls) {
+    const estimatedTokens = (call.body.input as string[]).reduce(
+      (total, text) => total + Math.ceil(text.length / 4),
+      0,
+    )
+    assert.ok(estimatedTokens <= 300_000, `a request carried ${estimatedTokens} tokens`)
+  }
+})
+
+test("a model with a small input ceiling is truncated to fit, not dropped", async () => {
+  // Alignment is the reason for truncating rather than skipping: dropping the
+  // item would leave fewer vectors than inputs and desynchronize the whole file.
+  respond = (call) => {
+    const input = call.body.input as string[]
+    return jsonResponse({ embeddings: input.map((text) => [text.length]) })
+  }
+  const embedder = createEmbedder(baseSettings({ provider: "ollama", modelId: "mxbai-embed-large", dimension: 1024 }))
+
+  const long = "y".repeat(40_000)
+  const vectors = await embedder.embed([long])
+
+  assert.equal(vectors.length, 1, "the chunk is still embedded, just shortened")
+  const sent = calls[0]!.body.input as string[]
+  const estimatedTokens = Math.ceil(sent[0]!.length / 4)
+  assert.ok(
+    estimatedTokens <= 512,
+    `mxbai-embed-large takes 512 tokens; the chunk was estimated at ${estimatedTokens}`,
+  )
+  assert.ok(sent[0]!.length < 40_000, "and was actually shortened")
+})
+
+test("an unknown model is sized conservatively, not optimistically", () => {
+  // Guessing high sends a 32,000-character chunk to a model that may accept 512,
+  // which comes back truncated with nothing to indicate it happened.
+  const limits = resolveBatchLimits(baseSettings({ provider: "ollama", modelId: "never-heard-of-it" }))
+  assert.ok(limits.maxItems > 0)
+  assert.equal(getModelMaxInputTokens("ollama", "never-heard-of-it"), 512)
+  assert.equal(getModelMaxInputTokens("voyage", "voyage-code-4"), 32_000)
 })
 
 test(

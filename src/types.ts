@@ -22,6 +22,36 @@ export interface ModelProfile {
   dimension: number
   scoreThreshold?: number
   queryPrefix?: string
+  /**
+   * Largest input the model accepts, in tokens.
+   *
+   * Not the same for every model, and the spread is wide: `mxbai-embed-large`
+   * takes 512 while `voyage-code-4` takes 32,000. Sizing every request by one
+   * global constant silently truncates every chunk past the smallest model's
+   * limit, and that truncated vector is stored as if it covered the whole
+   * function.
+   */
+  maxInputTokens?: number
+  /** Documented ceiling on items in one request, where the provider publishes one. */
+  maxBatchItems?: number
+  /** Documented ceiling on tokens in one request, where the provider publishes one. */
+  maxBatchTokens?: number
+  /**
+   * Whether the provider documents its output as already L2-normalised.
+   *
+   * Informational today: everything is compared with cosine either way, which is
+   * correct in both cases. It is here so a future fast path knows whether a bare
+   * dot product would be equivalent.
+   */
+  normalized?: boolean
+  /**
+   * Marks a model we know about that Kilo's registry does not.
+   *
+   * The catalog is a mirror, so that query embeddings stay interchangeable with
+   * a Kilo index. An entry with no Kilo counterpart is still useful, but it can
+   * never be import-compatible, and the status report has to be able to say so.
+   */
+  kiloMirror?: boolean
 }
 
 export interface ProviderCredentials {
