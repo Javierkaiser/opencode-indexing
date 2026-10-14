@@ -24,6 +24,54 @@ and you only ever pay to index the files that changed since.
 *called*, in a search that keeps working whether or not the tool that built the
 index is still installed.
 
+## Install
+
+> **Temporary: install from the repository.** There is no published npm package
+> yet, so the installer below is how you install the plugin today. An npm package
+> is planned — once it is out, `npm install @javierkaiser/opencode-indexing` will
+> replace these steps, and the installer will stay as a fallback.
+
+### Global (recommended)
+
+The installer is cross-platform; it only needs Node >= 22.6.
+
+```bash
+# Linux / macOS
+./install.sh
+
+# Windows
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+
+# Any platform (the wrappers just call this)
+node install.mjs
+```
+
+It copies the plugin to the global config directory (`$XDG_CONFIG_HOME/opencode` or `~/.config/opencode`, same path used on Windows), installs runtime deps (`ignore`, plus optional `@lancedb/lancedb@0.26.2` and the tree-sitter WASM packages), adds one `permissions` rule per tool to `opencode.json` (read tools `allow`, `indexing_config_set` `ask`), and restarts the OpenCode service.
+
+Those are V2 rules — `{ "action": "indexing_search", "resource": "*", "effect": "allow" }` inside the `permissions` array. The older `permission` action map is a V1 shape that V2 ignores, so the installer removes any of its own entries from that map rather than leaving something that looks configured but grants nothing.
+
+Options: `--skip-deps` (copy files only), `--no-restart`. PowerShell accepts `-SkipDeps` / `-NoRestart` too.
+
+If no package manager is available the copy still happens and the plugin runs with reduced features (line chunker instead of tree-sitter, no LanceDB).
+
+### From npm (coming soon)
+
+Not published yet. When the package is out:
+
+```bash
+npm install @javierkaiser/opencode-indexing
+```
+
+and reference it from `opencode.json`:
+
+```jsonc
+{
+  "plugins": [
+    { "package": "@javierkaiser/opencode-indexing" }
+  ]
+}
+```
+
 ## How it works
 
 ```
@@ -141,54 +189,6 @@ Configurable from all three:
 - Build / refresh / import actions and a status summary.
 
 Settings are stored in `~/.config/opencode/indexing.json` (plugin options → `indexing.json` → environment → `~/.config/kilo/kilo.jsonc` → defaults). Plugin options in `opencode.json` still work and take precedence. API keys are never written to `indexing.json` in plain text; set them through the environment or plugin options.
-
-## Install
-
-> **Temporary: install from the repository.** There is no published npm package
-> yet, so the installer below is how you install the plugin today. An npm package
-> is planned — once it is out, `npm install @javierkaiser/opencode-indexing` will
-> replace these steps, and the installer will stay as a fallback.
-
-### Global (recommended)
-
-The installer is cross-platform; it only needs Node >= 22.6.
-
-```bash
-# Linux / macOS
-./install.sh
-
-# Windows
-powershell -ExecutionPolicy Bypass -File .\install.ps1
-
-# Any platform (the wrappers just call this)
-node install.mjs
-```
-
-It copies the plugin to the global config directory (`$XDG_CONFIG_HOME/opencode` or `~/.config/opencode`, same path used on Windows), installs runtime deps (`ignore`, plus optional `@lancedb/lancedb@0.26.2` and the tree-sitter WASM packages), adds one `permissions` rule per tool to `opencode.json` (read tools `allow`, `indexing_config_set` `ask`), and restarts the OpenCode service.
-
-Those are V2 rules — `{ "action": "indexing_search", "resource": "*", "effect": "allow" }` inside the `permissions` array. The older `permission` action map is a V1 shape that V2 ignores, so the installer removes any of its own entries from that map rather than leaving something that looks configured but grants nothing.
-
-Options: `--skip-deps` (copy files only), `--no-restart`. PowerShell accepts `-SkipDeps` / `-NoRestart` too.
-
-If no package manager is available the copy still happens and the plugin runs with reduced features (line chunker instead of tree-sitter, no LanceDB).
-
-### From npm (coming soon)
-
-Not published yet. When the package is out:
-
-```bash
-npm install @javierkaiser/opencode-indexing
-```
-
-and reference it from `opencode.json`:
-
-```jsonc
-{
-  "plugins": [
-    { "package": "@javierkaiser/opencode-indexing" }
-  ]
-}
-```
 
 ## Configuration (optional, `opencode.json`)
 
