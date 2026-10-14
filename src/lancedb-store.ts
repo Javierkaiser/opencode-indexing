@@ -5,6 +5,7 @@ import { workspaceHash } from "./registry.ts"
 import { defaultLanceDbDirectory } from "./settings.ts"
 import type { VectorStoreAdapter, VectorStoreInfo, StoreSearchOptions, ExportBatch } from "./vector-store.ts"
 import type { EmbeddingProfile, QdrantPoint, QueryHit } from "./types.ts"
+import { describeError } from "./errors.ts"
 
 /**
  * LanceDB-backed adapter for the plugin's own index.
@@ -71,7 +72,7 @@ function loadLanceDb(): Promise<any> {
   lancedbPromise ??= import("@lancedb/lancedb").catch((error) => {
     lancedbPromise = undefined
     throw new Error(
-      `LanceDB no está disponible (instala @lancedb/lancedb@0.26.2 o usa vectorStore=qdrant): ${error instanceof Error ? error.message : String(error)}`,
+      `LanceDB no está disponible (instala @lancedb/lancedb@0.26.2 o usa vectorStore=qdrant): ${describeError(error)}`,
     )
   })
   return lancedbPromise
@@ -89,7 +90,7 @@ function native<T>(run: () => Promise<T>): Promise<T> {
 }
 
 function wrapNativeError(operation: string, dbPath: string, error: unknown): Error {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = describeError(error)
   return new Error(`LanceDB ${operation} failed at ${dbPath}: ${message}`, { cause: error })
 }
 

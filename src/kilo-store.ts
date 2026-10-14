@@ -3,6 +3,7 @@ import path from "node:path"
 import { workspaceHash } from "./registry.ts"
 import type { Qdrant } from "./qdrant.ts"
 import type { EmbeddingProfile, QdrantFieldCondition, QdrantFilter, QueryHit } from "./types.ts"
+import { describeError } from "./errors.ts"
 
 /**
  * Read-only access to Kilo Code's Qdrant index.
@@ -211,7 +212,7 @@ function readPointsCount(info: Record<string, any>): number {
 }
 
 function isMissingCollectionError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = describeError(error)
   const lower = message.toLowerCase()
   return lower.includes("404") || lower.includes("does not exist") || lower.includes("not found")
 }

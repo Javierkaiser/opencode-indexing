@@ -46,6 +46,38 @@ describe("indexStatusLine", () => {
   })
 })
 
+describe("indexState", () => {
+  test("an unreachable store is not the same as an empty one", () => {
+    // A stopped Qdrant once reported "no index", which reads as "nothing is
+    // indexed" when the truth is "we could not look".
+    assert.equal(indexState({ enabled: true, ownPoints: null, hasKilo: false, ownStoreReachable: false }), "error")
+    assert.notEqual(
+      indexState({ enabled: true, ownPoints: null, hasKilo: false, ownStoreReachable: false }),
+      "unavailable",
+    )
+  })
+
+  test("a reachable store with nothing in it still reports empty", () => {
+    assert.equal(indexState({ enabled: true, ownPoints: null, hasKilo: false, ownStoreReachable: true }), "unavailable")
+  })
+
+  test("an unreachable store wins over a paused setting", () => {
+    // "Re-read" is the action for an unreadable store; "resume" would fail again.
+    assert.equal(
+      indexState({ enabled: false, ownPoints: null, hasKilo: false, ownStoreReachable: false }),
+      "error",
+    )
+  })
+
+  test("LanceDB does not depend on Qdrant being up", () => {
+    assert.equal(
+      indexState({ enabled: true, ownPoints: 42, ownComplete: true, hasKilo: false, ownStoreReachable: false }),
+      "error",
+      "reachability is about the store that was actually read",
+    )
+  })
+})
+
 describe("shared vocabulary", () => {
   const states = ["loading", "working", "paused", "ready", "stale", "empty", "unavailable", "error"] as const
 

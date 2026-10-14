@@ -128,11 +128,11 @@ export const IndexingRpc = {
         properties: { rebuild: { type: "boolean" }, skipImport: { type: "boolean" }, ...directoryShape },
         additionalProperties: false,
       },
-      output: { type: "object", properties: { summary: { type: "string" } }, required: ["summary"], additionalProperties: true },
+      output: { type: "object", properties: { summary: { type: "string" }, error: { type: "string" } }, required: ["summary"], additionalProperties: true },
     },
     "index.refresh": {
       input: { type: "object", properties: { maxFiles: { type: "number" }, ...directoryShape }, additionalProperties: false },
-      output: { type: "object", properties: { summary: { type: "string" } }, required: ["summary"], additionalProperties: true },
+      output: { type: "object", properties: { summary: { type: "string" }, error: { type: "string" } }, required: ["summary"], additionalProperties: true },
     },
     "index.import": {
       input: {
@@ -140,7 +140,7 @@ export const IndexingRpc = {
         properties: { source: { type: "string" }, rebuild: { type: "boolean" }, ...directoryShape },
         additionalProperties: false,
       },
-      output: { type: "object", properties: { summary: { type: "string" } }, required: ["summary"], additionalProperties: true },
+      output: { type: "object", properties: { summary: { type: "string" }, error: { type: "string" } }, required: ["summary"], additionalProperties: true },
     },
     "workspaces.list": {
       input: empty,

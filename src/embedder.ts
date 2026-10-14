@@ -21,6 +21,7 @@
 
 import { DEFAULT_EMBEDDING_BATCH_SIZE, getModelDimension, getModelQueryPrefix } from "./registry.ts"
 import type { Embedder, IndexingSettings } from "./types.ts"
+import { describeError } from "./errors.ts"
 
 const MISTRAL_EMBEDDINGS_URL = "https://api.mistral.ai/v1/embeddings"
 const OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
@@ -60,7 +61,7 @@ class NetworkError extends Error {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return describeError(error)
 }
 
 function sleep(ms: number): Promise<void> {

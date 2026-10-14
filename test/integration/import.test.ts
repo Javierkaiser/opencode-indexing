@@ -8,6 +8,7 @@ import { createOwnStore } from "../../src/store-factory.ts"
 import { importFromKilo } from "../../src/import.ts"
 import { KILO_METADATA_ID } from "../../src/kilo-store.ts"
 import type { EmbeddingProfile, QdrantPoint } from "../../src/types.ts"
+import { describeError } from "../../src/errors.ts"
 
 /**
  * The import path, end to end against a real Qdrant.
@@ -35,7 +36,7 @@ const unavailable = await qdrant
   .then(() => undefined as string | undefined)
   .catch(
     (error: unknown) =>
-      `qdrant unreachable at ${settings.qdrantUrl}: ${error instanceof Error ? error.message : String(error)}`,
+      `qdrant unreachable at ${settings.qdrantUrl}: ${describeError(error)}`,
   )
 
 const stamp = Date.now()

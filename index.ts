@@ -34,6 +34,7 @@ import {
 } from "./src/settings-commands.ts"
 import type { IndexingSettings, KVStore } from "./src/types.ts"
 import type { Qdrant } from "./src/qdrant.ts"
+import { describeError } from "./src/errors.ts"
 
 /** One row of `workspaces.list`; the contract lives in `src/rpc.ts`. */
 interface WorkspaceListRow {
@@ -263,7 +264,7 @@ Behavior:
       })
     } catch (error) {
       // Setup errors must never crash the OpenCode server process.
-      console.error(`[opencode-indexing] tool registration failed: ${error instanceof Error ? error.message : String(error)}`)
+      console.error(`[opencode-indexing] tool registration failed: ${describeError(error)}`)
       return
     }
 
@@ -281,7 +282,7 @@ Behavior:
         } as never)
       })
     } catch (error) {
-      console.warn(`[opencode-indexing] skill registration failed: ${error instanceof Error ? error.message : String(error)}`)
+      console.warn(`[opencode-indexing] skill registration failed: ${describeError(error)}`)
     }
 
     // ---- Server commands (work in every client, including Desktop/Web) ----
@@ -323,7 +324,7 @@ Behavior:
         }
         return { ok: false, message: `Unknown test target: ${target}` }
       } catch (error) {
-        return { ok: false, message: error instanceof Error ? error.message : String(error) }
+        return { ok: false, message: describeError(error) }
       }
     }
 
@@ -570,7 +571,7 @@ class ForgetRefusedError extends Error {}
                 }
               }
             } catch (error) {
-              await reply(`Failed: ${error instanceof Error ? error.message : String(error)}`)
+              await reply(`Failed: ${describeError(error)}`)
             }
           },
         } as never)
@@ -583,7 +584,7 @@ class ForgetRefusedError extends Error {}
       // event reaches them.
       await ctx.command.reload()
     } catch (error) {
-      console.warn(`[opencode-indexing] command registration failed: ${error instanceof Error ? error.message : String(error)}`)
+      console.warn(`[opencode-indexing] command registration failed: ${describeError(error)}`)
     }
 
     // ---- RPC (for the TUI settings view and external clients) ----
@@ -651,33 +652,51 @@ class ForgetRefusedError extends Error {}
             kiloCollection: status.kilo.collection,
             recommendation: status.recommendation,
             workspace: rootFor(input),
+            // A stopped Qdrant and an empty index both yield null points, and
+            // without this the footer could not tell them apart.
+            ownStoreReachable: status.own.kind === "lancedb" ? true : status.qdrant.reachable,
           }
         },
 
         "index.build": async (input: unknown) => {
-          const settings = await getSettings()
-          const report = await runIndex(
-            { kv, root: rootFor(input), settings, qdrant: createSettingsQdrant(settings) },
-            {
-              mode: "build",
-              rebuild: (input as { rebuild?: boolean }).rebuild === true,
-              skipImport: (input as { skipImport?: boolean }).skipImport === true,
-            },
-          )
-          return { summary: summarizeReport(report) }
+          try {
+            const settings = await getSettings()
+            const report = await runIndex(
+              { kv, root: rootFor(input), settings, qdrant: createSettingsQdrant(settings) },
+              {
+                mode: "build",
+                rebuild: (input as { rebuild?: boolean }).rebuild === true,
+                skipImport: (input as { skipImport?: boolean }).skipImport === true,
+              },
+            )
+            return { summary: summarizeReport(report) }
+          } catch (error) {
+            // Returning the failure as data keeps the message readable. Letting
+            // it escape turns a perfectly good Error into an opaque RPC 500,
+            // which is what reached the user as "[object Object]".
+            return { summary: "Indexing failed", error: describeError(error) }
+          }
         },
 
         "index.refresh": async (input: unknown) => {
-          const settings = await getSettings()
-          const report = await runIndex(
-            { kv, root: rootFor(input), settings, qdrant: createSettingsQdrant(settings) },
-            { mode: "refresh", maxFiles: (input as { maxFiles?: number }).maxFiles },
-          )
-          return { summary: summarizeReport(report) }
+          try {
+            const settings = await getSettings()
+            const report = await runIndex(
+              { kv, root: rootFor(input), settings, qdrant: createSettingsQdrant(settings) },
+              { mode: "refresh", maxFiles: (input as { maxFiles?: number }).maxFiles },
+            )
+            return { summary: summarizeReport(report) }
+          } catch (error) {
+            return { summary: "Refresh failed", error: describeError(error) }
+          }
         },
 
         "index.import": async (input: unknown) => {
-          return { summary: await runImport((input as { directory?: string }).directory, (input as { source?: string }).source) }
+          try {
+            return { summary: await runImport((input as { directory?: string }).directory, (input as { source?: string }).source) }
+          } catch (error) {
+            return { summary: "Import failed", error: describeError(error) }
+          }
         },
 
         "workspaces.list": async () => {
@@ -694,14 +713,14 @@ class ForgetRefusedError extends Error {}
             return {
               ok: false,
               reason: error instanceof ForgetRefusedError ? "refused" : "failed",
-              summary: error instanceof Error ? error.message : String(error),
+              summary: describeError(error),
               pointsDeleted: null,
             }
           }
         },
       } as never)
     } catch (error) {
-      console.warn(`[opencode-indexing] RPC registration failed: ${error instanceof Error ? error.message : String(error)}`)
+      console.warn(`[opencode-indexing] RPC registration failed: ${describeError(error)}`)
     }
   },
 } satisfies Plugin.Plugin

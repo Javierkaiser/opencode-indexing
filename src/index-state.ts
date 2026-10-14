@@ -37,6 +37,15 @@ export interface StatusInput {
   kiloPoints?: number | null
   /** Workspace the status is about; only used by the chat-side line. */
   root?: string
+  /**
+   * Whether the store holding the own index could be read at all.
+   *
+   * "No index" and "could not look" are unrelated: one means nothing is there
+   * yet, the other means we never got to find out. Collapsing them made a
+   * stopped Qdrant look exactly like a workspace that had never been indexed,
+   * which is a different problem with a different fix.
+   */
+  ownStoreReachable?: boolean
 }
 
 export const GLYPHS: Record<IndexingState, string> = {
@@ -82,6 +91,9 @@ export function formatPoints(points: number): string {
 
 /** Maps a status payload to an index state. */
 export function indexState(input: StatusInput): IndexingState {
+  // Checked before `enabled`: a store we could not read is the more urgent
+  // problem, and its action is "re-read", which is what a user needs here.
+  if (input.ownStoreReachable === false) return "error"
   if (!input.enabled) return "paused"
   if (input.ownPoints !== undefined && input.ownPoints !== null) {
     return input.ownComplete === true ? "ready" : "stale"

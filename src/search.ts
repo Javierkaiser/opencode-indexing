@@ -8,6 +8,7 @@ import { getModelScoreThreshold, profileKey, workspaceHash } from "./registry.ts
 import { withProfile } from "./config.ts"
 import type { EmbedderProvider, IndexingSettings, KVStore, QueryHit, SearchHit } from "./types.ts"
 import type { Qdrant } from "./qdrant.ts"
+import { describeError } from "./errors.ts"
 
 export interface SearchDeps {
   qdrant: Qdrant
@@ -84,7 +85,7 @@ export async function searchCode(deps: SearchDeps, query: string, pathPrefix?: s
   const [ownInfo, kiloCollection] = await Promise.all([
     ownStore.info().catch(() => null),
     resolveKiloCached(qdrantClient, kv, root).catch((error) => {
-      errors.push(`kilo resolve: ${error instanceof Error ? error.message : String(error)}`)
+      errors.push(`kilo resolve: ${describeError(error)}`)
       return null
     }),
   ])
@@ -108,7 +109,7 @@ export async function searchCode(deps: SearchDeps, query: string, pathPrefix?: s
       if (!vector) throw new Error("empty embedding")
       vectors.set(key, vector)
     } catch (error) {
-      errors.push(`embed ${key}: ${error instanceof Error ? error.message : String(error)}`)
+      errors.push(`embed ${key}: ${describeError(error)}`)
     }
   }
 
@@ -128,7 +129,7 @@ export async function searchCode(deps: SearchDeps, query: string, pathPrefix?: s
     })
     return hits.map((hit) => toSearchHit(hit, "kilo")).filter((hit): hit is SearchHit => hit !== undefined)
   })().catch((error) => {
-    errors.push(`kilo search: ${error instanceof Error ? error.message : String(error)}`)
+    errors.push(`kilo search: ${describeError(error)}`)
     return [] as SearchHit[]
   })
 
@@ -146,7 +147,7 @@ export async function searchCode(deps: SearchDeps, query: string, pathPrefix?: s
     })
     return hits.map((hit) => toSearchHit(hit, "own")).filter((hit): hit is SearchHit => hit !== undefined)
   })().catch((error) => {
-    errors.push(`own search: ${error instanceof Error ? error.message : String(error)}`)
+    errors.push(`own search: ${describeError(error)}`)
     return [] as SearchHit[]
   })
 

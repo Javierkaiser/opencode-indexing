@@ -3,6 +3,7 @@ import path from "node:path"
 import { workspaceHash } from "./registry.ts"
 import type { Qdrant } from "./qdrant.ts"
 import type { EmbeddingProfile, QdrantFieldCondition, QdrantFilter, QdrantPoint, QueryHit } from "./types.ts"
+import { describeError } from "./errors.ts"
 
 /**
  * The plugin's own Qdrant index.
@@ -348,7 +349,7 @@ function readVectorSize(info: Record<string, any>): number | undefined {
 }
 
 function isMissingCollectionError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = describeError(error)
   const lower = message.toLowerCase()
   return lower.includes("404") || lower.includes("does not exist") || lower.includes("not found")
 }

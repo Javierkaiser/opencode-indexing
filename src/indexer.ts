@@ -23,6 +23,7 @@ import type {
 } from "./types.ts"
 import type { VectorStoreAdapter } from "./vector-store.ts"
 import { CHUNK_NAMESPACE, uuidv5 } from "./uuid.ts"
+import { describeError } from "./errors.ts"
 
 export interface IndexerDeps {
   kv: KVStore
@@ -180,7 +181,7 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
         )
       }
     } catch (error) {
-      report.errors.push(`import failed: ${error instanceof Error ? error.message : String(error)}`)
+      report.errors.push(`import failed: ${describeError(error)}`)
     }
   }
 
@@ -240,7 +241,7 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
     } catch (error) {
       // Cleanup only: stale points for deleted files may linger, but no file
       // went unindexed, so this must not poison completion.
-      report.warnings.push(`delete phase: ${error instanceof Error ? error.message : String(error)}`)
+      report.warnings.push(`delete phase: ${describeError(error)}`)
     }
   }
 
@@ -266,7 +267,7 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
       const fileChunks = await chunkFile(file.relPath, content, fileHash)
       chunks.push(...fileChunks)
     } catch (error) {
-      report.errors.push(`chunk ${file.relPath}: ${error instanceof Error ? error.message : String(error)}`)
+      report.errors.push(`chunk ${file.relPath}: ${describeError(error)}`)
       chunkFailures.add(file.relPath)
     }
     perFile.push({ file, fileHash })
@@ -283,7 +284,7 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
     } catch (error) {
       // Cleanup only: stale tail points for changed files may linger, but the
       // fresh chunks are still upserted below, so this is non-fatal.
-      report.warnings.push(`clearing changed files: ${error instanceof Error ? error.message : String(error)}`)
+      report.warnings.push(`clearing changed files: ${describeError(error)}`)
     }
   }
 
@@ -340,7 +341,7 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
       report.batches++
       succeeded = true
     } catch (error) {
-      report.errors.push(`batch ${Math.floor(i / batchSize) + 1}: ${error instanceof Error ? error.message : String(error)}`)
+      report.errors.push(`batch ${Math.floor(i / batchSize) + 1}: ${describeError(error)}`)
     }
 
     for (const chunk of batch) {
@@ -378,7 +379,7 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
   try {
     await store.markComplete(profile, complete, dimension)
   } catch (error) {
-    report.errors.push(`mark complete: ${error instanceof Error ? error.message : String(error)}`)
+    report.errors.push(`mark complete: ${describeError(error)}`)
     complete = false
   }
   manifest.complete = complete

@@ -27,6 +27,7 @@ import { activeWorkspace, type WorkspaceSources } from "./tui/footer.ts"
 import { describeRow, forgetWorkspaceFlow, type WorkspacesRpc } from "./tui/workspaces.ts"
 import { pagePalette } from "./tui/page-style.ts"
 import type { FooterHandle, FooterState } from "./tui/footer-view.tsx"
+import { describeError } from "./src/errors.ts"
 
 /**
  * Navigable rows on the page.
@@ -44,10 +45,10 @@ type RpcClient = {
   "settings.set": (input: { patch: Record<string, unknown> }) => Promise<{ settings: SettingsView }>
   "settings.test": (input: { target: "qdrant" | "lancedb" | "provider" | "kilo" }) => Promise<{ ok: boolean; message: string }>
   "kilo.discover": () => Promise<{ sources: Array<{ kind: string; name: string; pointsCount: number | null; compatible: boolean; profile: string | null }> }>
-  "status.get": (input: { checkFreshness?: boolean; directory?: string }) => Promise<{ summary: string; recommendation: string; ownKind: string; ownStore: string; ownPoints?: number | null; ownComplete?: boolean | null; kiloCollection?: string | null; directory?: string }>
-  "index.build": (input: { rebuild?: boolean; skipImport?: boolean; directory?: string }) => Promise<{ summary: string }>
-  "index.refresh": (input: { maxFiles?: number; directory?: string }) => Promise<{ summary: string }>
-  "index.import": (input: { source?: string; rebuild?: boolean; directory?: string }) => Promise<{ summary: string }>
+  "status.get": (input: { checkFreshness?: boolean; directory?: string }) => Promise<{ summary: string; recommendation: string; ownKind: string; ownStore: string; ownPoints?: number | null; ownComplete?: boolean | null; kiloCollection?: string | null; directory?: string; ownStoreReachable?: boolean }>
+  "index.build": (input: { rebuild?: boolean; skipImport?: boolean; directory?: string }) => Promise<{ summary: string; error?: string }>
+  "index.refresh": (input: { maxFiles?: number; directory?: string }) => Promise<{ summary: string; error?: string }>
+  "index.import": (input: { source?: string; rebuild?: boolean; directory?: string }) => Promise<{ summary: string; error?: string }>
 }
 
 interface SettingsView {
@@ -81,7 +82,17 @@ const plugin = {
     }
 
     const fail = (error: unknown): void => {
-      toast(error instanceof Error ? error.message : String(error), "error")
+      toast(describeError(error), "error")
+    }
+
+    /**
+     * Toasts the outcome of an index run. A failed run arrives as data, not as a
+     * rejection: the host turns a thrown error into an RPC 500 with no body, and
+     * the one thing worth reading is exactly what got dropped on the way.
+     */
+    const reportRun = (result: { summary: string; error?: string }): void => {
+      if (result.error) toast(`${result.summary}: ${result.error}`, "error")
+      else toast(result.summary, "success")
     }
 
     async function loadSettings(): Promise<SettingsView> {
@@ -426,7 +437,7 @@ const plugin = {
       toast("Importing…", "info")
       try {
         const result = await rpc()["index.import"]({ source: choice })
-        toast(result.summary, "success")
+        reportRun(result)
       } catch (error) {
         fail(error)
       }
@@ -450,14 +461,11 @@ const plugin = {
       toast("Running…", "info")
       try {
         if (action === "refresh") {
-          const result = await rpc()["index.refresh"]({ directory: workspace() })
-          toast(result.summary, "success")
+          reportRun(await rpc()["index.refresh"]({ directory: workspace() }))
         } else if (action === "build") {
-          const result = await rpc()["index.build"]({})
-          toast(result.summary, "success")
+          reportRun(await rpc()["index.build"]({}))
         } else if (action === "build-scratch") {
-          const result = await rpc()["index.build"]({ skipImport: true })
-          toast(result.summary, "success")
+          reportRun(await rpc()["index.build"]({ skipImport: true }))
         } else if (action === "rebuild") {
           const confirmed = await context.ui.dialog.confirm({
             title: "Rebuild index",
@@ -465,8 +473,7 @@ const plugin = {
             label: { confirm: "Rebuild", cancel: "Cancel" },
           })
           if (!confirmed) return
-          const result = await rpc()["index.build"]({ rebuild: true })
-          toast(result.summary, "success")
+          reportRun(await rpc()["index.build"]({ rebuild: true }))
         }
       } catch (error) {
         fail(error)
@@ -515,7 +522,7 @@ const plugin = {
       try {
         dispose?.()
       } catch (error) {
-        console.warn(`[${ID}] could not unregister the settings page: ${error instanceof Error ? error.message : String(error)}`)
+        console.warn(`[${ID}] could not unregister the settings page: ${describeError(error)}`)
       }
     }
 
@@ -598,7 +605,7 @@ const plugin = {
           },
           onError: (error) =>
             console.warn(
-              `[${ID}] settings page unavailable, using dialogs: ${error instanceof Error ? error.message : String(error)}`,
+              `[${ID}] settings page unavailable, using dialogs: ${describeError(error)}`,
             ),
         })
         if (result === "fallback") pageStore = undefined
@@ -728,6 +735,7 @@ const plugin = {
           ownPoints: status.ownPoints ?? null,
           ownComplete: status.ownComplete ?? null,
           hasKilo: status.kiloCollection !== null,
+          ownStoreReachable: status.ownStoreReachable,
         }),
         points: status.ownPoints ?? null,
       }
@@ -773,7 +781,9 @@ const plugin = {
           from.state === "stale"
             ? await rpc()["index.refresh"]({ directory: workspace() })
             : await rpc()["index.build"]({ skipImport: false, directory: workspace() })
-        toast(summary.summary, "success")
+        // A failed run comes back as data, not as a rejection: the reason is far
+        // more useful than "something went wrong", and it is already readable.
+        reportRun(summary)
       } catch (error) {
         fail(error)
       } finally {
@@ -785,7 +795,7 @@ const plugin = {
     // registered. A host without a JSX runtime simply gets no indicator; the rest
     // of the plugin, including the page and the dialogs, is unaffected.
     const footerModule = await import("./tui/footer-view.tsx").catch((error: unknown) => {
-      console.warn(`[${ID}] footer indicator unavailable: ${error instanceof Error ? error.message : String(error)}`)
+      console.warn(`[${ID}] footer indicator unavailable: ${describeError(error)}`)
       return undefined
     })
 

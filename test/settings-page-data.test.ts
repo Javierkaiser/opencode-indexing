@@ -194,6 +194,19 @@ describe("PAGE_ACTIONS", () => {
     assert.equal(result, "imported")
   })
 
+  test("a failed run keeps its reason on the page", async () => {
+    // The page shows one line per action, so the reason has to ride along with
+    // the summary or the user is left with "Indexing failed" and nothing else.
+    const { rpc } = fakeRpc({
+      "index.build": async () => ({
+        summary: "Indexing failed",
+        error: "Qdrant GET /collections/oc-abc failed: Unable to connect",
+      }),
+    })
+    const result = await actionById("build")!.run(rpc)
+    assert.match(result, /Unable to connect/)
+  })
+
   test("test action collects per-target results", async () => {
     const { rpc } = fakeRpc()
     const result = await actionById("test")!.run(rpc)

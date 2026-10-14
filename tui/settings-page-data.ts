@@ -9,6 +9,7 @@
 import type { SettingsPageStore } from "./page-store.ts"
 import { loadWorkspaces, type WorkspaceRow, type WorkspacesView } from "./workspaces.ts"
 import type { ThemeLike } from "./page-style.ts"
+import { describeError } from "../src/errors.ts"
 
 export interface SettingsView {
   vectorStore: "qdrant" | "lancedb"
@@ -48,9 +49,9 @@ export interface SettingsPageRpc {
   "settings.test": (input: { target: "qdrant" | "lancedb" | "provider" | "kilo" }) => Promise<{ ok: boolean; message: string }>
   "kilo.discover": () => Promise<{ sources: KiloSourceView[] }>
   "status.get": (input: { checkFreshness?: boolean }) => Promise<StatusView>
-  "index.build": (input: { rebuild?: boolean; skipImport?: boolean }) => Promise<{ summary: string }>
-  "index.refresh": (input: { maxFiles?: number }) => Promise<{ summary: string }>
-  "index.import": (input: { source?: string; rebuild?: boolean }) => Promise<{ summary: string }>
+  "index.build": (input: { rebuild?: boolean; skipImport?: boolean }) => Promise<{ summary: string; error?: string }>
+  "index.refresh": (input: { maxFiles?: number }) => Promise<{ summary: string; error?: string }>
+  "index.import": (input: { source?: string; rebuild?: boolean }) => Promise<{ summary: string; error?: string }>
   "workspaces.list": (input: Record<string, never>) => Promise<{ workspaces: WorkspaceRow[] }>
   "workspace.forget": (input: { store: string }) => Promise<{ ok: boolean; reason?: "refused" | "failed"; summary: string; pointsDeleted: number | null }>
 }
@@ -196,7 +197,7 @@ export const PAGE_ACTIONS: readonly PageAction[] = [
           const result = await rpc["settings.test"]({ target })
           results.push(`${target}: ${result.ok ? "OK" : "FAIL"} (${result.message})`)
         } catch (error) {
-          results.push(`${target}: FAIL (${error instanceof Error ? error.message : String(error)})`)
+          results.push(`${target}: FAIL (${describeError(error)})`)
         }
       }
       return results.join(" · ")
@@ -207,33 +208,43 @@ export const PAGE_ACTIONS: readonly PageAction[] = [
     title: "Build (import from Kilo when possible)",
     description: "Imports a compatible Kilo index, then indexes the delta",
     kind: "none",
-    run: async (rpc) => (await rpc["index.build"]({})).summary,
+    run: async (rpc) => summaryOf(await rpc["index.build"]({})),
   },
   {
     id: "build-scratch",
     title: "Build from scratch (skip import)",
     description: "Embeds every file with the configured model",
     kind: "none",
-    run: async (rpc) => (await rpc["index.build"]({ skipImport: true })).summary,
+    run: async (rpc) => summaryOf(await rpc["index.build"]({ skipImport: true })),
   },
   {
     id: "refresh",
     title: "Refresh (incremental)",
     description: "Only new/changed/deleted files since the last run",
     kind: "none",
-    run: async (rpc) => (await rpc["index.refresh"]({})).summary,
+    run: async (rpc) => summaryOf(await rpc["index.refresh"]({})),
   },
   {
     id: "import",
     title: "Import Kilo index…",
     description: "Copy vectors from a Kilo source without re-embedding",
     kind: "source",
-    run: async (rpc, source) => (await rpc["index.import"](source ? { source } : {})).summary,
+    run: async (rpc, source) => summaryOf(await rpc["index.import"](source ? { source } : {})),
   },
 ]
 
 export function actionById(id: string): PageAction | undefined {
   return PAGE_ACTIONS.find((action) => action.id === id)
+}
+
+/**
+ * Flattens an index run's result into the single line the page shows.
+ *
+ * A failed run arrives as data rather than a rejection, so the reason has to be
+ * read from here or it never reaches the screen.
+ */
+function summaryOf(result: { summary: string; error?: string }): string {
+  return result.error ? `${result.summary}: ${result.error}` : result.summary
 }
 
 /** Row index of the dialog editor, right after the actions. */

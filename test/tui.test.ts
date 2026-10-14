@@ -101,6 +101,8 @@ interface HarnessOptions {
   }
   /** Overrides for the `index.*` summaries. */
   summaries?: Partial<Record<"build" | "refresh" | "import", string>>
+  /** Makes every `index.*` run report this failure instead of a summary. */
+  runError?: string
   /** Tabs the fake host reports open. The one with `active` is the focused tab. */
   tabs?: WorkspaceTab[]
   /** Sessions the fake client knows about, each with the directory it lives in. */
@@ -188,14 +190,17 @@ function makeHarness(options: HarnessOptions = {}) {
     },
     "index.build": async (input: { rebuild?: boolean; skipImport?: boolean }) => {
       calls.push({ method: "index.build", input })
+      if (options.runError) return { summary: "Indexing failed", error: options.runError }
       return { summary: summary("build", "build summary") }
     },
     "index.refresh": async (input: { maxFiles?: number }) => {
       calls.push({ method: "index.refresh", input })
+      if (options.runError) return { summary: "Refresh failed", error: options.runError }
       return { summary: summary("refresh", "refresh summary") }
     },
     "index.import": async (input: { source?: string; rebuild?: boolean }) => {
       calls.push({ method: "index.import", input })
+      if (options.runError) return { summary: "Import failed", error: options.runError }
       return { summary: summary("import", "import summary") }
     },
   }
@@ -930,6 +935,47 @@ describe("tui plugin", () => {
     assert.ok(
       harness.toasts.some((toast) => toast.variant === "success" && toast.message === "Imported 100 points from test-db"),
       "the import summary must be toasted on success",
+    )
+  })
+
+  test("a failed run shows the reason, not just that it failed", async () => {
+    // A run that fails comes back as data; before this the reason was dropped by
+    // the RPC layer and the user only ever saw that something went wrong.
+    const reason = "Qdrant GET /collections/oc-abc failed: Unable to connect"
+    const harness = await setupPlugin({ selects: ["index", "build"], runError: reason })
+    await runCommand(harness)
+
+    const failure = harness.toasts.find((toast) => toast.variant === "error")
+    assert.ok(failure, `expected an error toast, got ${JSON.stringify(harness.toasts)}`)
+    assert.match(failure.message, /Unable to connect/, "the actual reason has to reach the screen")
+    assert.equal(
+      harness.toasts.filter((toast) => toast.variant === "success").length,
+      0,
+      "a failed run must never be reported as a success",
+    )
+  })
+
+  test("a failed import shows the reason", async () => {
+    const source: KiloSource = {
+      kind: "lancedb",
+      name: "test-db",
+      pointsCount: 100,
+      compatible: true,
+      profile: "mistral:codestral-embed-2505:1536",
+    }
+    const harness = await setupPlugin({
+      selects: ["kilo", "test-db"],
+      confirms: [true],
+      sources: [source],
+      runError: "Source collection ws-abc is not compatible with profile mistral",
+    })
+    await runCommand(harness)
+
+    assert.ok(
+      harness.toasts.some(
+        (toast) => toast.variant === "error" && /not compatible with profile/.test(toast.message),
+      ),
+      "an incompatible source must say so",
     )
   })
 

@@ -9,6 +9,7 @@ import { workspaceHash } from "./registry.ts"
 import { scanWorkspace } from "./scanner.ts"
 import type { IndexingSettings, KVStore } from "./types.ts"
 import type { Qdrant } from "./qdrant.ts"
+import { describeError } from "./errors.ts"
 
 export interface StatusDeps {
   qdrant: Qdrant
@@ -61,7 +62,7 @@ export async function getStatus(deps: StatusDeps, options?: { checkFreshness?: b
     await qdrant.listCollections()
   } catch (error) {
     reachable = false
-    warnings.push(`Qdrant unreachable at ${settings.qdrantUrl}: ${error instanceof Error ? error.message : String(error)}`)
+    warnings.push(`Qdrant unreachable at ${settings.qdrantUrl}: ${describeError(error)}`)
   }
 
   const ownStore = createOwnStore(settings, root)
@@ -97,7 +98,7 @@ export async function getStatus(deps: StatusDeps, options?: { checkFreshness?: b
       freshness.maybeStale = diff.maybeStale.length
       freshness.deleted = diff.deleted.length
     } catch (error) {
-      warnings.push(`freshness scan failed: ${error instanceof Error ? error.message : String(error)}`)
+      warnings.push(`freshness scan failed: ${describeError(error)}`)
     }
   }
 

@@ -4,6 +4,7 @@ import type {
   QueryHit,
   QueryOptions,
 } from "./types.ts"
+import { describeError } from "./errors.ts"
 
 export interface QdrantConfig {
   url: string
@@ -211,7 +212,7 @@ export function createQdrant(config: QdrantConfig): Qdrant {
         signal: AbortSignal.timeout(timeoutMs),
       })
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error)
+      const reason = describeError(error)
       if (isTimeoutError(error)) throw new QdrantTimeoutError(method, path, reason)
       throw new Error(`Qdrant ${method} ${path} failed: ${reason}`)
     }
@@ -357,7 +358,7 @@ export function createQdrant(config: QdrantConfig): Qdrant {
         field_schema: schema,
       })
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = describeError(error)
       if (/already exists/i.test(message)) return
       throw error
     }
