@@ -32,3 +32,44 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+
+  pack:
+    name: published package contents
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      # A file can be gitignored and still be sitting in the repository, which
+      # is exactly how a local note once ended up in the tarball. The package
+      # `files` list is the only thing keeping it out, so it gets checked.
+      - name: the tarball must carry nothing local-only
+        run: |
+          npm pack --dry-run --json > pack.json
+          node -e '
+            const fs = require("node:fs")
+            const parsed = JSON.parse(fs.readFileSync("pack.json", "utf8"))
+            // npm 12 keys the report by package name; older npm returns an array.
+            const entry = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0]
+            if (!entry?.files?.length) {
+              console.error("could not read the file list from npm pack")
+              process.exit(1)
+            }
+            const paths = entry.files.map((file) => file.path)
+            const forbidden = (file) =>
+              file.startsWith("docs/") ||
+              file.startsWith("test/") ||
+              file.startsWith(".codegraph/") ||
+              file === "bench/projects.local.json" ||
+              file.endsWith(".log") ||
+              file.endsWith(".tgz")
+            const leaked = paths.filter(forbidden)
+            if (leaked.length > 0) {
+              console.error("local-only files would be published:\n  " + leaked.join("\n  "))
+              process.exit(1)
+            }
+            console.log(`${paths.length} files in the tarball, none local-only`)
+          '

@@ -211,11 +211,34 @@ complementary:
 | Weaknesses | "Similar" is not "relevant"; no notion of connections | Cannot find a concept with no known symbol; fragile on dynamic code |
 | Cost profile | Embedding API + vector DB | Local parsing + small graph store |
 
-The 2026 consensus is **hybrid**: use embeddings to find the entry node by
-intent, then walk the graph for the exact relationships. Empirically, Cursor
-reported ~12.5% retrieval-accuracy improvement when combining semantic search
-with grep; Sourcegraph layers semantic search over a SCIP code graph; Aider uses
-tree-sitter + PageRank with no embeddings at all for repo maps.
+We measured this rather than assuming it. [`bench/`](./bench) runs the same
+real questions about code through four methods — word matching, symbol-name
+lookup, this plugin's semantic search, and a fusion of the last two — over two
+codebases of different languages, and counts how often each finds the right
+file. The [report](./bench/results.md) opens with the numbers in plain language.
+What it found:
+
+- **Symbol-name lookup was the weakest of the four**, in both codebases. It only
+  matches what things are *called*, so a question in ordinary words has little to
+  grab onto.
+- **Semantic search and plain word matching traded places.** On one codebase
+  semantic won clearly (100% vs 76% found in the top 10); on the other they were
+  close (60% vs 55%). Neither replaces the other.
+- **Fusing semantic with symbol lookup was never worse than semantic alone**, and
+  better on both: more files found on one codebase, a better position on the
+  other.
+
+One caveat that matters for reading that: the benchmark measures `codegraph
+query`, the one subcommand that matches names. It does **not** measure what a
+graph is actually good for — who calls what, what breaks if you change it,
+paths between two places. Those are the graph's real strength and they are not
+in the numbers above.
+
+The broader consensus points the same way: use embeddings to find the entry node
+by intent, then walk the graph for exact relationships. Cursor reported ~12.5%
+retrieval-accuracy improvement combining semantic search with grep; Sourcegraph
+layers semantic search over a SCIP graph; Aider uses tree-sitter + PageRank with
+no embeddings at all for repo maps.
 
 This plugin deliberately stays on the semantic side and coexists with grep/read
 (see the tool descriptions and the bundled skill). A code-graph mode (tree-sitter

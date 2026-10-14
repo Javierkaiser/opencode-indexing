@@ -9,8 +9,9 @@ coverage/
 # Local CodeGraph index (machine-specific, never published)
 .codegraph/
 
-# Working notes kept local, not published
-docs/publication-plan.md
+# Working notes kept local, not published. The whole folder, so a new note
+# stays local by default instead of needing its own line here.
+docs/
 
 # Benchmark manifest: maps anonymous labels to real paths, so it must not be published
 bench/projects.local.json
