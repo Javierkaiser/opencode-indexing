@@ -18,8 +18,10 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           # Node 24 ships npm >= 11.5.1, which is required for trusted publishing.
+          # Do NOT set registry-url: setup-node would then write an .npmrc with a
+          # placeholder `_authToken`, and npm would use that instead of OIDC
+          # (see actions/setup-node#1551), failing with a 404 on publish.
           node-version: "24"
-          registry-url: "https://registry.npmjs.org"
           package-manager-cache: false # never cache in release builds
       - run: npm ci
       - run: npm run typecheck
