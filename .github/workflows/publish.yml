@@ -1,21 +1,82 @@
 name: publish
 
+# Publishes to npm, and creates the release tag when it is missing.
+#
+# Running on `main` is what makes the tag automatic: bump `version` in
+# package.json, push, and this workflow tags `v<version>` and publishes it. A tag
+# pushed by hand still publishes, and re-running — or a duplicate trigger — is a
+# no-op once the version is on npm, because npm refuses to publish over a version
+# that already exists.
+#
+# The filename is deliberate: npm's trusted publisher is configured per
+# repository + workflow filename, so renaming this file breaks the OIDC exchange
+# with a 404 and the publish fails.
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write # to create and push the tag
   id-token: write # required for OIDC (npm trusted publishing)
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
 
 jobs:
   publish:
     name: publish to npm
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth 0 so `git rev-parse refs/tags/...` can see every tag.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether there is anything to do
+        id: state
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          encoded=$(node -p "encodeURIComponent(require('./package.json').name)")
+
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            tagged=true
+          else
+            tagged=false
+          fi
+
+          # A version already on the registry cannot be published again, so this
+          # is what keeps a re-run from failing.
+          if curl -sf "https://registry.npmjs.org/$encoded/$version" -o /dev/null; then
+            published=true
+          else
+            published=false
+          fi
+
+          echo "version:   $version"
+          echo "tagged:    $tagged"
+          echo "published: $published"
+
+          {
+            echo "version=$version"
+            echo "tagged=$tagged"
+            echo "published=$published"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create the tag
+        if: steps.state.outputs.tagged == 'false' && steps.state.outputs.published == 'false'
+        run: |
+          git tag -a "v${{ steps.state.outputs.version }}" \
+            -m "opencode-indexing v${{ steps.state.outputs.version }}"
+          git push origin "v${{ steps.state.outputs.version }}"
+
       - uses: actions/setup-node@v6
+        if: steps.state.outputs.published == 'false'
         with:
           # Node 24 ships npm >= 11.5.1, which is required for trusted publishing.
           # Do NOT set registry-url: setup-node would then write an .npmrc with a
@@ -23,10 +84,21 @@ jobs:
           # (see actions/setup-node#1551), failing with a 404 on publish.
           node-version: "24"
           package-manager-cache: false # never cache in release builds
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
+
+      - name: Install
+        if: steps.state.outputs.published == 'false'
+        run: npm ci
+
+      - name: Typecheck
+        if: steps.state.outputs.published == 'false'
+        run: npm run typecheck
+
+      - name: Test
+        if: steps.state.outputs.published == 'false'
+        run: npm test
+
       - name: Report environment
+        if: steps.state.outputs.published == 'false'
         run: |
           echo "node: $(node -v)"
           echo "npm:  $(npm -v)"
@@ -34,10 +106,12 @@ jobs:
           echo "OIDC request token set: $([ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ] && echo YES || echo NO)"
           echo "NODE_AUTH_TOKEN is:     ${NODE_AUTH_TOKEN:+SET}"
           echo "NPM_CONFIG_USERCONFIG:  ${NPM_CONFIG_USERCONFIG:-unset}"
+
       # No token: npm detects the OIDC environment and uses trusted publishing.
       # NODE_AUTH_TOKEN has to be *absent*, not blank, or npm treats it as auth
       # config and never falls through to OIDC — hence the `env -u`.
       - name: Publish to npm
+        if: steps.state.outputs.published == 'false'
         run: |
           rm -f "$HOME/.npmrc"
           if [ -n "$NPM_CONFIG_USERCONFIG" ] && [ -f "$NPM_CONFIG_USERCONFIG" ]; then
@@ -54,3 +128,13 @@ jobs:
             tail -120 "$(ls -t "$HOME"/.npm/_logs/*.log | head -1)"
           fi
           exit "$rc"
+
+      - name: Summary
+        run: |
+          if [ "${{ steps.state.outputs.published }}" = "true" ]; then
+            echo "v${{ steps.state.outputs.version }} is already on npm — nothing to publish."
+          elif [ "${{ steps.state.outputs.tagged }}" = "true" ]; then
+            echo "v${{ steps.state.outputs.version }} already had a tag. Published it."
+          else
+            echo "Created the tag v${{ steps.state.outputs.version }} and published it."
+          fi
