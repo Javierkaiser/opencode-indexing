@@ -9,8 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.1] - 2026-10-14
 
+### Added
+
+- `src/lancedb-support.ts` reports up front that LanceDB ships one native binary per
+  platform and that there is no `lancedb-darwin-x64` build (there is no WASM
+  fallback), so the embedded store is unavailable on macOS on Intel — instead of
+  failing later with a module-not-found error.
+
 ### Changed
 
+- **The own index now defaults to embedded LanceDB** instead of inheriting Kilo's
+  `vectorStore`. Kilo's setting is read as `kiloVectorStore`: it still decides where
+  an *import* reads from, and it is still reported, but it no longer decides where
+  the own index writes to. Dropping that inheritance is reported as a warning rather
+  than applied silently, so an existing Qdrant own index is not discovered to be
+  empty.
 - npm releases are now automated: pushing a `v*` tag triggers a GitHub Actions
   workflow that publishes through npm trusted publishing (OIDC), with no
   long-lived token.
