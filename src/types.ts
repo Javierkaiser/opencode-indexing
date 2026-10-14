@@ -39,9 +39,11 @@ export interface ModelProfile {
   /**
    * Whether the provider documents its output as already L2-normalised.
    *
-   * Informational today: everything is compared with cosine either way, which is
-   * correct in both cases. It is here so a future fast path knows whether a bare
-   * dot product would be equivalent.
+   * The provider's claim, not a measurement we rely on. Mistral documents its
+   * embeddings as "norm 1" and a live call measured 0.9913, which is why every
+   * comparison here uses cosine regardless: it is correct either way, and this
+   * field exists only so a future fast path knows whether a bare dot product
+   * would be equivalent.
    */
   normalized?: boolean
   /**
