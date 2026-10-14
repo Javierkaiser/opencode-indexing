@@ -26,5 +26,31 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - name: Report environment
+        run: |
+          echo "node: $(node -v)"
+          echo "npm:  $(npm -v)"
+          echo "OIDC request URL set:   $([ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && echo YES || echo NO)"
+          echo "OIDC request token set: $([ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ] && echo YES || echo NO)"
+          echo "NODE_AUTH_TOKEN is:     ${NODE_AUTH_TOKEN:+SET}"
+          echo "NPM_CONFIG_USERCONFIG:  ${NPM_CONFIG_USERCONFIG:-unset}"
       # No token: npm detects the OIDC environment and uses trusted publishing.
-      - run: npm publish
+      # NODE_AUTH_TOKEN has to be *absent*, not blank, or npm treats it as auth
+      # config and never falls through to OIDC — hence the `env -u`.
+      - name: Publish to npm
+        run: |
+          rm -f "$HOME/.npmrc"
+          if [ -n "$NPM_CONFIG_USERCONFIG" ] && [ -f "$NPM_CONFIG_USERCONFIG" ]; then
+            sed -i '/_authToken/d' "$NPM_CONFIG_USERCONFIG"
+            echo "--- effective .npmrc ---"
+            cat "$NPM_CONFIG_USERCONFIG"
+          fi
+          set +e
+          env -u NODE_AUTH_TOKEN -u NPM_TOKEN npm publish --loglevel=verbose
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "=== npm debug log (tail) ==="
+            tail -120 "$(ls -t "$HOME"/.npm/_logs/*.log | head -1)"
+          fi
+          exit "$rc"
