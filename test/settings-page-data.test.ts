@@ -28,8 +28,7 @@ const SETTINGS: SettingsView = {
   enabled: true,
   autoRefresh: false,
   searchMaxResults: 50,
-  hasMistralKey: true,
-  hasOpenAiKey: false,
+  configuredProviders: ["mistral"],
   settingsFile: "C:\\config\\indexing.json",
 }
 
@@ -140,8 +139,26 @@ describe("configRows", () => {
     assert.ok(get("Embeddings").includes("mistral/codestral-embed-2505"))
     assert.equal(get("Import from Kilo").startsWith("ON"), true)
     assert.equal(get("Auto-refresh"), "OFF")
-    assert.ok(get("API keys").includes("mistral"))
-    assert.ok(!get("API keys").includes("openai"))
+    assert.ok(get("Credentials").includes("mistral"))
+    assert.ok(!get("Credentials").includes("openai"))
+  })
+
+  test("credentials row lists every configured provider, not just two", () => {
+    // The row used to be built from two hardcoded booleans, so a Gemini key
+    // showed as "none configured" while the provider was fully usable.
+    const rows = configRows({
+      ...SETTINGS,
+      configuredProviders: ["mistral", "gemini", "voyage", "openrouter", "ollama"],
+    })
+    const value = rows.find((row) => row.label === "Credentials")?.value ?? ""
+    for (const provider of ["mistral", "gemini", "voyage", "openrouter", "ollama"]) {
+      assert.ok(value.includes(provider), `${provider} must appear in the credentials row`)
+    }
+  })
+
+  test("no credentials configured says so", () => {
+    const rows = configRows({ ...SETTINGS, configuredProviders: [] })
+    assert.equal(rows.find((row) => row.label === "Credentials")?.value, "none configured")
   })
 
   test("renders lancedb backend path", () => {

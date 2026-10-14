@@ -93,6 +93,18 @@ function compact<T extends Record<string, unknown>>(input: T): T {
   return out as T
 }
 
+/**
+ * Merge the two objects a level deep.
+ *
+ * Derived from the incoming keys rather than listing the provider names here.
+ * The hand-written list this replaced silently dropped any credential added to
+ * the shape but not to the list: the field existed, the resolver read it, and
+ * the value never reached the file.
+ */
+function mergeNested<T extends Record<string, unknown>>(current: T | undefined, incoming: T): T {
+  return compact({ ...(current ?? {}), ...incoming }) as T
+}
+
 function deepMerge(base: SettingsFile, patch: SettingsFile): SettingsFile {
   const out: SettingsFile = { ...base }
   for (const [key, value] of Object.entries(patch)) {
@@ -108,19 +120,22 @@ function deepMerge(base: SettingsFile, patch: SettingsFile): SettingsFile {
     if (key === "apiKeys") {
       const current = out.apiKeys ?? {}
       const incoming = value as NonNullable<SettingsFile["apiKeys"]>
-      out.apiKeys = compact({
-        ...current,
-        mistral: incoming.mistral ?? current.mistral,
-        openai: incoming.openai ?? current.openai,
-        gemini: incoming.gemini ?? current.gemini,
-        voyage: incoming.voyage ?? current.voyage,
-        openrouter: incoming.openrouter ?? current.openrouter,
-        ollama: incoming.ollama !== undefined ? compact({ ...current.ollama, ...incoming.ollama }) : current.ollama,
-        "openai-compatible":
-          incoming["openai-compatible"] !== undefined
-            ? compact({ ...current["openai-compatible"], ...incoming["openai-compatible"] })
-            : current["openai-compatible"],
-      }) as SettingsFile["apiKeys"]
+      const merged: Record<string, unknown> = { ...current }
+      for (const [provider, providerValue] of Object.entries(incoming)) {
+        if (providerValue === undefined) continue
+        // ollama and openai-compatible are objects; the rest are plain keys.
+        // Both shapes merge the same way, so no per-provider branch is needed.
+        merged[provider] =
+          typeof providerValue === "object" && providerValue !== null
+            ? mergeNested(
+                typeof merged[provider] === "object" && merged[provider] !== null
+                  ? (merged[provider] as Record<string, unknown>)
+                  : undefined,
+                providerValue as Record<string, unknown>,
+              )
+            : providerValue
+      }
+      out.apiKeys = compact(merged) as SettingsFile["apiKeys"]
       continue
     }
     ;(out as Record<string, unknown>)[key] = value

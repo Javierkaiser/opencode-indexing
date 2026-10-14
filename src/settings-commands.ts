@@ -172,10 +172,12 @@ const KEY_SPECS: Record<string, KeySpec> = {
     description: "Embedding provider",
     toPatch: (value) => {
       const provider = value as (typeof PROVIDERS)[number]
-      // Reset the model so the provider default applies unless the user sets
-      // one explicitly afterwards.
-      void provider
-      return { provider: provider as SettingsFile["provider"] }
+      // Clear the model so the new provider's default applies. Model ids are
+      // namespaced per provider, so keeping the old one is never right: it
+      // turned a switch to Voyage into `voyage` + `codestral-embed-2505`. The
+      // previous code claimed to do this and returned only the provider, which
+      // left the stale model in the file and outranked the default.
+      return { provider: provider as SettingsFile["provider"], model: "" }
     },
     display: (settings) => settings.provider,
   },

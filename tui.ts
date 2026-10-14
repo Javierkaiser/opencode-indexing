@@ -64,8 +64,8 @@ interface SettingsView {
   /** Master switch for writing the own index. */
   enabled: boolean
   searchMaxResults: number
-  hasMistralKey: boolean
-  hasOpenAiKey: boolean
+  /** Providers that have a usable credential or base URL configured. */
+  configuredProviders: string[]
   settingsFile: string
 }
 
@@ -338,9 +338,11 @@ const plugin = {
         title: `Model for ${provider} (leave empty for default)`,
         placeholder: provider === "mistral" ? "codestral-embed-2505" : "",
       })
-      const patch: Record<string, unknown> = { provider }
-      if (model && model.trim()) patch.model = model.trim()
-      await patchSettings(patch)
+      // `model` is always written, empty when the user accepted the default.
+      // Omitting it left the previous provider's model in the file, where it
+      // outranks the new provider's default: switching to voyage produced
+      // `voyage` + `codestral-embed-2505`.
+      await patchSettings({ provider, model: model?.trim() ?? "" })
 
       // API key for the provider (masked prompt).
       const keyLabel =
@@ -357,7 +359,7 @@ const plugin = {
                   : null
 
       if (keyLabel) {
-        const current = provider === "mistral" && settings.hasMistralKey
+        const current = settings.configuredProviders.includes(provider)
         const key = await context.ui.dialog.prompt({
           title: `${keyLabel} (leave empty to keep current)`,
           placeholder: current ? "•••••• (set)" : "not set",

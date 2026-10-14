@@ -95,7 +95,18 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
   // Determine dimension (probe embedder if unknown).
   let dimension = settings.dimension
   const existingInfo = await store.info()
-  if (!dimension && existingInfo.profile?.dimension) dimension = existingInfo.profile.dimension
+  const existingProfile = existingInfo.profile
+  // The stored dimension is only authoritative for the profile we are about to
+  // write. Inheriting it across a provider change is how a 1536-wide Mistral
+  // index makes an OpenAI model look 1536-dimensional: the probe that would
+  // have asked the provider never runs, and the inherited number is then
+  // persisted as though it had been measured, which makes the mismatch
+  // self-consistent and undetectable on every later run.
+  const sameProfile =
+    existingProfile !== undefined &&
+    existingProfile.provider === settings.provider &&
+    existingProfile.modelId === settings.modelId
+  if (!dimension && sameProfile && existingProfile?.dimension) dimension = existingProfile.dimension
   if (!dimension) {
     const probe = await getEmbedder().embed(["dimension probe"])
     dimension = probe[0]?.length ?? 0

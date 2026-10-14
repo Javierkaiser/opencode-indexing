@@ -107,7 +107,18 @@ describe("applySettingValue", () => {
     assert.equal(applySettingValue("vectorstore", "postgres") .ok, false)
     const provider = applySettingValue("provider", "openai")
     assert.equal(provider.ok, true)
-    if (provider.ok) assert.deepEqual(provider.patch, { provider: "openai" })
+    if (provider.ok) {
+      assert.deepEqual(provider.patch, { provider: "openai", model: "" })
+    }
+  })
+
+  test("changing provider clears the model, which is namespaced per provider", () => {
+    // Model ids belong to a provider. Keeping the old one turned a switch to
+    // voyage into `voyage` + `codestral-embed-2505`, because the stale model
+    // outranks the provider default in the resolution chain.
+    const patch = applySettingValue("provider", "voyage")
+    assert.equal(patch.ok, true)
+    if (patch.ok) assert.equal((patch.patch as { model?: string }).model, "")
   })
 
   test("integers and scores with bounds", () => {

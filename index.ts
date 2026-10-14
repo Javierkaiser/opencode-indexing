@@ -32,7 +32,8 @@ import {
   parseIndexingCommand,
   settingReport,
 } from "./src/settings-commands.ts"
-import type { IndexingSettings, KVStore } from "./src/types.ts"
+import { getModelDimension } from "./src/registry.ts"
+import type { EmbeddingProfile, IndexingSettings, KVStore, ProviderCredentials } from "./src/types.ts"
 import type { Qdrant } from "./src/qdrant.ts"
 import { describeError } from "./src/errors.ts"
 
@@ -114,11 +115,48 @@ function settingsView(settings: IndexingSettings, homeDir?: string): Record<stri
     autoRefresh: settings.autoRefresh,
     enabled: settings.enabled,
     searchMaxResults: settings.searchMaxResults,
-    hasMistralKey: Boolean(settings.credentials.mistralApiKey),
-    hasOpenAiKey: Boolean(settings.credentials.openAiApiKey),
+    // Which providers actually have a credential, as a list rather than one
+    // boolean per provider. The booleans only ever covered Mistral and OpenAI,
+    // so a settings page with a Gemini key configured reported "none
+    // configured" - and every provider added afterwards would have needed
+    // another field threaded through the RPC, the schema and the page.
+    configuredProviders: configuredProviders(settings.credentials),
     settingsFile: settingsFilePath(homeDir),
     warnings: settings.warnings,
   }
+}
+
+/**
+ * Providers with a usable credential.
+ *
+ * A base URL counts for the two providers that authenticate with one, since a
+ * configured Ollama or OpenAI-compatible server needs no key.
+ */
+function configuredProviders(credentials: ProviderCredentials): string[] {
+  const configured: string[] = []
+  if (credentials.mistralApiKey) configured.push("mistral")
+  if (credentials.openAiApiKey) configured.push("openai")
+  if (credentials.geminiApiKey) configured.push("gemini")
+  if (credentials.voyageApiKey) configured.push("voyage")
+  if (credentials.openRouterApiKey) configured.push("openrouter")
+  if (credentials.ollamaBaseUrl) configured.push("ollama")
+  if (credentials.openAiCompatibleBaseUrl) configured.push("openai-compatible")
+  return configured
+}
+
+/**
+ * The profile the settings describe.
+ *
+ * Only the identity of the model is needed to compare against a Kilo index;
+ * the dimension is part of the comparison, so it has to come from somewhere.
+ * `settings.dimension` is 0 for a model the catalog does not know, and a
+ * comparison against a zero dimension would report every source as
+ * incompatible, which is as wrong as reporting every one as compatible.
+ */
+function profileFor(settings: IndexingSettings): EmbeddingProfile | undefined {
+  const dimension = settings.dimension || getModelDimension(settings.provider, settings.modelId) || 0
+  if (!dimension) return undefined
+  return { provider: settings.provider, modelId: settings.modelId, dimension }
 }
 
 function summarizeReport(report: {
@@ -315,7 +353,11 @@ Behavior:
           return { ok: true, message: `${settings.provider}/${settings.modelId} OK (${vector?.length ?? 0} dimensions)` }
         }
         if (target === "kilo") {
-          const sources = await discoverKiloSources(root, { qdrant: createSettingsQdrant(settings), homeDir: undefined })
+          const sources = await discoverKiloSources(root, {
+            qdrant: createSettingsQdrant(settings),
+            homeDir: undefined,
+            targetProfile: profileFor(settings),
+          })
           const list = sources.map((s) => `${s.kind} ${s.name} (${s.pointsCount ?? "?"} pts, ${s.compatible ? "compatible" : "INCOMPATIBLE"})`)
           return {
             ok: sources.length > 0,
@@ -482,6 +524,11 @@ class ForgetRefusedError extends Error {}
       const sources = await discoverKiloSources(root, {
         qdrant: createSettingsQdrant(settings),
         homeDir: undefined,
+        // Without this every source reported "compatible", including ones whose
+        // profile differs: the check returns true when it has no target to
+        // compare against, so the report claimed an import would work when it
+        // would be refused a moment later.
+        targetProfile: profileFor(settings),
       }).catch(() => [])
       lines.push(
         "",

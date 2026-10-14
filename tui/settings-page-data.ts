@@ -24,8 +24,8 @@ export interface SettingsView {
   /** Master switch for writing the own index. */
   enabled: boolean
   searchMaxResults: number
-  hasMistralKey: boolean
-  hasOpenAiKey: boolean
+  /** Providers that have a usable credential or base URL configured. */
+  configuredProviders: string[]
   settingsFile: string
 }
 
@@ -101,8 +101,7 @@ export const UNKNOWN_SETTINGS: SettingsView = {
   enabled: false,
   autoRefresh: false,
   searchMaxResults: 0,
-  hasMistralKey: false,
-  hasOpenAiKey: false,
+  configuredProviders: [],
   settingsFile: "(unavailable)",
 }
 
@@ -149,10 +148,10 @@ export function configRows(settings: SettingsView): ConfigRow[] {
     { label: "Max results", value: String(settings.searchMaxResults) },
     { label: "Settings file", value: settings.settingsFile },
   ]
-  const keys: string[] = []
-  if (settings.hasMistralKey) keys.push("mistral")
-  if (settings.hasOpenAiKey) keys.push("openai")
-  rows.push({ label: "API keys", value: keys.length > 0 ? `${keys.join(", ")} configured` : "none configured" })
+  // Derived from the server's list rather than a pair of booleans, so a
+  // provider added anywhere else shows up here without a change to this file.
+  const keys = settings.configuredProviders
+  rows.push({ label: "Credentials", value: keys.length > 0 ? `${keys.join(", ")} configured` : "none configured" })
   return rows
 }
 

@@ -8,6 +8,7 @@ import { getModelScoreThreshold, profileKey, workspaceHash } from "./registry.ts
 import { withProfile } from "./config.ts"
 import type { EmbedderProvider, IndexingSettings, KVStore, QueryHit, SearchHit } from "./types.ts"
 import type { Qdrant } from "./qdrant.ts"
+import type { VectorStoreAdapter } from "./vector-store.ts"
 import { describeError } from "./errors.ts"
 
 export interface SearchDeps {
@@ -15,6 +16,13 @@ export interface SearchDeps {
   kv: KVStore
   root: string
   settings: IndexingSettings
+  /**
+   * The own-index store. Built from the settings when omitted.
+   *
+   * Injected so a caller that already holds one does not build a second
+   * identical client, and so the search can be exercised without a server.
+   */
+  ownStore?: VectorStoreAdapter
 }
 
 export interface SearchMeta {
@@ -80,7 +88,7 @@ export async function searchCode(deps: SearchDeps, query: string, pathPrefix?: s
   const errors: string[] = []
   const limit = Math.max(1, Math.min(overrideLimit ?? settings.searchMaxResults, 200))
 
-  const ownStore = createOwnStore(settings, root)
+  const ownStore = deps.ownStore ?? createOwnStore(settings, root)
   const qdrantClient = settings.vectorStore === "qdrant" ? qdrant : createSettingsQdrant(settings)
   const [ownInfo, kiloCollection] = await Promise.all([
     ownStore.info().catch(() => null),
@@ -102,6 +110,7 @@ export async function searchCode(deps: SearchDeps, query: string, pathPrefix?: s
   if (!profiles.has(profileKey(baseProfile))) profiles.set(profileKey(baseProfile), baseProfile)
 
   const vectors = new Map<string, number[]>()
+  const embedFailures = new Map<string, string>()
   for (const [key, profile] of profiles) {
     try {
       const embedder = createEmbedder(withProfile(settings, profile))
@@ -109,9 +118,31 @@ export async function searchCode(deps: SearchDeps, query: string, pathPrefix?: s
       if (!vector) throw new Error("empty embedding")
       vectors.set(key, vector)
     } catch (error) {
-      errors.push(`embed ${key}: ${describeError(error)}`)
+      embedFailures.set(key, describeError(error))
     }
   }
+
+  /**
+   * Refuse to answer from part of the corpus.
+   *
+   * A stored index whose profile cannot be embedded is unreachable, and
+   * returning only the half that worked looks exactly like a complete answer
+   * whose other half ranked lower. The caller asked what matches, not what
+   * matches in whichever part happened to be readable, so this is an error.
+   * An index with no points needs no query vector and is not a problem.
+   */
+  const unreachable = (label: string, profile: ProfileRef | undefined, points: number | null | undefined): void => {
+    if (!profile || (points ?? 0) <= 0) return
+    const key = profileKey(profile)
+    if (vectors.has(key)) return
+    const cause = embedFailures.get(key)
+    throw new Error(
+      `Cannot search ${label}: it holds ${points} points built with ${key}, and that profile could not be embedded` +
+        `${cause ? ` (${cause})` : ""}. Searching only the other index would return an incomplete result set as if it were complete.`,
+    )
+  }
+  unreachable("the own index", ownInfo?.profile, ownInfo?.pointsCount)
+  unreachable("Kilo's index", kiloInfo?.profile, kiloInfo?.pointsCount)
 
   const minScore = settings.searchMinScore
 
@@ -129,6 +160,11 @@ export async function searchCode(deps: SearchDeps, query: string, pathPrefix?: s
     })
     return hits.map((hit) => toSearchHit(hit, "kilo")).filter((hit): hit is SearchHit => hit !== undefined)
   })().catch((error) => {
+    // Kilo's index exists and holds points; failing to read it would drop those
+    // results from an answer that still looks complete.
+    if ((kiloInfo?.pointsCount ?? 0) > 0) {
+      throw new Error(`Cannot read Kilo's index (${kiloCollection}): ${describeError(error)}`)
+    }
     errors.push(`kilo search: ${describeError(error)}`)
     return [] as SearchHit[]
   })
@@ -147,6 +183,9 @@ export async function searchCode(deps: SearchDeps, query: string, pathPrefix?: s
     })
     return hits.map((hit) => toSearchHit(hit, "own")).filter((hit): hit is SearchHit => hit !== undefined)
   })().catch((error) => {
+    if ((ownInfo?.pointsCount ?? 0) > 0) {
+      throw new Error(`Cannot read the own index (${ownStore.name}): ${describeError(error)}`)
+    }
     errors.push(`own search: ${describeError(error)}`)
     return [] as SearchHit[]
   })

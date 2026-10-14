@@ -32,8 +32,7 @@ interface SettingsView {
   autoRefresh: boolean
   enabled: boolean
   searchMaxResults: number
-  hasMistralKey: boolean
-  hasOpenAiKey: boolean
+  configuredProviders: string[]
   settingsFile: string
 }
 
@@ -127,8 +126,7 @@ const DEFAULT_SETTINGS: SettingsView = {
   autoRefresh: true,
   enabled: true,
   searchMaxResults: 10,
-  hasMistralKey: false,
-  hasOpenAiKey: false,
+  configuredProviders: [],
   settingsFile: "C:\\Users\\test\\.config\\opencode\\indexing.json",
 }
 
@@ -1007,10 +1005,10 @@ describe("tui plugin", () => {
     })
     await runCommand(harness)
 
-    assertCalledWith(harness, "settings.set", { patch: { provider: "mistral" } })
+    assertCalledWith(harness, "settings.set", { patch: { provider: "mistral", model: "" } })
     assertCalledWith(harness, "settings.set", { patch: { apiKeys: { mistral: "abc123" } } })
     assert.ok(
-      callIndex(harness, "settings.set", { patch: { provider: "mistral" } }) <
+      callIndex(harness, "settings.set", { patch: { provider: "mistral", model: "" } }) <
         callIndex(harness, "settings.set", { patch: { apiKeys: { mistral: "abc123" } } }),
       "the provider is persisted before the API key",
     )
