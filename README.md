@@ -6,6 +6,24 @@
 
 OpenCode plugin that adds **semantic code search** by reusing the code index created by [Kilo Code](https://kilo.ai) and maintaining its **own independent index** (Qdrant or embedded LanceDB), so search keeps working even when Kilo isn't installed, is disabled, or its index is stale.
 
+## TL;DR
+
+**Why it exists.** A semantic code index is expensive to build — every chunk is
+a call to an embedding API — and it only lasts as long as the tool that made it.
+Kilo Code already builds one, which is worth having. But building your own means
+paying for it again, and leaning on Kilo's means your search breaks the day
+Kilo is uninstalled, disabled, or stale. Both are bad enough on their own.
+
+**What it does instead.** It *reads* Kilo's index and never writes to it, then
+keeps an independent index of its own next to it. Every search queries both and
+merges the results, preferring whichever is fresher. If you already have a Kilo
+index, its vectors are copied across **without re-embedding** — zero API calls —
+and you only ever pay to index the files that changed since.
+
+**What it is for.** Finding code by what it *does* rather than what it is
+*called*, in a search that keeps working whether or not the tool that built the
+index is still installed.
+
 ## How it works
 
 ```
