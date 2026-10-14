@@ -26,7 +26,9 @@ const profiles: Partial<Record<EmbedderProvider, Record<string, ModelProfile>>> 
     // is also the reason the Ollama adapter refuses to truncate silently.
     "mxbai-embed-large": { dimension: 1024, scoreThreshold: 0.3, maxInputTokens: 512, normalized: true },
     "nomic-embed-text": { dimension: 768, scoreThreshold: 0.3, queryPrefix: "search_query: ", maxInputTokens: 2048, normalized: true },
-    "nomic-embed-text:latest": { dimension: 768, scoreThreshold: 0.3, queryPrefix: "search_query: ", maxInputTokens: 2048, normalized: true },
+    // Ollama reports the tag, but Kilo stores whatever its config names, so an
+    // index carrying this id was written by us and cannot be imported.
+    "nomic-embed-text:latest": { dimension: 768, scoreThreshold: 0.3, queryPrefix: "search_query: ", maxInputTokens: 2048, normalized: true, kiloMirror: false },
     "all-minilm": { dimension: 384, scoreThreshold: 0.3, maxInputTokens: 512, normalized: true },
     "bge-m3": { dimension: 1024, scoreThreshold: 0.3, maxInputTokens: 8192, normalized: true, kiloMirror: false },
   },

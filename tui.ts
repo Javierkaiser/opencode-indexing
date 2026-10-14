@@ -28,6 +28,8 @@ import { describeRow, forgetWorkspaceFlow, type WorkspacesRpc } from "./tui/work
 import { pagePalette } from "./tui/page-style.ts"
 import type { FooterHandle, FooterState } from "./tui/footer-view.tsx"
 import { describeError } from "./src/errors.ts"
+import { getDefaultModelId, listModelIds } from "./src/registry.ts"
+import type { EmbedderProvider } from "./src/types.ts"
 
 /**
  * Navigable rows on the page.
@@ -39,6 +41,9 @@ import { describeError } from "./src/errors.ts"
 const PAGE_ROW_COUNT = PAGE_ROWS.length
 
 const ID = "opencode.indexing"
+
+/** Sentinel for the "type it yourself" entry in the model chooser. */
+const CUSTOM_MODEL = "\u0000custom-model"
 
 type RpcClient = {
   "settings.get": (input: Record<string, never>) => Promise<{ settings: SettingsView }>
@@ -334,15 +339,46 @@ const plugin = {
       })
       if (typeof provider !== "string") return
 
-      const model = await context.ui.dialog.prompt({
-        title: `Model for ${provider} (leave empty for default)`,
-        placeholder: provider === "mistral" ? "codestral-embed-2505" : "",
+      // Offer the catalog instead of a blank text field. The model list existed
+      // all along and was never shown, so the only way to discover a valid model
+      // id was to already know it.
+      const catalog = listModelIds(provider as EmbedderProvider)
+      const defaultModel = getDefaultModelId(provider as EmbedderProvider)
+      const choice = await context.ui.dialog.select({
+        title: `Model for ${provider}`,
+        options: [
+          {
+            title: defaultModel ? `${defaultModel} (default)` : "(provider default)",
+            value: "",
+            description: "Leave the model unset so the provider default applies",
+          },
+          ...catalog
+            .filter((modelId) => modelId !== defaultModel)
+            .map((modelId) => ({ title: modelId, value: modelId, description: `${provider} model` })),
+          {
+            title: "Custom…",
+            value: CUSTOM_MODEL,
+            description: catalog.length > 0 ? "Type a model id that is not in the list" : "This provider has no catalog; type the model id",
+          },
+        ],
       })
+      if (typeof choice !== "string") return
+
+      let model = choice
+      if (choice === CUSTOM_MODEL) {
+        const typed = await context.ui.dialog.prompt({
+          title: `Model id for ${provider}`,
+          placeholder: defaultModel || "e.g. bge-m3",
+        })
+        if (typed === undefined) return
+        model = typed.trim()
+      }
+
       // `model` is always written, empty when the user accepted the default.
       // Omitting it left the previous provider's model in the file, where it
       // outranks the new provider's default: switching to voyage produced
       // `voyage` + `codestral-embed-2505`.
-      await patchSettings({ provider, model: model?.trim() ?? "" })
+      await patchSettings({ provider, model })
 
       // API key for the provider (masked prompt).
       const keyLabel =

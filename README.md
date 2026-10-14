@@ -176,10 +176,46 @@ Configurable from all three:
 - **Vector store** for the own index: Qdrant or LanceDB.
 - **Qdrant URL + API key** (local or remote) with connection test.
 - **LanceDB directory** with availability test.
-- **Embedding provider/model** (mistral, openai, ollama, openai-compatible, gemini, voyage, openrouter) and **API key**.
+- **Embedding provider/model** (mistral, openai, ollama, openai-compatible, gemini, voyage, openrouter) and **API key**. The model is chosen from a catalog rather than typed blind. The model is chosen from a catalog rather than typed blind.
 - **Import from Kilo** toggle with live source detection ("Qdrant ws-… (31,261 pts) · LanceDB …").
 - **Auto-refresh on search** toggle.
 - Build / refresh / import actions and a status summary.
+
+### Embedding providers
+
+All seven are implemented. Every model below is in the catalog, which is what
+supplies the dimension, the score threshold and the input ceiling; a model that
+is not listed still works, and its dimension is probed from the provider on
+first use.
+
+| Provider | Default model | Also in the catalog | Input ceiling |
+| --- | --- | --- | --- |
+| `mistral` | `codestral-embed-2505` | `codestral-embed`, `mistral-embed` | 8,192 |
+| `openai` | `text-embedding-3-small` | `text-embedding-3-large`, `text-embedding-ada-002` | 8,192 |
+| `voyage` | `voyage-code-3` | **`voyage-code-4`**, `voyage-4`, `voyage-4-large`, `voyage-4-lite`, `voyage-3-lite` | **32,000** |
+| `gemini` | `gemini-embedding-001` | **`gemini-embedding-2`**, `text-embedding-004`, `embedding-001` | 2,048 (001) / 8,192 (2) |
+| `openrouter` | `openai/text-embedding-3-small` | `openai/text-embedding-3-large`, `google/gemini-embedding-2-preview` | 8,192 |
+| `ollama` | `nomic-embed-text` | `mxbai-embed-large`, `all-minilm`, `bge-m3` | 512 – 8,192 |
+| `openai-compatible` | none | whatever your endpoint serves | probed |
+
+Two things worth knowing before switching:
+
+- **Model ids are namespaced per provider.** Changing provider clears the model
+  so the new provider's default applies. A leftover id like
+  `codestral-embed-2505` under `provider: "voyage"` would be sent to Voyage and
+  rejected.
+- **Changing the model invalidates the own index.** A different model means a
+  different vector space, so the next build deletes the existing points and
+  re-embeds the whole workspace. `indexing_status` warns with the point count
+  *before* that happens. Re-embedding a repository is cheap — well under a
+  couple of dollars at any paid provider — but a large one takes a while.
+
+**Which models can import from Kilo.** Kilo's registry is mirrored entry for
+entry, because an import is accepted only when provider, model id and dimension
+match exactly. Models marked *ours* in the table above are not in Kilo's
+registry and can never be imported; `indexing_config` says which is which. If
+your Kilo index uses a different model, set the same provider and model here and
+the import costs nothing.
 
 Settings are stored in `~/.config/opencode/indexing.json` (plugin options → `indexing.json` → environment → defaults). Plugin options in `opencode.json` still work and take precedence. API keys are never written to `indexing.json` in plain text; set them through the environment or plugin options.
 

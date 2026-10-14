@@ -32,7 +32,7 @@ import {
   parseIndexingCommand,
   settingReport,
 } from "./src/settings-commands.ts"
-import { getModelDimension } from "./src/registry.ts"
+import { getModelDimension, isKiloMirrored, listModelIds } from "./src/registry.ts"
 import type { EmbeddingProfile, IndexingSettings, KVStore, ProviderCredentials } from "./src/types.ts"
 import type { Qdrant } from "./src/qdrant.ts"
 import { describeError } from "./src/errors.ts"
@@ -157,6 +157,27 @@ function profileFor(settings: IndexingSettings): EmbeddingProfile | undefined {
   const dimension = settings.dimension || getModelDimension(settings.provider, settings.modelId) || 0
   if (!dimension) return undefined
   return { provider: settings.provider, modelId: settings.modelId, dimension }
+}
+
+/**
+ * The models this provider offers, and which of them can import from Kilo.
+ *
+ * The catalog was only ever used to look up a dimension, so it was invisible:
+ * a model id had to be known in advance to be used. Which entries Kilo also
+ * knows is the one thing that decides whether an import will be accepted, so
+ * it is stated rather than left to be discovered by a refused build.
+ */
+function describeAvailableModels(settings: IndexingSettings): string[] {
+  const models = listModelIds(settings.provider)
+  if (models.length === 0) {
+    return [`- **Models:** this provider has no catalog; set \`model\` to whatever your endpoint serves`]
+  }
+  const render = (modelId: string) => {
+    const dimension = getModelDimension(settings.provider, modelId)
+    const importer = isKiloMirrored(settings.provider, modelId) === false ? " — not importable from Kilo" : ""
+    return `\`${modelId}\`${dimension ? ` (${dimension}d)` : ""}${importer}`
+  }
+  return [`- **Models for ${settings.provider}:** ${models.map(render).join(" · ")}`]
 }
 
 function summarizeReport(report: {
@@ -504,6 +525,7 @@ class ForgetRefusedError extends Error {}
         "",
         `- **Vector store (own index):** ${settings.vectorStore}${settings.vectorStore === "qdrant" ? ` — ${settings.qdrantUrl}` : ` — ${settings.lancedbDirectory}`}`,
         `- **Embedding model:** ${settings.provider}/${settings.modelId}${settings.dimension ? ` (${settings.dimension}d)` : ""}`,
+        ...describeAvailableModels(settings),
         `- **Import from Kilo:** ${settings.importFromKilo ? "ON (build imports existing Kilo indexes without embedding cost)" : "OFF (always index from scratch)"}`,
         `- **Auto-refresh on search:** ${settings.autoRefresh ? "ON" : "OFF"}`,
         `- **Indexing:** ${settings.enabled === false ? "PAUSED (nothing is written or refreshed; search still reads Kilo's index)" : "ON"}`,

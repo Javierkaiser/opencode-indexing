@@ -5,10 +5,11 @@ import { getKiloStoreInfo, resolveKiloCollection } from "./kilo-store.ts"
 import { discoverKiloSources, type KiloSourceInfo } from "./import.ts"
 import { createOwnStore, createSettingsQdrant } from "./store-factory.ts"
 import { diffFiles, loadManifest } from "./manifest.ts"
-import { workspaceHash } from "./registry.ts"
+import { getModelDimension, profileKey, workspaceHash } from "./registry.ts"
 import { scanWorkspace } from "./scanner.ts"
 import type { IndexingSettings, KVStore } from "./types.ts"
 import type { Qdrant } from "./qdrant.ts"
+import type { VectorStoreAdapter } from "./vector-store.ts"
 import { describeError } from "./errors.ts"
 
 export interface StatusDeps {
@@ -16,6 +17,8 @@ export interface StatusDeps {
   kv: KVStore
   root: string
   settings: IndexingSettings
+  /** The own-index store. Built from the settings when omitted. */
+  ownStore?: VectorStoreAdapter
 }
 
 export interface IndexStatus {
@@ -78,7 +81,7 @@ export async function getStatus(deps: StatusDeps, options?: { checkFreshness?: b
     }
   }
 
-  const ownStore = createOwnStore(settings, root)
+  const ownStore = deps.ownStore ?? createOwnStore(settings, root)
   const cacheKey = KILO_CACHE_PREFIX + workspaceHash(root).slice(0, 16)
   const cachedKilo = await kv.get(cacheKey)
   const kiloCollection = reachable
@@ -123,8 +126,40 @@ export async function getStatus(deps: StatusDeps, options?: { checkFreshness?: b
     : null
 
   const compatibleSource = kiloSources.find((source) => source.compatible)
+
+  /**
+   * A profile change destroys the own index and re-embeds everything.
+   *
+   * Saying so here is the point: the rebuild happens on the next build or
+   * refresh, so a user who changes provider to save money can spend the whole
+   * repository on embeddings before seeing any indication that it happened.
+   * The count is reported because it is the only estimate of the cost.
+   */
+  const configuredProfile = {
+    provider: settings.provider,
+    modelId: settings.modelId,
+    dimension: settings.dimension || getModelDimension(settings.provider, settings.modelId) || 0,
+  }
+  const storedProfile = ownInfo?.profile
+  const profileChanged =
+    storedProfile !== undefined &&
+    (storedProfile.provider !== configuredProfile.provider ||
+      storedProfile.modelId !== configuredProfile.modelId ||
+      (configuredProfile.dimension > 0 && storedProfile.dimension !== configuredProfile.dimension))
+  if (profileChanged && (ownInfo?.pointsCount ?? 0) > 0) {
+    warnings.push(
+      `The own index holds ${ownInfo?.pointsCount} points built with ${profileKey(storedProfile)} but the configured ` +
+        `model is ${profileKey(configuredProfile)}. The next build or refresh will delete them and re-embed the whole ` +
+        `workspace. Set the model back to reuse them, or re-import from Kilo if a matching source exists.`,
+    )
+  }
+
   let recommendation: string
-  if (!reachable && settings.vectorStore === "qdrant") {
+  if (profileChanged) {
+    recommendation =
+      `The embedding model changed since the own index was built (${profileKey(storedProfile!)} -> ` +
+      `${profileKey(configuredProfile)}). Run indexing_build to rebuild it, which re-embeds every file.`
+  } else if (!reachable && settings.vectorStore === "qdrant") {
     recommendation = "Start Qdrant (e.g. `docker run -p 6333:6333 qdrant/qdrant` or Podman equivalent), then re-run indexing_status."
   } else if (!kiloCollection && !ownInfo?.exists && kiloSources.length === 0) {
     recommendation = "No index found. Run indexing_build to create an independent index (works without Kilo Code)."

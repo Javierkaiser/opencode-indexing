@@ -1000,8 +1000,8 @@ describe("tui plugin", () => {
 
   test("provider flow persists provider and mistral key", async () => {
     const harness = await setupPlugin({
-      selects: ["provider", "mistral"],
-      prompts: ["", "abc123"],
+      selects: ["provider", "mistral", ""],
+      prompts: ["abc123"],
     })
     await runCommand(harness)
 
@@ -1013,5 +1013,39 @@ describe("tui plugin", () => {
       "the provider is persisted before the API key",
     )
     assertCalledWith(harness, "settings.test", { target: "provider" })
+  })
+
+  test("the model chooser offers the catalog instead of a blank field", async () => {
+    // The catalog existed from the start and was never surfaced, so the only way
+    // to learn a valid model id was to already know it.
+    const harness = await setupPlugin({
+      selects: ["provider", "voyage", "voyage-code-4"],
+      prompts: ["vk"],
+    })
+    await runCommand(harness)
+
+    const modelDialog = harness.dialogs.filter((dialog) => dialog.method === "select").at(-1) as
+      | { options?: { options?: Array<{ title: string; value: string }> } }
+      | undefined
+    const titles = (modelDialog?.options?.options ?? []).map((option) => option.title)
+    assert.ok(
+      titles.some((title) => title.includes("voyage-code-4")),
+      `the voyage catalog must be offered, got ${JSON.stringify(titles)}`,
+    )
+    assert.ok(
+      titles.some((title) => title.includes("Custom")),
+      "and an escape hatch for a model the catalog does not know",
+    )
+    assertCalledWith(harness, "settings.set", { patch: { provider: "voyage", model: "voyage-code-4" } })
+  })
+
+  test("choosing Custom asks for a model id", async () => {
+    const harness = await setupPlugin({
+      selects: ["provider", "openai-compatible", "\u0000custom-model"],
+      prompts: ["bge-m3", "http://localhost:8080/v1", ""],
+    })
+    await runCommand(harness)
+
+    assertCalledWith(harness, "settings.set", { patch: { provider: "openai-compatible", model: "bge-m3" } })
   })
 })
