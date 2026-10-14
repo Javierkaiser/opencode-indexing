@@ -4,6 +4,11 @@ We took real questions about code — the kind where you know what the code *doe
 but not what it is *called* — and asked four different search methods to point at
 the right file. Then we counted how often each one got it right.
 
+**What are P1, P2 and P3?** They are the codebases we ran this on. This report is
+meant to be publishable, so they are not named: each one is just a label, and the
+section for each says how big it is and what it is written in. Nothing that could
+identify a repository appears anywhere in it.
+
 ## The short version
 
 - **Combining the two smart methods was never worse than meaning alone, and better on both:** it found more files on P2 (68% against 60%), and it put the right file higher on P1.
@@ -27,9 +32,21 @@ Two numbers matter, and neither is complicated:
 | Meaning | Looks for code that *does* what you described, even if no word matches |
 | Meaning + symbols | Runs the last two and merges their answers |
 
+## The codebases
+
+| | Size | Written in | Index | Symbol graph |
+| --- | --- | --- | --- | --- |
+| **P1** | 27.9k lines, 102 files | mostly TypeScript (74 of 102 files, 73%), then Markdown (9) and JavaScript (6) | 2.2k pieces | yes |
+| **P2** | 214.2k lines, 443 files | mostly C# (417 of 443 files, 94%), then JSON (4) and YAML (1) | 8.6k pieces | yes |
+| **P3** | 4.7k lines, 44 files | mostly C# (26 of 44 files, 59%), then Markdown (4) and JSON (3) | 143 pieces | yes |
+
+**P3** could not be measured — its section says why.
+
+They are different kinds of codebase — TypeScript and C# — which is part of why the numbers differ between them.
+
 ## P1
 
-A codebase of **27.8k lines** across **102 files**. Its index holds **2.2k pieces of code**. It also has a symbol graph.
+**27.9k lines** across **102 files**, mostly TypeScript (74 of 102 files, 73%), then Markdown (9) and JavaScript (6). Its index holds **2.2k pieces of code**. It also has a symbol graph.
 
 ### Questions written by hand (25 questions)
 
@@ -75,7 +92,7 @@ A codebase of **27.8k lines** across **102 files**. Its index holds **2.2k piece
 
 ## P2
 
-A codebase of **214.2k lines** across **443 files**. Its index holds **8.6k pieces of code**. It also has a symbol graph.
+**214.2k lines** across **443 files**, mostly C# (417 of 443 files, 94%), then JSON (4) and YAML (1). Its index holds **8.6k pieces of code**. It also has a symbol graph.
 
 ### Questions taken from the project's own history (40 questions)
 
@@ -99,7 +116,7 @@ A codebase of **214.2k lines** across **443 files**. Its index holds **8.6k piec
 
 ## P3
 
-A codebase of **4.7k lines** across **44 files**. Its index holds **143 pieces of code**. It also has a symbol graph.
+**4.7k lines** across **44 files**, mostly C# (26 of 44 files, 59%), then Markdown (4) and JSON (3). Its index holds **143 pieces of code**. It also has a symbol graph.
 
 > _Not measured: No question could be built for this codebase: none of its one-file changes touch a file type the index covers._
 

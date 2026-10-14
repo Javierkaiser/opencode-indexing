@@ -105,9 +105,20 @@ async function pointsIn(collection, qdrantUrl) {
   }
 }
 
+/** Enough to tell a TypeScript project from a C# one without naming either. */
+const LANG_BY_EXT = {
+  ".ts": "TypeScript", ".tsx": "TypeScript", ".js": "JavaScript", ".mjs": "JavaScript", ".cjs": "JavaScript",
+  ".cs": "C#", ".py": "Python", ".rs": "Rust", ".go": "Go", ".java": "Java", ".php": "PHP", ".rb": "Ruby",
+  ".kt": "Kotlin", ".swift": "Swift", ".c": "C", ".cpp": "C++", ".h": "C/C++", ".hpp": "C/C++",
+  ".sql": "SQL", ".sh": "Shell", ".ps1": "PowerShell", ".md": "Markdown", ".json": "JSON",
+  ".yml": "YAML", ".yaml": "YAML", ".html": "HTML", ".css": "CSS", ".vue": "Vue", ".dart": "Dart",
+  ".scala": "Scala", ".lua": "Lua", ".ex": "Elixir", ".tf": "Terraform", ".dockerfile": "Docker",
+}
+
 function corpusSize(repo) {
   let files = 0
   let lines = 0
+  const byLanguage = new Map()
   for (const file of walk(repo)) {
     if (!isTextFile(file)) continue
     try {
@@ -115,11 +126,27 @@ function corpusSize(repo) {
       if (text.length > 2_000_000) continue
       files++
       lines += text.split("\n").length
+      const language = LANG_BY_EXT[path.extname(file).toLowerCase()]
+      if (language) byLanguage.set(language, (byLanguage.get(language) ?? 0) + 1)
     } catch {
       // unreadable file: not counted
     }
   }
-  return { files, lines }
+  const languages = [...byLanguage.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([name, count]) => ({ name, count }))
+  return { files, lines, languages }
+}
+
+/** "mostly C# (312 files), then SQL (41) and Markdown (23)" */
+function describeLanguages(languages, files) {
+  if (languages.length === 0) return "its file types could not be classified"
+  const [first, ...rest] = languages
+  const share = files > 0 ? Math.round((first.count / files) * 100) : 0
+  const head = `mostly ${first.name} (${first.count} of ${files} files, ${share}%)`
+  if (rest.length === 0) return head
+  return `${head}, then ${rest.map((l) => `${l.name} (${l.count})`).join(" and ")}`
 }
 
 const indexPoints = readIndexPoints()
@@ -228,6 +255,11 @@ lines.push(
   "We took real questions about code — the kind where you know what the code *does*",
   "but not what it is *called* — and asked four different search methods to point at",
   "the right file. Then we counted how often each one got it right.",
+  "",
+  "**What are P1, P2 and P3?** They are the codebases we ran this on. This report is",
+  "meant to be publishable, so they are not named: each one is just a label, and the",
+  "section for each says how big it is and what it is written in. Nothing that could",
+  "identify a repository appears anywhere in it.",
   "",
 )
 
@@ -341,12 +373,39 @@ lines.push("| Method | What it does |", "| --- | --- |")
 for (const name of STRATEGY_NAMES) lines.push(`| ${FRIENDLY[name]} | ${WHAT_IT_IS[name]} |`)
 lines.push("")
 
+// Meet the codebases before the results start referring to them.
+lines.push("## The codebases", "")
+lines.push("| | Size | Written in | Index | Symbol graph |", "| --- | --- | --- | --- | --- |")
+for (const project of projects) {
+  lines.push(
+    `| **${project.label}** | ${compact(project.size.lines)} lines, ${project.size.files} files | ${describeLanguages(project.size.languages, project.size.files)} | ` +
+      `${project.points === null ? "not indexed" : `${compact(project.points)} pieces`} | ${project.graph ? "yes" : "no"} |`,
+  )
+}
+lines.push("")
+const unmeasured = projects.filter((project) => project.note)
+if (unmeasured.length > 0) {
+  lines.push(
+    `${unmeasured.map((p) => `**${p.label}**`).join(" and ")} could not be measured — ${unmeasured.length === 1 ? "its section says" : "their sections say"} why.`,
+    "",
+  )
+}
+if (projects.length > 1) {
+  const langs = [...new Set(projects.map((p) => p.size.languages[0]?.name).filter(Boolean))]
+  if (langs.length > 1) {
+    lines.push(
+      `They are different kinds of codebase — ${langs.join(" and ")} — which is part of why the numbers differ between them.`,
+      "",
+    )
+  }
+}
+
 // --- Per project ------------------------------------------------------------
 for (const project of projects) {
   lines.push(`## ${project.label}`, "")
   lines.push(
-    `A codebase of **${compact(project.size.lines)} lines** across **${project.size.files} files**. ` +
-      (project.points === null ? "Not indexed." : `Its index holds **${compact(project.points)} pieces of code**. `) +
+    `**${compact(project.size.lines)} lines** across **${project.size.files} files**, ${describeLanguages(project.size.languages, project.size.files)}. ` +
+      (project.points === null ? "Not indexed. " : `Its index holds **${compact(project.points)} pieces of code**. `) +
       (project.graph ? "It also has a symbol graph." : "It has no symbol graph."),
     "",
   )
