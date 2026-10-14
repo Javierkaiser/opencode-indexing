@@ -183,10 +183,10 @@ Configurable from all three:
 
 ### Embedding providers
 
-All seven are implemented. Every model below is in the catalog, which is what
+All seven have an adapter. Every model below is in the catalog, which is what
 supplies the dimension, the score threshold and the input ceiling; a model that
 is not listed still works, and its dimension is probed from the provider on
-first use.
+first use. See the next section for how far each one has actually been tested.
 
 | Provider | Default model | Also in the catalog | Input ceiling |
 | --- | --- | --- | --- |
@@ -197,6 +197,44 @@ first use.
 | `openrouter` | `openai/text-embedding-3-small` | `openai/text-embedding-3-large`, `google/gemini-embedding-2-preview` | 8,192 |
 | `ollama` | `nomic-embed-text` | `mxbai-embed-large`, `all-minilm`, `bge-m3` | 512 – 8,192 |
 | `openai-compatible` | none | whatever your endpoint serves | probed |
+
+#### How far each provider has actually been tested
+
+Worth stating plainly, because "implemented" and "seen working" are not the
+same claim and only one of them is safe to rely on.
+
+| Provider | Against the real API | What that means |
+| --- | --- | --- |
+| `mistral` | **Yes** | Two inputs, 1536 dimensions, distinct vectors, ~680 ms |
+| `openrouter` | **Partly** | The request reached the API and authenticated; it was refused by the key's own $0 spend limit, so the response parser is unverified |
+| `ollama` | **No** | The local server was not running during the check |
+| `openai`, `gemini`, `voyage`, `openai-compatible` | **No** | No credentials available; only mock-based tests |
+
+The adapters for the last four were written from each provider's documentation
+and tested against fixtures written alongside them, which means the tests encode
+the same reading of the docs as the code. A wrong assumption about a field name
+or a response shape would pass every test and fail on first use.
+
+Three specific things this leaves open, in descending order of how quietly they
+would fail:
+
+- **Gemini's aggregation.** `gemini-embedding-2` returns a single aggregated
+  vector for a plain list of inputs, where `gemini-embedding-001` returns one per
+  input. The adapter wraps each input in its own `Content` to make both behave
+  the same way, and a test asserts the count — but the test is against a fixture,
+  not the model. If the wrapping is wrong, N inputs silently become one vector.
+- **Voyage's response shape.** It is treated as OpenAI-shaped
+  (`data[].embedding` with an `index`). This matches its published API reference
+  and was not confirmed against the service.
+- **Voyage and Ollama truncation.** Both are sent `truncation`/`truncate: false`
+  so that an over-long chunk fails instead of being silently shortened. If a
+  provider rejects that field rather than honouring it, indexing stops with an
+  error rather than degrading — which is the intended direction to fail, but it
+  is a guess about the field being accepted.
+
+If you use one of these providers and it fails, the error message names the
+provider and the endpoint; please report it, since this is the part of the
+plugin most likely to be wrong.
 
 Two things worth knowing before switching:
 

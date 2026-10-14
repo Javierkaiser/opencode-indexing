@@ -32,7 +32,7 @@ import {
   parseIndexingCommand,
   settingReport,
 } from "./src/settings-commands.ts"
-import { getModelDimension, isKiloMirrored, listModelIds } from "./src/registry.ts"
+import { getModelDimension, isKiloMirrored, isLiveTested, listModelIds } from "./src/registry.ts"
 import type { EmbeddingProfile, IndexingSettings, KVStore, ProviderCredentials } from "./src/types.ts"
 import type { Qdrant } from "./src/qdrant.ts"
 import { describeError } from "./src/errors.ts"
@@ -169,15 +169,20 @@ function profileFor(settings: IndexingSettings): EmbeddingProfile | undefined {
  */
 function describeAvailableModels(settings: IndexingSettings): string[] {
   const models = listModelIds(settings.provider)
+  const note = isLiveTested(settings.provider)
+    ? []
+    : [
+        `- **Note:** the ${settings.provider} adapter has not been exercised against the real API; it is built from the provider's documentation. See "How far each provider has actually been tested" in the README.`,
+      ]
   if (models.length === 0) {
-    return [`- **Models:** this provider has no catalog; set \`model\` to whatever your endpoint serves`]
+    return [...note, `- **Models:** this provider has no catalog; set \`model\` to whatever your endpoint serves`]
   }
   const render = (modelId: string) => {
     const dimension = getModelDimension(settings.provider, modelId)
     const importer = isKiloMirrored(settings.provider, modelId) === false ? " — not importable from Kilo" : ""
     return `\`${modelId}\`${dimension ? ` (${dimension}d)` : ""}${importer}`
   }
-  return [`- **Models for ${settings.provider}:** ${models.map(render).join(" · ")}`]
+  return [...note, `- **Models for ${settings.provider}:** ${models.map(render).join(" · ")}`]
 }
 
 function summarizeReport(report: {

@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 
 import { VALID_PROVIDERS } from "../src/config.ts"
-import { getDefaultModelId, getModelDimension, getModelProfile, isKiloMirrored, profileKey } from "../src/registry.ts"
+import type { EmbedderProvider } from "../src/types.ts"
+import { getDefaultModelId, getModelDimension, getModelProfile, isKiloMirrored, isLiveTested, profileKey } from "../src/registry.ts"
 
 /**
  * The catalog is a mirror of Kilo's model registry, and the mirror is the
@@ -138,6 +139,22 @@ test("profileKey is the identity used by every compatibility check", () => {
     profileKey({ provider: "mistral", modelId: "codestral-embed-2505", dimension: 1024 }),
     "the dimension is part of the identity, not decoration",
   )
+})
+
+test("the unverified providers say so, and the list is not quietly widened", () => {
+  // The claim this guards is "implemented" versus "seen working". Only mistral
+  // has touched a real API: the others were written from documentation and
+  // tested against fixtures written alongside them, so a wrong field name would
+  // pass every test. Adding a provider here means someone verified it live.
+  assert.equal(isLiveTested("mistral"), true)
+  const unverified: EmbedderProvider[] = ["openai", "voyage", "gemini", "openrouter", "ollama", "openai-compatible"]
+  for (const provider of unverified) {
+    assert.equal(
+      isLiveTested(provider),
+      false,
+      `${provider} has not been exercised against its real API; verify it before claiming otherwise`,
+    )
+  }
 })
 
 test("input ceilings are documented per model, never assumed generous", () => {

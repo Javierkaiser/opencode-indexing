@@ -28,7 +28,7 @@ import { describeRow, forgetWorkspaceFlow, type WorkspacesRpc } from "./tui/work
 import { pagePalette } from "./tui/page-style.ts"
 import type { FooterHandle, FooterState } from "./tui/footer-view.tsx"
 import { describeError } from "./src/errors.ts"
-import { getDefaultModelId, listModelIds } from "./src/registry.ts"
+import { getDefaultModelId, isLiveTested, listModelIds } from "./src/registry.ts"
 import type { EmbedderProvider } from "./src/types.ts"
 
 /**
@@ -344,13 +344,16 @@ const plugin = {
       // id was to already know it.
       const catalog = listModelIds(provider as EmbedderProvider)
       const defaultModel = getDefaultModelId(provider as EmbedderProvider)
+      const tested = isLiveTested(provider as EmbedderProvider)
       const choice = await context.ui.dialog.select({
         title: `Model for ${provider}`,
         options: [
           {
             title: defaultModel ? `${defaultModel} (default)` : "(provider default)",
             value: "",
-            description: "Leave the model unset so the provider default applies",
+            description: tested
+              ? "Leave the model unset so the provider default applies"
+              : "Not yet exercised against the real API; see the README",
           },
           ...catalog
             .filter((modelId) => modelId !== defaultModel)

@@ -184,7 +184,24 @@ export function getDefaultModelId(provider: EmbedderProvider): string {
   return defaults[provider] ?? ""
 }
 
-/** Every model id the catalog knows for a provider, in catalog order. */
+/**
+ * Providers whose adapter has been exercised against the real service.
+ *
+ * Not a quality judgement, a statement of fact. The others were written from
+ * each provider's documentation and tested against fixtures written alongside
+ * them, so a wrong assumption about a field name or a response shape would pass
+ * every test and fail on first use. Surfacing that where a provider is chosen is
+ * cheaper than letting a user discover it from a failed indexing run.
+ */
+export const LIVE_TESTED_PROVIDERS: ReadonlySet<string> = new Set(["mistral"])
+
+export function isLiveTested(provider: EmbedderProvider): boolean {
+  return LIVE_TESTED_PROVIDERS.has(provider)
+}
+
+/**
+ * Every model id the catalog knows for a provider, in catalog order.
+ */
 export function listModelIds(provider: EmbedderProvider): string[] {
   return Object.keys(profiles[provider] ?? {})
 }
