@@ -1,0 +1,28 @@
+name: publish
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write # required for OIDC (npm trusted publishing)
+
+jobs:
+  publish:
+    name: publish to npm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          # Node 24 ships npm >= 11.5.1, which is required for trusted publishing.
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false # never cache in release builds
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      # No token: npm detects the OIDC environment and uses trusted publishing.
+      - run: npm publish
