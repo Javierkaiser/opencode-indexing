@@ -86,6 +86,8 @@ interface HarnessOptions {
   settings?: Partial<SettingsView>
   /** Result of `kilo.discover`. */
   sources?: KiloSource[]
+  /** Sources `kilo.discover` found but could not read. */
+  problems?: string[]
   /** Result of `settings.test`. */
   testResult?: (target: string) => { ok: boolean; message: string }
   /** Result of `status.get`. */
@@ -171,9 +173,9 @@ function makeHarness(options: HarnessOptions = {}) {
       calls.push({ method: "settings.test", input })
       return options.testResult ? options.testResult(input.target) : { ok: true, message: `${input.target} ok` }
     },
-    "kilo.discover": async () => {
-      calls.push({ method: "kilo.discover", input: undefined })
-      return { sources: options.sources ?? [] }
+    "kilo.discover": async (input?: { directory?: string }) => {
+      calls.push({ method: "kilo.discover", input })
+      return { sources: options.sources ?? [], problems: options.problems ?? [] }
     },
     "status.get": async (input: { checkFreshness?: boolean }) => {
       calls.push({ method: "status.get", input })
@@ -886,7 +888,7 @@ describe("tui plugin", () => {
     await runCommand(harness)
 
     assertCalledWith(harness, "settings.set", { patch: { qdrant: { url: "http://192.168.1.50:6333" } } })
-    assertCalledWith(harness, "settings.test", { target: "qdrant" })
+    assertCalledWith(harness, "settings.test", { target: "qdrant", directory: "D:\\Proyectos" })
     // Empty API key prompt means "keep current": no second settings.set.
     assert.equal(countCalls(harness, "settings.set"), 1)
   })
@@ -929,7 +931,8 @@ describe("tui plugin", () => {
     await runCommand(harness)
 
     assert.ok(harness.calls.some((call) => call.method === "kilo.discover"), "sources must be discovered first")
-    assertCalledWith(harness, "index.import", { source: "test-db" })
+    assertCalledWith(harness, "kilo.discover", { directory: "D:\\Proyectos" })
+    assertCalledWith(harness, "index.import", { source: "test-db", directory: "D:\\Proyectos" })
     assert.ok(
       harness.toasts.some((toast) => toast.variant === "success" && toast.message === "Imported 100 points from test-db"),
       "the import summary must be toasted on success",
@@ -987,7 +990,7 @@ describe("tui plugin", () => {
     const harness = await setupPlugin({ selects: ["status"], status })
     await runCommand(harness)
 
-    assertCalledWith(harness, "status.get", { checkFreshness: true })
+    assertCalledWith(harness, "status.get", { checkFreshness: true, directory: "D:\\Proyectos" })
     assert.ok(
       harness.toasts.some((toast) => toast.message === status.summary),
       "the summary must be toasted",
@@ -1012,7 +1015,7 @@ describe("tui plugin", () => {
         callIndex(harness, "settings.set", { patch: { apiKeys: { mistral: "abc123" } } }),
       "the provider is persisted before the API key",
     )
-    assertCalledWith(harness, "settings.test", { target: "provider" })
+    assertCalledWith(harness, "settings.test", { target: "provider", directory: "D:\\Proyectos" })
   })
 
   test("the model chooser offers the catalog instead of a blank field", async () => {

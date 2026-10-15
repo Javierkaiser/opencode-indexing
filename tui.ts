@@ -24,6 +24,7 @@ import type { ThemeLike } from "./tui/page-style.ts"
 import { PAGE_ACTIONS, PAGE_ROWS, type SettingsPageRpc } from "./tui/settings-page-data.ts"
 import { footerAction, footerState, type IndexingState } from "./tui/footer.ts"
 import { activeWorkspace, type WorkspaceSources } from "./tui/footer.ts"
+import { bindWorkspace } from "./tui/workspace-rpc.ts"
 import { describeRow, forgetWorkspaceFlow, type WorkspacesRpc } from "./tui/workspaces.ts"
 import { pagePalette } from "./tui/page-style.ts"
 import type { FooterHandle, FooterState } from "./tui/footer-view.tsx"
@@ -48,8 +49,15 @@ const CUSTOM_MODEL = "\u0000custom-model"
 type RpcClient = {
   "settings.get": (input: Record<string, never>) => Promise<{ settings: SettingsView }>
   "settings.set": (input: { patch: Record<string, unknown> }) => Promise<{ settings: SettingsView }>
-  "settings.test": (input: { target: "qdrant" | "lancedb" | "provider" | "kilo" }) => Promise<{ ok: boolean; message: string }>
-  "kilo.discover": () => Promise<{ sources: Array<{ kind: string; name: string; pointsCount: number | null; compatible: boolean; profile: string | null }> }>
+  "settings.test": (input: {
+    target: "qdrant" | "lancedb" | "provider" | "kilo"
+    directory?: string
+  }) => Promise<{ ok: boolean; message: string }>
+  "kilo.discover": (input?: { directory?: string }) => Promise<{
+    sources: Array<{ kind: string; name: string; pointsCount: number | null; compatible: boolean; profile: string | null }>
+    /** Sources that exist but could not be read. */
+    problems?: string[]
+  }>
   "status.get": (input: { checkFreshness?: boolean; directory?: string }) => Promise<{ summary: string; recommendation: string; ownKind: string; ownStore: string; ownPoints?: number | null; ownComplete?: boolean | null; kiloCollection?: string | null; directory?: string; ownStoreReachable?: boolean }>
   "index.build": (input: { rebuild?: boolean; skipImport?: boolean; directory?: string }) => Promise<{ summary: string; error?: string }>
   "index.refresh": (input: { maxFiles?: number; directory?: string }) => Promise<{ summary: string; error?: string }>
@@ -77,10 +85,46 @@ interface SettingsView {
 const plugin = {
   id: ID,
   async setup(context: Plugin.Context): Promise<void> {
+    /**
+     * The workspace the caller is working in.
+     *
+     * The server plugin serves its own instance directory, so every RPC that
+     * reads or writes an index must be told which workspace it is about. Without
+     * this the footer would report — and the palette command would index — the
+     * service's directory instead of the user's: the ACTIVE tab is what follows
+     * the user, and the instance directory is the fallback for a host with tabs
+     * switched off.
+     *
+     * Every accessor is optional: a host may expose neither `ui.tabs` nor
+     * `data.session`, and resolving the workspace must degrade rather than
+     * throw. Read from a reactive context (the footer slot render) the lookups
+     * re-run when the host's tab or session state changes.
+     *
+     * Declared before `rpc` because `rpc` binds the directory into every
+     * workspace-scoped call: a call made before this binding exists would be
+     * answered against the service's own directory.
+     */
+    const workspaceSources: WorkspaceSources = {
+      tabsEnabled: () => context.ui.tabs?.enabled?.() === true,
+      tabs: () => context.ui.tabs?.list?.() ?? [],
+      sessions: () => context.data?.session?.list?.() ?? [],
+      instanceDirectory: () => context.location?.directory,
+    }
+
+    const workspace = (): string | undefined => activeWorkspace(workspaceSources)
+
     // Resolve the RPC subclient lazily: the TUI may start before the server
     // plugin is ready, and calls are retried on first use.
+    //
+    // Every call goes through `bindWorkspace`, so a workspace-scoped method
+    // always names the caller's directory. Passing it per call site is what
+    // failed before: the footer did it and the palette did not, and the palette
+    // silently read and wrote the service's index instead of the user's.
     const rpc = (): RpcClient =>
-      (context.client as unknown as { rpc: (def: unknown, options?: unknown) => RpcClient }).rpc(IndexingRpc)
+      bindWorkspace(
+        (context.client as unknown as { rpc: (def: unknown, options?: unknown) => RpcClient }).rpc(IndexingRpc),
+        workspace,
+      )
 
     const toast = (message: string, variant: "success" | "error" | "info" = "info"): void => {
       context.ui.toast.show({ title: "Indexing", message, variant, duration: 5000 })
@@ -446,14 +490,24 @@ const plugin = {
 
     async function kiloMenu(): Promise<void> {
       let sources: Array<{ kind: string; name: string; pointsCount: number | null; compatible: boolean; profile: string | null }> = []
+      let problems: string[] = []
       try {
-        sources = (await rpc()["kilo.discover"]()).sources
+        const found = await rpc()["kilo.discover"]({})
+        sources = found.sources
+        problems = found.problems ?? []
       } catch (error) {
         fail(error)
         return
       }
       if (sources.length === 0) {
-        toast("No Kilo index found for this workspace", "info")
+        // "Found but unreadable" and "never indexed" look identical from here,
+        // and only one of them is fixed by indexing. Say which one it is.
+        toast(
+          problems.length > 0
+            ? `No importable Kilo index: ${problems.join(" · ")}`
+            : "No Kilo index found for this workspace",
+          problems.length > 0 ? "error" : "info",
+        )
         return
       }
       const choice = await context.ui.dialog.select({
@@ -502,7 +556,7 @@ const plugin = {
       toast("Running…", "info")
       try {
         if (action === "refresh") {
-          reportRun(await rpc()["index.refresh"]({ directory: workspace() }))
+          reportRun(await rpc()["index.refresh"]({}))
         } else if (action === "build") {
           reportRun(await rpc()["index.build"]({}))
         } else if (action === "build-scratch") {
@@ -581,30 +635,6 @@ const plugin = {
       const route = context.ui.router?.current?.()
       return route?.type === "plugin" && route.name === SETTINGS_PAGE_NAME
     }
-
-    /**
-     * The workspace the caller is working in.
-     *
-     * The server plugin serves its own instance directory, so every RPC that
-     * reads or writes an index must be told which workspace it is about. Without
-     * this the footer would report — and the palette command would index — the
-     * service's directory instead of the user's: the ACTIVE tab is what follows
-     * the user, and the instance directory is the fallback for a host with tabs
-     * switched off.
-     *
-     * Every accessor is optional: a host may expose neither `ui.tabs` nor
-     * `data.session`, and resolving the workspace must degrade rather than
-     * throw. Read from a reactive context (the footer slot render) the lookups
-     * re-run when the host's tab or session state changes.
-     */
-    const workspaceSources: WorkspaceSources = {
-      tabsEnabled: () => context.ui.tabs?.enabled?.() === true,
-      tabs: () => context.ui.tabs?.list?.() ?? [],
-      sessions: () => context.data?.session?.list?.() ?? [],
-      instanceDirectory: () => context.location?.directory,
-    }
-
-    const workspace = (): string | undefined => activeWorkspace(workspaceSources)
 
     /** Opens the dialog editor, holding the page keys off for its duration. */
     async function openEditor(): Promise<void> {
@@ -820,8 +850,8 @@ const plugin = {
         toast("Indexing started…", "info")
         const summary =
           from.state === "stale"
-            ? await rpc()["index.refresh"]({ directory: workspace() })
-            : await rpc()["index.build"]({ skipImport: false, directory: workspace() })
+            ? await rpc()["index.refresh"]({})
+            : await rpc()["index.build"]({ skipImport: false })
         // A failed run comes back as data, not as a rejection: the reason is far
         // more useful than "something went wrong", and it is already readable.
         reportRun(summary)

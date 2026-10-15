@@ -43,15 +43,23 @@ export interface StatusView {
   recommendation: string
 }
 
+/**
+ * The RPC slice this page needs.
+ *
+ * Every workspace-scoped method takes an optional `directory`. Callers normally
+ * never pass one: `bindWorkspace` injects it into the client the TUI hands this
+ * page, so the call sites below cannot forget it. The field stays on the types
+ * because the bound client is what actually sends it.
+ */
 export interface SettingsPageRpc {
   "settings.get": (input: Record<string, never>) => Promise<{ settings: SettingsView }>
   "settings.set": (input: { patch: Record<string, unknown> }) => Promise<{ settings: SettingsView }>
-  "settings.test": (input: { target: "qdrant" | "lancedb" | "provider" | "kilo" }) => Promise<{ ok: boolean; message: string }>
-  "kilo.discover": () => Promise<{ sources: KiloSourceView[] }>
-  "status.get": (input: { checkFreshness?: boolean }) => Promise<StatusView>
-  "index.build": (input: { rebuild?: boolean; skipImport?: boolean }) => Promise<{ summary: string; error?: string }>
-  "index.refresh": (input: { maxFiles?: number }) => Promise<{ summary: string; error?: string }>
-  "index.import": (input: { source?: string; rebuild?: boolean }) => Promise<{ summary: string; error?: string }>
+  "settings.test": (input: { target: "qdrant" | "lancedb" | "provider" | "kilo"; directory?: string }) => Promise<{ ok: boolean; message: string }>
+  "kilo.discover": (input?: { directory?: string }) => Promise<{ sources: KiloSourceView[]; problems?: string[] }>
+  "status.get": (input: { checkFreshness?: boolean; directory?: string }) => Promise<StatusView>
+  "index.build": (input: { rebuild?: boolean; skipImport?: boolean; directory?: string }) => Promise<{ summary: string; error?: string }>
+  "index.refresh": (input: { maxFiles?: number; directory?: string }) => Promise<{ summary: string; error?: string }>
+  "index.import": (input: { source?: string; rebuild?: boolean; directory?: string }) => Promise<{ summary: string; error?: string }>
   "workspaces.list": (input: Record<string, never>) => Promise<{ workspaces: WorkspaceRow[] }>
   "workspace.forget": (input: { store: string }) => Promise<{ ok: boolean; reason?: "refused" | "failed"; summary: string; pointsDeleted: number | null }>
 }
@@ -78,6 +86,14 @@ export interface SettingsPageProps {
 export interface SettingsPageData {
   settings: SettingsView
   sources: KiloSourceView[]
+  /**
+   * Sources that exist but could not be read.
+   *
+   * Kept apart from `sources` on purpose: an empty list with problems is a
+   * different answer from an empty list without them, and the page has to be
+   * able to tell the user which one they are looking at.
+   */
+  problems: string[]
   status: StatusView
   /** Indexed workspaces, so the page can show what exists on disk. */
   workspaces: WorkspacesView
@@ -116,7 +132,7 @@ export const UNKNOWN_SETTINGS: SettingsView = {
 export async function loadSettingsPageData(rpc: SettingsPageRpc): Promise<SettingsPageData> {
   const [settingsResponse, sourcesResponse, status, workspaces] = await Promise.all([
     rpc["settings.get"]({}).catch(() => ({ settings: UNKNOWN_SETTINGS })),
-    rpc["kilo.discover"]().catch(() => ({ sources: [] as KiloSourceView[] })),
+    rpc["kilo.discover"]({}).catch(() => ({ sources: [] as KiloSourceView[], problems: [] as string[] })),
     rpc["status.get"]({ checkFreshness: false }).catch(() => ({ summary: "(status unavailable)", recommendation: "" })),
     // loadWorkspaces already degrades to an empty view, so it cannot reject.
     loadWorkspaces(rpc),
@@ -124,6 +140,7 @@ export async function loadSettingsPageData(rpc: SettingsPageRpc): Promise<Settin
   return {
     settings: settingsResponse.settings,
     sources: sourcesResponse.sources,
+    problems: sourcesResponse.problems ?? [],
     status,
     workspaces,
   }

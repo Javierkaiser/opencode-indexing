@@ -93,11 +93,19 @@ export async function getStatus(deps: StatusDeps, options?: { checkFreshness?: b
     settings.dimension > 0
       ? { provider: settings.provider, modelId: settings.modelId, dimension: settings.dimension }
       : undefined
+  // Discovery problems are collected here rather than thrown away, so `indexing_status`
+  // can say "found but unreadable" instead of the much less useful "nothing there".
+  const kiloProblems: string[] = []
   const [kiloInfo, ownInfo, manifest, kiloSources] = await Promise.all([
     kiloCollection ? getKiloStoreInfo(qdrant, kiloCollection).catch(() => null) : null,
     ownStore.info().catch(() => null),
     loadManifest(kv, root),
-    discoverKiloSources(root, { qdrant, homeDir: undefined, targetProfile }).catch(() => [] as KiloSourceInfo[]),
+    discoverKiloSources(root, {
+      qdrant,
+      homeDir: undefined,
+      targetProfile,
+      onProblem: (message) => kiloProblems.push(message),
+    }).catch(() => [] as KiloSourceInfo[]),
   ])
 
   const freshness = { checked: false, total: 0, added: 0, maybeStale: 0, deleted: 0 }
@@ -204,6 +212,10 @@ export async function getStatus(deps: StatusDeps, options?: { checkFreshness?: b
     },
     freshness,
     recommendation,
-    warnings,
+    // Discovery problems ride along as warnings because that is the list
+    // `indexing_status` already renders, so they surface without a field of
+    // their own. It is the only consumer: the footer reads point counts and
+    // `ownStoreReachable`, and never looks at warnings.
+    warnings: [...warnings, ...kiloProblems],
   }
 }

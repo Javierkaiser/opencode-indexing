@@ -10,12 +10,44 @@ import type { Qdrant } from "./qdrant.ts"
 
 export interface ToolDeps {
   kv: KVStore
+  /**
+   * Fallback workspace, used when the host does not report one per call.
+   *
+   * This is the plugin instance's own directory — the one the service runs in,
+   * which is usually not the directory the user is working in. Prefer
+   * `context.directory`; this is the last resort, not the normal path.
+   */
   root: string
   /**
    * Live settings getter. Tools resolve settings on every execution so config
    * changes made from the TUI apply without restarting the server.
    */
   getSettings: () => IndexingSettings | Promise<IndexingSettings>
+}
+
+/**
+ * Host context as far as the tools read it.
+ *
+ * `directory` is the session's workspace. Older hosts omit it, which is why it
+ * is optional: `toolRoot` falls back rather than indexing nothing.
+ */
+export interface ToolContext {
+  signal?: AbortSignal
+  progress?: (m: unknown) => Promise<void>
+  directory?: string
+}
+
+/**
+ * The workspace one tool call is about.
+ *
+ * The host knows which directory the user is in; the plugin instance does not.
+ * Indexing the service's directory because that is what `deps.root` happened to
+ * hold writes a perfectly good index of the wrong codebase and reports it as the
+ * user's, so the session directory wins whenever the host reports one.
+ */
+function toolRoot(deps: ToolDeps, context: ToolContext): string {
+  const directory = context.directory
+  return typeof directory === "string" && directory.trim() !== "" ? directory : deps.root
 }
 
 export interface ToolDefinition {
@@ -30,10 +62,7 @@ export interface ToolDefinition {
    * is why configuration read and write are separate tools.
    */
   permission?: string
-  execute: (
-    input: Record<string, unknown>,
-    context: { signal?: AbortSignal; progress?: (m: unknown) => Promise<void> },
-  ) => Promise<{ output: string; metadata?: Record<string, unknown> }>
+  execute: (input: Record<string, unknown>, context: ToolContext) => Promise<{ output: string; metadata?: Record<string, unknown> }>
 }
 
 const SEARCH_DESCRIPTION = `Find code snippets by semantic meaning in the project's code index.
@@ -119,9 +148,10 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
         },
         ["query"],
       ),
-      async execute(input) {
+      async execute(input, context) {
         const settings = await deps.getSettings()
         const qdrant = createSettingsQdrant(settings)
+        const root = toolRoot(deps, context)
         const query = typeof input.query === "string" ? input.query.trim() : ""
         if (!query) throw new Error("query is required")
         const pathPrefix = typeof input.path === "string" && input.path.trim() !== "" ? input.path.trim() : undefined
@@ -130,13 +160,13 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
         // Skipped while indexing is paused, otherwise a search would keep writing.
         if (settings.autoRefresh && settings.enabled !== false) {
           try {
-            await maybeAutoRefresh(deps, settings, qdrant)
+            await maybeAutoRefresh(root, deps, settings, qdrant)
           } catch {
             // Auto-refresh failures never block the search.
           }
         }
 
-        const outcome = await searchCode({ qdrant, kv: deps.kv, root: deps.root, settings }, query, pathPrefix)
+        const outcome = await searchCode({ qdrant, kv: deps.kv, root, settings }, query, pathPrefix)
         const { hits, meta, errors } = outcome
         if (hits.length === 0) {
           const lines: string[] = [`No results for "${query}" in ${meta.root}.`]
@@ -184,10 +214,11 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
       input: jsonSchema({
         checkFreshness: { type: "boolean", description: "Scan the workspace to compute file freshness (slower)." },
       }),
-      async execute(input) {
+      async execute(input, context) {
         const settings = await deps.getSettings()
         const qdrant = createSettingsQdrant(settings)
-        const status = await getStatus({ qdrant, kv: deps.kv, root: deps.root, settings }, { checkFreshness: input.checkFreshness !== false })
+        const root = toolRoot(deps, context)
+        const status = await getStatus({ qdrant, kv: deps.kv, root, settings }, { checkFreshness: input.checkFreshness !== false })
         const lines: string[] = [
           `Workspace: ${status.root}`,
           `Qdrant: ${status.qdrant.url} (${status.qdrant.reachable ? "reachable" : "UNREACHABLE"})`,
@@ -224,11 +255,12 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
         const settings = await deps.getSettings()
         assertIndexingEnabled(settings)
         const qdrant = createSettingsQdrant(settings)
+        const root = toolRoot(deps, context)
         const maxFiles = typeof input.maxFiles === "number" && input.maxFiles > 0 ? Math.floor(input.maxFiles) : undefined
         const report = await runIndex(
           {
             kv: deps.kv,
-            root: deps.root,
+            root,
             settings,
             qdrant,
             onProgress: makeProgress(context),
@@ -236,7 +268,7 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
           { mode: "refresh", maxFiles },
         )
         const summary = formatReport("refresh", report)
-        const warning = scopeWarning(deps.root)
+        const warning = scopeWarning(root)
         return {
           output: warning ? `${warning}\n${summary}` : summary,
           metadata: report as unknown as Record<string, unknown>,
@@ -254,10 +286,11 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
         const settings = await deps.getSettings()
         assertIndexingEnabled(settings)
         const qdrant = createSettingsQdrant(settings)
+        const root = toolRoot(deps, context)
         const report = await runIndex(
           {
             kv: deps.kv,
-            root: deps.root,
+            root,
             settings,
             qdrant,
             onProgress: makeProgress(context),
@@ -265,7 +298,7 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
           { mode: "build", rebuild: input.rebuild === true, skipImport: input.skipImport === true },
         )
         const summary = formatReport("build", report)
-        const warning = scopeWarning(deps.root)
+        const warning = scopeWarning(root)
         return {
           output: warning ? `${warning}\n${summary}` : summary,
           metadata: report as unknown as Record<string, unknown>,
@@ -283,7 +316,7 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
         const settings = await deps.getSettings()
         assertIndexingEnabled(settings)
         const qdrant = createSettingsQdrant(settings)
-        const root = deps.root
+        const root = toolRoot(deps, context)
         const store = createOwnStore(settings, root)
         const profile = { provider: settings.provider, modelId: settings.modelId, dimension: settings.dimension }
 
@@ -304,8 +337,15 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
         }
         await store.ensure(dimension, targetProfile)
 
-        const sources = await discoverKiloSources(root, { qdrant, targetProfile })
-        if (sources.length === 0) throw new Error("No Kilo Code index found for this workspace (neither Qdrant collection nor local LanceDB)")
+        const problems: string[] = []
+        const sources = await discoverKiloSources(root, { qdrant, targetProfile, onProblem: (m) => problems.push(m) })
+        if (sources.length === 0) {
+          throw new Error(
+            problems.length > 0
+              ? `No Kilo Code index found for ${root}. ${problems.join(" · ")}`
+              : "No Kilo Code index found for this workspace (neither Qdrant collection nor local LanceDB)",
+          )
+        }
         const wanted = typeof input.source === "string" && input.source.trim() !== "" ? input.source.trim() : undefined
         const source = wanted ? sources.find((item) => item.name === wanted) : (sources.find((item) => item.compatible) ?? sources[0])
         if (!source) throw new Error(`Source not found: ${wanted}. Available: ${sources.map((s) => s.name).join(", ")}`)
@@ -362,12 +402,17 @@ function assertIndexingEnabled(settings: { enabled?: boolean }): void {
 /** Max changed files that trigger an inline refresh on search. */
 const AUTO_REFRESH_MAX_FILES = 200
 
-async function maybeAutoRefresh(deps: ToolDeps, settings: IndexingSettings, qdrant: Qdrant): Promise<void> {
+async function maybeAutoRefresh(
+  root: string,
+  deps: ToolDeps,
+  settings: IndexingSettings,
+  qdrant: Qdrant,
+): Promise<void> {
   // Cheap pre-check: diff the manifest against a bounded workspace scan.
   const { loadManifest, diffFiles } = await import("./manifest.ts")
   const { scanWorkspace } = await import("./scanner.ts")
-  const manifest = await loadManifest(deps.kv, deps.root)
-  const scan = await scanWorkspace(deps.root, {
+  const manifest = await loadManifest(deps.kv, root)
+  const scan = await scanWorkspace(root, {
     extensions: settings.fileExtensions,
     maxFileSizeBytes: settings.maxFileSizeBytes,
     maxFiles: AUTO_REFRESH_MAX_FILES + 1,
@@ -376,7 +421,7 @@ async function maybeAutoRefresh(deps: ToolDeps, settings: IndexingSettings, qdra
   const delta = diff.added.length + diff.maybeStale.length + diff.deleted.length
   if (delta === 0 || delta > AUTO_REFRESH_MAX_FILES) return
   await runIndex(
-    { kv: deps.kv, root: deps.root, settings, qdrant },
+    { kv: deps.kv, root, settings, qdrant },
     { mode: "refresh", maxFiles: AUTO_REFRESH_MAX_FILES },
   )
 }

@@ -157,10 +157,15 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
   if (shouldImport) {
     await deps.onProgress?.({ phase: "importing", processed: 0, total: 0 })
     try {
+      // Collected rather than thrown: discovery no longer fails on an
+      // unreadable source, and the caller has to be told why the scan below is
+      // about to re-embed the whole workspace at their expense.
+      const problems: string[] = []
       const sources = await discoverKiloSources(root, {
         qdrant,
         homeDir: undefined,
         targetProfile: profile,
+        onProblem: (message) => problems.push(message),
       })
       const source = sources.find((item) => item.compatible) ?? sources[0]
       if (source && source.compatible) {
@@ -190,6 +195,12 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
         report.errors.push(
           `Kilo index found (${source.name}) but its embedding profile does not match ${profile.provider}:${profile.modelId}:${profile.dimension}; indexing from scratch`,
         )
+      } else if (problems.length > 0) {
+        // No usable source and a reason why. Without this the build reads as a
+        // workspace that has no Kilo index at all, and the full re-embedding
+        // that follows looks like the normal path rather than the expensive
+        // fallback it is.
+        report.errors.push(`${problems.join(" · ")} Indexing from scratch instead.`)
       }
     } catch (error) {
       report.errors.push(`import failed: ${describeError(error)}`)

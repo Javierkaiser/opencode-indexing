@@ -6,6 +6,7 @@ import { getKiloStoreInfo, resolveKiloCollection } from "./kilo-store.ts"
 import { readLanceDbInfoAt, readLanceDbBatch, lanceDbName } from "./lancedb-store.ts"
 import { kiloLanceDbDirectory } from "./settings.ts"
 import { recordWorkspace } from "./workspaces.ts"
+import { describeError } from "./errors.ts"
 import type { EmbeddingProfile, QdrantPoint, IndexReport } from "./types.ts"
 import type { VectorStoreAdapter } from "./vector-store.ts"
 import { profileKey } from "./registry.ts"
@@ -47,9 +48,25 @@ export interface ImportReport {
 /** Read-only description of Kilo sources available for a workspace. */
 export async function discoverKiloSources(
   root: string,
-  options: { qdrant?: Qdrant; lancedbDirectory?: string; homeDir?: string; targetProfile?: EmbeddingProfile },
+  options: {
+    qdrant?: Qdrant
+    lancedbDirectory?: string
+    homeDir?: string
+    targetProfile?: EmbeddingProfile
+    /**
+     * Called when a source exists but could not be read.
+     *
+     * A backend that is down and a source that does not exist look identical
+     * once the error is swallowed, and both are reported to the user as "no Kilo
+     * index found". That is a wrong answer in the first case: the index is
+     * sitting on disk, and what is missing is a native module or a running
+     * server. The caller decides where the message surfaces.
+     */
+    onProblem?: (message: string) => void
+  },
 ): Promise<KiloSourceInfo[]> {
   const sources: KiloSourceInfo[] = []
+  const problem = options.onProblem ?? ((): void => {})
   const isCompatible = (profile?: EmbeddingProfile): boolean => {
     if (!options.targetProfile || !profile) return true
     return profileKey(profile) === profileKey(options.targetProfile)
@@ -71,15 +88,17 @@ export async function discoverKiloSources(
         compatible: isCompatible(info.profile),
       })
     }
-  } catch {
-    // Qdrant unreachable: skip silently; lancedb may still be available.
+  } catch (error) {
+    // A backend that answers with no matching collection is not a failure; a
+    // backend that never answered is.
+    problem(`Could not reach the Qdrant server to look for a Kilo index: ${describeError(error)}`)
   }
 
   // LanceDB source
-  try {
-    const directory = options.lancedbDirectory ?? kiloLanceDbDirectory(options.homeDir)
-    const dbPath = path.join(directory, lanceDbName(root))
-    if (fs.existsSync(dbPath)) {
+  const directory = options.lancedbDirectory ?? kiloLanceDbDirectory(options.homeDir)
+  const dbPath = path.join(directory, lanceDbName(root))
+  if (fs.existsSync(dbPath)) {
+    try {
       const info = await readLanceDbInfoAt(dbPath)
       if (info.vectorExists) {
         sources.push({
@@ -92,9 +111,11 @@ export async function discoverKiloSources(
           compatible: isCompatible(info.profile),
         })
       }
+    } catch (error) {
+      // The directory is there, so this is "found but unreadable", never
+      // "not indexed". Say so, with the reason.
+      problem(`A Kilo LanceDB index exists at ${dbPath} but could not be read: ${describeError(error)}`)
     }
-  } catch {
-    // LanceDB unavailable: skip.
   }
 
   return sources

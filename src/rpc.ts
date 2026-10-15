@@ -19,6 +19,20 @@ const empty = { type: "object", properties: {}, additionalProperties: false } as
  */
 const directoryShape = { directory: { type: "string" } } as const
 
+/**
+ * Input schema for a method whose only argument is the caller's workspace.
+ *
+ * Exists so `kilo.discover` and `settings.test` cannot be written as a bare
+ * `directoryShape`: that is a fragment of `properties`, not a schema, and a
+ * validator reading it as one sees no `directory` at all — silently answering
+ * about the service's own workspace again.
+ */
+const workspaceInputShape = {
+  type: "object",
+  properties: { ...directoryShape },
+  additionalProperties: false,
+} as const
+
 const settingsShape = {
   type: "object",
   properties: {
@@ -62,6 +76,9 @@ export const IndexingRpc = {
         type: "object",
         properties: {
           target: { type: "string", enum: ["qdrant", "lancedb", "provider", "kilo"] },
+          // Only `kilo` is workspace-scoped; the other targets describe global
+          // backends. Sending it costs nothing and keeps one shape for the client.
+          ...directoryShape,
         },
         required: ["target"],
         additionalProperties: false,
@@ -74,7 +91,7 @@ export const IndexingRpc = {
       },
     },
     "kilo.discover": {
-      input: empty,
+      input: workspaceInputShape,
       output: {
         type: "object",
         properties: {
@@ -94,6 +111,14 @@ export const IndexingRpc = {
               additionalProperties: true,
             },
           },
+          /**
+           * Sources that exist but could not be read, in plain language.
+           *
+           * Without this the only thing a caller can say when the list is empty
+           * is "not found", which is a different statement from "found, and the
+           * read failed" — and the second one is the one that needs acting on.
+           */
+          problems: { type: "array", items: { type: "string" } },
         },
         required: ["sources"],
         additionalProperties: false,

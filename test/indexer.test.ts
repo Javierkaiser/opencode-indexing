@@ -235,10 +235,12 @@ describe("runIndex (incremental, fake store)", () => {
         settings,
         store,
         embedder: fakeEmbedder,
-        // Fake qdrant that fails: discovery treats it as unreachable and falls back.
+        // Reachable, with nothing indexed for this workspace. The alternative —
+        // a Qdrant that throws — is not "no source exists", it is "could not
+        // look", and it is reported as such by the test below.
         qdrant: {
           async listCollections() {
-            throw new Error("connection refused")
+            return []
           },
         } as never,
       },
@@ -247,5 +249,39 @@ describe("runIndex (incremental, fake store)", () => {
     assert.equal(report.errors.length, 0, report.errors.join("; "))
     assert.equal(report.imported, undefined)
     assert.ok(report.chunksUpserted > 0, "indexed from scratch when no source exists")
+  })
+
+  test("a build that cannot read Kilo's index says so before re-embedding everything", async () => {
+    // The expensive failure: the index is there, the read failed, and the scan
+    // that follows re-embeds the whole workspace. Reporting it as "no Kilo
+    // index" made the cost look like the normal path.
+    const root = makeWorkspace()
+    const store = new FakeStore(path.join(root, ".lancedb", "db"))
+    const kv = createMemoryStorage()
+    writeFileSync(path.join(root, "src", "a.ts"), fileWithChunk("a", 1))
+    const settings = makeSettings(root, { importFromKilo: true })
+
+    const report = await runIndex(
+      {
+        kv,
+        root,
+        settings,
+        store,
+        embedder: fakeEmbedder,
+        qdrant: {
+          async listCollections() {
+            throw new Error("connection refused")
+          },
+        } as never,
+      },
+      { mode: "build" },
+    )
+
+    assert.equal(report.errors.length, 1, report.errors.join("; "))
+    assert.match(report.errors[0], /Could not reach the Qdrant server/)
+    assert.match(report.errors[0], /connection refused/, "the reason has to survive")
+    // The fallback still happens; it is the silence that was wrong.
+    assert.equal(report.imported, undefined)
+    assert.ok(report.chunksUpserted > 0, "still indexes from scratch")
   })
 })

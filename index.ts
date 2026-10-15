@@ -217,6 +217,19 @@ const plugin = {
       const directory = (input as { directory?: string } | undefined)?.directory
       return typeof directory === "string" && directory.trim() !== "" ? directory : root
     }
+
+    /**
+     * Directory of the session a command was typed in.
+     *
+     * The plugin instance belongs to the directory the service runs in, which is
+     * usually a different one entirely, so a command issued from a session has to
+     * ask the host where that session is rather than assume its own.
+     */
+    const sessionDirectory = async (sessionID: string): Promise<string | undefined> =>
+      ctx.session
+        .get({ sessionID } as never)
+        .then((info: { location?: { directory?: string } }) => info?.location?.directory)
+        .catch(() => undefined)
     const options = (ctx.options ?? {}) as unknown as PluginOptionsInput
     const kv: KVStore = createPluginStorage(ctx.storage as never)
     const getSettings = (): Promise<IndexingSettings> => Promise.resolve(resolveSettings(options))
@@ -357,7 +370,7 @@ Behavior:
      * Extracted so the `settings.test` RPC and the `/indexing-config test`
      * subcommand answer identically instead of drifting apart.
      */
-    async function testTarget(target: string): Promise<{ ok: boolean; message: string }> {
+    async function testTarget(target: string, workspace: string): Promise<{ ok: boolean; message: string }> {
       const settings = await getSettings()
       try {
         if (target === "qdrant") {
@@ -379,15 +392,23 @@ Behavior:
           return { ok: true, message: `${settings.provider}/${settings.modelId} OK (${vector?.length ?? 0} dimensions)` }
         }
         if (target === "kilo") {
-          const sources = await discoverKiloSources(root, {
+          const problems: string[] = []
+          const sources = await discoverKiloSources(workspace, {
             qdrant: createSettingsQdrant(settings),
             homeDir: undefined,
             targetProfile: profileFor(settings),
+            onProblem: (message) => problems.push(message),
           })
           const list = sources.map((s) => `${s.kind} ${s.name} (${s.pointsCount ?? "?"} pts, ${s.compatible ? "compatible" : "INCOMPATIBLE"})`)
+          // A readable source does not make an unreadable one irrelevant: a
+          // partial answer ("Qdrant works, LanceDB does not") is the one that
+          // explains why an import picked the source it did.
+          const found = sources.length > 0 ? list.join(" · ") : `No importable Kilo index for ${workspace}`
           return {
             ok: sources.length > 0,
-            message: sources.length > 0 ? list.join(" · ") : "No Kilo index found for this workspace",
+            // With nothing found, a reason beats a bare "not found": the two
+            // need completely different actions from the user.
+            message: problems.length > 0 ? `${found}. ${problems.join(" · ")}` : found,
           }
         }
         return { ok: false, message: `Unknown test target: ${target}` }
@@ -412,11 +433,24 @@ Behavior:
       const dimension = settings.dimension || (await store.info()).profile?.dimension || 0
       if (!dimension) throw new Error("Embedding dimension unknown")
       const targetProfile = { provider: settings.provider, modelId: settings.modelId, dimension }
-      const sources = await discoverKiloSources(workspace, { qdrant: createSettingsQdrant(settings), targetProfile })
+      const problems: string[] = []
+      const sources = await discoverKiloSources(workspace, {
+        qdrant: createSettingsQdrant(settings),
+        targetProfile,
+        onProblem: (message) => problems.push(message),
+      })
       const source = wanted
         ? sources.find((item) => item.name === wanted)
         : (sources.find((item) => item.compatible) ?? sources[0])
-      if (!source) throw new Error("No Kilo source found for this workspace")
+      if (!source) {
+        // Naming the cause turns "nothing here" into something actionable when
+        // the index is present but unreadable.
+        throw new Error(
+          problems.length > 0
+            ? `No Kilo source found for ${workspace}. ${problems.join(" · ")}`
+            : "No Kilo source found for this workspace",
+        )
+      }
       if (!source.compatible) throw new Error(`Source ${source.name} has an incompatible embedding profile`)
       await store.ensure(dimension, targetProfile)
       const report = await importFromKilo({
@@ -548,6 +582,7 @@ class ForgetRefusedError extends Error {}
         }
         lines.push("")
       }
+      const problems: string[] = []
       const sources = await discoverKiloSources(root, {
         qdrant: createSettingsQdrant(settings),
         homeDir: undefined,
@@ -556,6 +591,7 @@ class ForgetRefusedError extends Error {}
         // compare against, so the report claimed an import would work when it
         // would be refused a moment later.
         targetProfile: profileFor(settings),
+        onProblem: (message) => problems.push(message),
       }).catch(() => [])
       lines.push(
         "",
@@ -563,6 +599,9 @@ class ForgetRefusedError extends Error {}
           ? `**Kilo sources detected:** ${sources.map((source) => `${source.kind} ${source.name} (${source.pointsCount ?? "?"} pts, ${source.compatible ? "compatible" : "INCOMPATIBLE"})`).join("; ")}`
           : "**Kilo sources detected:** none for this workspace",
       )
+      // "None" and "none I could read" are different answers, and only one of
+      // them is fixed by indexing from scratch.
+      if (problems.length > 0) lines.push("", `**Kilo sources unreadable:** ${problems.join(" · ")}`)
       lines.push(
         "",
         "To change settings:",
@@ -622,11 +661,15 @@ class ForgetRefusedError extends Error {}
                   return
                 }
                 case "test": {
+                  // Like `import` below, this has to name the session's directory:
+                  // `test kilo` asks whether an index exists *for a workspace*, and
+                  // answering about the service's own directory is always wrong.
                   const targets =
                     parsed.target === "all" ? ["qdrant", "lancedb", "provider", "kilo"] : [parsed.target]
+                  const workspace = (await sessionDirectory(sessionID)) ?? root
                   const results: string[] = []
                   for (const target of targets) {
-                    const result = await testTarget(target)
+                    const result = await testTarget(target, workspace)
                     results.push(`${target}: ${result.ok ? "OK" : "FAIL"} — ${result.message}`)
                   }
                   await reply(results.join("\n"))
@@ -636,11 +679,7 @@ class ForgetRefusedError extends Error {}
                   // The session knows which workspace the user is in; the plugin
                   // instance directory is the one the service runs in, which is
                   // usually a different directory entirely.
-                  const sessionDirectory = await ctx.session
-                    .get({ sessionID } as never)
-                    .then((info: { location?: { directory?: string } }) => info?.location?.directory)
-                    .catch(() => undefined)
-                  await reply(await runImport(sessionDirectory, parsed.source))
+                  await reply(await runImport(await sessionDirectory(sessionID), parsed.source))
                   return
                 }
               }
@@ -678,17 +717,19 @@ class ForgetRefusedError extends Error {}
         },
 
         "settings.test": async (input: unknown) => {
-          return testTarget((input as { target: string }).target)
+          return testTarget((input as { target: string }).target, rootFor(input))
         },
 
-        "kilo.discover": async () => {
+        "kilo.discover": async (input: unknown) => {
           const settings = await getSettings()
           const targetProfile =
             settings.dimension > 0 ? { provider: settings.provider, modelId: settings.modelId, dimension: settings.dimension } : undefined
-          const sources = await discoverKiloSources(root, {
+          const problems: string[] = []
+          const sources = await discoverKiloSources(rootFor(input), {
             qdrant: createSettingsQdrant(settings),
             homeDir: undefined,
             targetProfile,
+            onProblem: (message) => problems.push(message),
           })
           return {
             sources: sources.map((source) => ({
@@ -701,6 +742,7 @@ class ForgetRefusedError extends Error {}
                 : null,
               compatible: source.compatible,
             })),
+            problems,
           }
         },
 

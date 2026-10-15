@@ -1,10 +1,10 @@
 import * as assert from "node:assert/strict"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 
-import { importFromKilo, importReportToIndexReport, type KiloSourceInfo } from "../src/import.ts"
+import { discoverKiloSources, importFromKilo, importReportToIndexReport, type KiloSourceInfo } from "../src/import.ts"
 import type { EmbeddingProfile, QdrantPoint, QueryHit } from "../src/types.ts"
 import type { ExportBatch, StoreSearchOptions, VectorStoreAdapter, VectorStoreInfo } from "../src/vector-store.ts"
 
@@ -194,6 +194,86 @@ describe("importFromKilo (qdrant source)", () => {
       /does not match/,
     )
     assert.equal(target.upserts, 0)
+  })
+})
+
+describe("discoverKiloSources", () => {
+  const ROOT = path.join(os.tmpdir(), "discover-root")
+
+  /** A reachable Qdrant with no collection for this workspace. */
+  function emptyQdrant() {
+    return { listCollections: async () => [] } as never
+  }
+
+  test("says nothing was found when nothing exists", async () => {
+    const problems: string[] = []
+    const sources = await discoverKiloSources(ROOT, {
+      qdrant: emptyQdrant(),
+      lancedbDirectory: path.join(os.tmpdir(), "oi-absent-lancedb"),
+      onProblem: (message) => problems.push(message),
+    })
+
+    assert.deepEqual(sources, [])
+    // Silence here is correct: there is no index and nothing failed.
+    assert.deepEqual(problems, [])
+  })
+
+  test("reports an unreadable LanceDB index instead of calling it absent", async () => {
+    // The directory is present but the native module cannot load, which is what
+    // a missing `apache-arrow` looks like. Swallowing it produced "No Kilo
+    // index found" for an index that was sitting on disk.
+    const directory = mkdtempSync(path.join(os.tmpdir(), "oi-lancedb-"))
+    try {
+      const { lanceDbName } = await import("../src/lancedb-store.ts")
+      const dbPath = path.join(directory, lanceDbName(ROOT))
+      // A database directory with an unreadable table inside: connecting throws
+      // rather than returning an empty schema, which is what a corrupt or
+      // half-written store does in practice.
+      mkdirSync(path.join(dbPath, "vector.lance"), { recursive: true })
+      writeFileSync(path.join(dbPath, "vector.lance", "_versions"), "not a lance manifest")
+
+      const problems: string[] = []
+      const sources = await discoverKiloSources(ROOT, {
+        qdrant: emptyQdrant(),
+        lancedbDirectory: directory,
+        onProblem: (message) => problems.push(message),
+      })
+
+      assert.deepEqual(sources, [], "an unreadable source is not an importable one")
+      assert.equal(problems.length, 1, "exactly one problem, so the message cannot be mistaken for 'nothing here'")
+      assert.match(problems[0], /exists at/, "the message must say the index is there")
+      assert.match(problems[0], /could not be read: \S/, "and carry the reason, not just the verdict")
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  test("reports an unreachable Qdrant rather than reporting no index", async () => {
+    const problems: string[] = []
+    const sources = await discoverKiloSources(ROOT, {
+      qdrant: {
+        listCollections: async () => {
+          throw new Error("Unable to connect to Qdrant at localhost:6333")
+        },
+      } as never,
+      lancedbDirectory: path.join(os.tmpdir(), "oi-absent-lancedb"),
+      onProblem: (message) => problems.push(message),
+    })
+
+    assert.deepEqual(sources, [])
+    assert.equal(problems.length, 1)
+    assert.match(problems[0], /Could not reach the Qdrant server/)
+    assert.match(problems[0], /Unable to connect/, "the underlying reason must survive")
+  })
+
+  test("an optional onProblem does not have to be provided", async () => {
+    // Discovery runs on hot paths (every status read) that have nowhere to put a
+    // message, so the hook is genuinely optional.
+    const sources = await discoverKiloSources(ROOT, {
+      qdrant: emptyQdrant(),
+      lancedbDirectory: path.join(os.tmpdir(), "oi-absent-lancedb"),
+    })
+    assert.deepEqual(sources, [])
   })
 })
 

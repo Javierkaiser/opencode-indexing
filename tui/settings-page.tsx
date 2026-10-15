@@ -75,7 +75,13 @@ export function SettingsPage(props: SettingsPageProps): JSX.Element {
     const action = PAGE_ACTIONS.find((entry) => entry.id === id)
     if (!action) return
     if (action.kind === "source" && (data()?.sources ?? []).length === 0) {
-      props.toast("No Kilo index found for this workspace", "info")
+      // Report the reason when there is one: an index that exists but cannot be
+      // read is fixed by installing something, not by building one.
+      const problems = data()?.problems ?? []
+      props.toast(
+        problems.length > 0 ? `No importable Kilo index: ${problems.join(" · ")}` : "No Kilo index found for this workspace",
+        problems.length > 0 ? "error" : "info",
+      )
       return
     }
     // No source passed: the server picks the first compatible one. Use the

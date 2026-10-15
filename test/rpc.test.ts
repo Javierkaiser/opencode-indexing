@@ -54,4 +54,49 @@ describe("IndexingRpc contract", () => {
     assert.equal(input.properties.store.type, "string")
     assert.deepEqual(input.required, ["store"])
   })
+
+  test("every workspace-scoped method accepts a directory", () => {
+    // The server plugin is instantiated for the directory the service runs in,
+    // so a method that takes no directory can only ever answer about that one.
+    // `kilo.discover` and `settings.test` are the two that were missing it, and
+    // both silently reported "no index here" for the workspace the user was in.
+    for (const method of [
+      "kilo.discover",
+      "settings.test",
+      "status.get",
+      "index.build",
+      "index.refresh",
+      "index.import",
+    ] as const) {
+      const input = IndexingRpc.methods[method].input as unknown as {
+        properties?: Record<string, { type?: string }>
+        additionalProperties?: boolean
+      }
+      assert.equal(
+        input.properties?.directory?.type,
+        "string",
+        `${method} must accept a directory, or it can only describe the service's own workspace`,
+      )
+      // The property is optional so a caller with nothing to say can send `{}`.
+      assert.notEqual((input as { required?: string[] }).required?.includes("directory"), true)
+    }
+  })
+
+  test("kilo.discover reports unreadable sources separately from missing ones", () => {
+    const output = IndexingRpc.methods["kilo.discover"].output as unknown as {
+      properties: { sources: unknown; problems: { type: string; items: { type: string } } }
+      required: string[]
+    }
+    assert.equal(output.properties.problems.type, "array")
+    assert.equal(output.properties.problems.items.type, "string")
+    assert.deepEqual(output.required, ["sources"], "an empty list with problems is still a valid answer")
+  })
+
+  test("the global methods are not given a directory", () => {
+    // These span every workspace, so naming one would be a lie about the scope.
+    for (const method of ["settings.get", "settings.set", "workspaces.list", "workspace.forget"] as const) {
+      const input = IndexingRpc.methods[method].input as unknown as { properties?: Record<string, unknown> }
+      assert.equal(input.properties?.directory, undefined, `${method} must stay workspace-agnostic`)
+    }
+  })
 })
