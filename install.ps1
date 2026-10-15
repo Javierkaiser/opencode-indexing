@@ -3,8 +3,11 @@
 # and macOS all run the same code instead of drifting copies.
 #
 # Usage:
-#   powershell -ExecutionPolicy Bypass -File install.ps1 [-SkipDeps] [-NoRestart]
+#   powershell -ExecutionPolicy Bypass -File install.ps1 [-Local|-Package] [-Spec <spec>] [-SkipDeps] [-NoRestart]
 param(
+  [switch]$Local,
+  [switch]$Package,
+  [string]$Spec,
   [switch]$SkipDeps,
   [switch]$NoRestart
 )
@@ -12,6 +15,9 @@ param(
 $ErrorActionPreference = "Stop"
 $script = Join-Path $PSScriptRoot "install.mjs"
 $forward = @()
+if ($Local) { $forward += "--local" }
+if ($Package) { $forward += "--package" }
+if ($Spec) { $forward += $Spec }
 if ($SkipDeps) { $forward += "--skip-deps" }
 if ($NoRestart) { $forward += "--no-restart" }
 

@@ -3,7 +3,7 @@
 # Thin wrapper: the cross-platform logic lives in install.mjs.
 #
 # Usage:
-#   sh install.sh [--skip-deps] [--no-restart]
+#   sh install.sh [--local|--package] [spec] [--skip-deps] [--no-restart]
 set -eu
 
 dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

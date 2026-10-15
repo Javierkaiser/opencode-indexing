@@ -1,6 +1,6 @@
 {
   "name": "@javierkaiser/opencode-indexing",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "OpenCode plugin: semantic code search that reuses Kilo Code indexes (Qdrant/LanceDB) and maintains its own independent index",
   "license": "MIT",
   "author": "Carlos Javier Lust <javierkaiser@gmail.com>",
@@ -28,6 +28,9 @@
     ".": "./index.ts",
     "./rpc": "./src/rpc.ts",
     "./tui": "./tui.ts"
+  },
+  "bin": {
+    "opencode-indexing": "./install.mjs"
   },
   "files": [
     "index.ts",
@@ -61,7 +64,8 @@
   "optionalDependencies": {
     "@lancedb/lancedb": "0.26.2",
     "tree-sitter-wasms": "0.1.13",
-    "web-tree-sitter": "0.25.10"
+    "web-tree-sitter": "0.25.10",
+    "apache-arrow": "18.1.0"
   },
   "devDependencies": {
     "@opencode/plugin": "2.0.23",
