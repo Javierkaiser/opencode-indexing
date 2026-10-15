@@ -1,12 +1,13 @@
 name: publish
 
-# Publishes to npm, and creates the release tag when it is missing.
+# Publishes to npm, and creates the release tag and the GitHub Release when they
+# are missing.
 #
-# Running on `main` is what makes the tag automatic: bump `version` in
-# package.json, push, and this workflow tags `v<version>` and publishes it. A tag
-# pushed by hand still publishes, and re-running — or a duplicate trigger — is a
-# no-op once the version is on npm, because npm refuses to publish over a version
-# that already exists.
+# Running on `main` is what makes the release automatic: bump `version` in
+# package.json, push, and this workflow tags `v<version>`, publishes it, and
+# creates the GitHub Release with the published tarball attached. A tag pushed by
+# hand still publishes. Each piece is skipped when it already exists, so a re-run
+# is a no-op — and a run can also repair a release that only got halfway.
 #
 # The filename is deliberate: npm's trusted publisher is configured per
 # repository + workflow filename, so renaming this file breaks the OIDC exchange
@@ -20,7 +21,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write # to create and push the tag
+  contents: write # to push the tag and create the release
   id-token: write # required for OIDC (npm trusted publishing)
 
 concurrency:
@@ -39,6 +40,8 @@ jobs:
 
       - name: Decide whether there is anything to do
         id: state
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           version=$(node -p "require('./package.json').version")
@@ -58,24 +61,30 @@ jobs:
             published=false
           fi
 
+          if gh release view "v$version" >/dev/null 2>&1; then
+            released=true
+          else
+            released=false
+          fi
+
           echo "version:   $version"
           echo "tagged:    $tagged"
           echo "published: $published"
+          echo "released:  $released"
 
           {
             echo "version=$version"
             echo "tagged=$tagged"
             echo "published=$published"
+            echo "released=$released"
           } >> "$GITHUB_OUTPUT"
 
       - name: Create the tag
         if: steps.state.outputs.tagged == 'false' && steps.state.outputs.published == 'false'
         run: |
-          # An annotated tag records a tagger, and the runner has no git
-          # identity, so `git tag -a` dies with "Committer identity unknown"
-          # (exit 128). Every run before 0.2.1 skipped this step — the version
-          # was already tagged and published — so the gap was invisible until a
-          # version actually needed tagging.
+          # An annotated tag records a tagger and the runner has no git identity,
+          # so `git tag -a` dies with "Committer identity unknown" (exit 128).
+          # The identity is set here, in the only step that needs it.
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "v${{ steps.state.outputs.version }}" \
@@ -136,12 +145,61 @@ jobs:
           fi
           exit "$rc"
 
+      - name: Create the GitHub Release
+        if: steps.state.outputs.released == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${{ steps.state.outputs.version }}"
+          name=$(node -p "require('./package.json').name")
+
+          if ! git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "v$version has no tag yet — nothing to release."
+            exit 0
+          fi
+
+          # Notes: the version's own CHANGELOG section, so the release page is
+          # not a second copy of the history that has to be maintained by hand.
+          notes=$(mktemp)
+          {
+            echo "**Install**"
+            echo
+            echo '```bash'
+            echo "npm install $name"
+            echo '```'
+            echo
+            echo "---"
+            echo
+            awk -v v="$version" '
+              index($0, "## [" v "]") == 1 { inside = 1; next }
+              inside && index($0, "## [") == 1 { exit }
+              inside { print }
+            ' CHANGELOG.md
+            echo
+            echo "---"
+            echo
+            echo "Full history: https://github.com/${GITHUB_REPOSITORY}/blob/main/CHANGELOG.md"
+          } > "$notes"
+
+          # The artefact that was actually published, not a fresh build of it.
+          tarball=$(npm pack "$name@$version" --silent | tail -1)
+
+          gh release create "v$version" \
+            --title "v$version" \
+            --notes-file "$notes" \
+            "$tarball"
+
       - name: Summary
         run: |
+          version="${{ steps.state.outputs.version }}"
           if [ "${{ steps.state.outputs.published }}" = "true" ]; then
-            echo "v${{ steps.state.outputs.version }} is already on npm — nothing to publish."
-          elif [ "${{ steps.state.outputs.tagged }}" = "true" ]; then
-            echo "v${{ steps.state.outputs.version }} already had a tag. Published it."
+            echo "v$version is already on npm."
           else
-            echo "Created the tag v${{ steps.state.outputs.version }} and published it."
+            echo "Published v$version to npm."
+          fi
+          if [ "${{ steps.state.outputs.released }}" = "true" ]; then
+            echo "v$version already had a GitHub Release."
+          else
+            echo "Created the GitHub Release for v$version."
           fi
