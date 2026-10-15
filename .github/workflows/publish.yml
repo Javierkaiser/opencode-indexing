@@ -71,6 +71,13 @@ jobs:
       - name: Create the tag
         if: steps.state.outputs.tagged == 'false' && steps.state.outputs.published == 'false'
         run: |
+          # An annotated tag records a tagger, and the runner has no git
+          # identity, so `git tag -a` dies with "Committer identity unknown"
+          # (exit 128). Every run before 0.2.1 skipped this step — the version
+          # was already tagged and published — so the gap was invisible until a
+          # version actually needed tagging.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "v${{ steps.state.outputs.version }}" \
             -m "opencode-indexing v${{ steps.state.outputs.version }}"
           git push origin "v${{ steps.state.outputs.version }}"
