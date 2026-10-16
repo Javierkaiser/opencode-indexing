@@ -79,6 +79,24 @@ plugin's own incremental index (Qdrant or LanceDB backend).
 - Verifying whether code exists that must be fresh: the index may lag behind
   recent edits; check \`indexing_status\` (freshness) or use Grep for certainty.
 
+## If codegraph is also installed
+
+When the codegraph MCP server is present, its tools are available alongside this
+one, and together they answer more than either can alone:
+
+- \`codegraph_explore\` — the area around a finding, with the verbatim source of
+  the relevant symbols, the call paths between them, and what depends on them.
+- \`codegraph_callers\` / \`codegraph_impact\` — "who calls this" and "what breaks
+  if I change it". Exact, structural answers that a similarity search cannot
+  give.
+- \`indexing_search\` still goes first when the intent is known and the
+  identifier is not: it finds the entry node by meaning, and the graph then
+  explains it.
+
+The two indexes are kept current together, so neither is stale relative to the
+other. If those tools are not available, everything above still applies and
+Grep remains the right fallback.
+
 ## Configuration
 
 \`indexing_config\` reports the effective settings (backend, model, credentials —

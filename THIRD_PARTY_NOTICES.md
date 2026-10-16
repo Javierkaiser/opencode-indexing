@@ -56,10 +56,35 @@ SOFTWARE.
 | Package | License | Copyright |
 | --- | --- | --- |
 | [`@lancedb/lancedb`](https://github.com/lancedb/lancedb) | Apache-2.0 | LanceDB, Inc. |
+| [`apache-arrow`](https://github.com/apache/arrow) | Apache-2.0 | The Apache Software Foundation |
 | [`web-tree-sitter`](https://github.com/tree-sitter/tree-sitter) | MIT | Tree-sitter contributors |
 | [`tree-sitter-wasms`](https://github.com/Gregoor/tree-sitter-wasms) | Unlicense | Gregor (packaging); grammars by their respective authors |
 | [`ignore`](https://github.com/kaelzhang/node-ignore) | MIT | Kael Zhang and contributors |
+| [`solid-js`](https://github.com/solidjs/solid) | MIT | Ryan Carniato and contributors |
+| [`@opentui/core`](https://github.com/sst/opentui) | MIT | SST and OpenTUI contributors |
+| [`@opentui/solid`](https://github.com/sst/opentui) | MIT | SST and OpenTUI contributors |
+
+`solid-js`, `@opentui/core` and `@opentui/solid` are what the terminal UI is
+rendered with. They are optional dependencies: without them the prompt-footer
+indicator and the settings page are absent, and everything else works.
 
 Tree-sitter grammar `.wasm` files bundled by `tree-sitter-wasms` are distributed
 under their upstream licenses (mostly MIT or Apache-2.0); see the
 `tree-sitter-wasms` package for details.
+
+## CodeGraph (github.com/colbymchenry/codegraph)
+
+Not bundled and not required. CodeGraph is a separate program that this plugin
+can install, register as an MCP server and keep in step; it is listed here
+because the plugin drives it and points at it by name.
+
+License: **MIT**, as declared in the package manifest
+(`@colbymchenry/codegraph@1.6.2`).
+
+The published package carries no `LICENSE` file of its own and declares no
+author, so the authoritative license text is the one in the upstream repository:
+<https://github.com/colbymchenry/codegraph>. It is not reproduced here rather
+than reproduced with a copyright holder this project cannot verify.
+
+The npm package is `@colbymchenry/codegraph`. The unscoped `codegraph` on npm is
+an unrelated project and is not what this plugin installs.

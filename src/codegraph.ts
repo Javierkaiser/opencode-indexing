@@ -20,6 +20,16 @@ import { assessScope } from "./scope.ts"
 const CODEGRAPH_DIR = ".codegraph"
 
 /**
+ * The npm package that provides the `codegraph` CLI.
+ *
+ * Scoped, and it has to be: the unscoped `codegraph` on npm is an unrelated
+ * 2024 library with no binary. Installing that name exits 0 and leaves nothing
+ * on PATH, which is the worst shape of failure for an installer step — it looks
+ * like it worked.
+ */
+const CODEGRAPH_PACKAGE = "@colbymchenry/codegraph"
+
+/**
  * Minimum seconds between launches for one workspace.
  *
  * codegraph is not the only writer of `.codegraph/`: it runs a daemon with a
@@ -197,7 +207,7 @@ export async function indexWithCodegraph(options: CodegraphOptions): Promise<Cod
     available = false
   }
   if (!available) {
-    return { kind: "skipped", reason: "the codegraph CLI is not installed (npm i -g codegraph)" }
+    return { kind: "skipped", reason: `the codegraph CLI is not installed (npm i -g ${CODEGRAPH_PACKAGE})` }
   }
 
   const initialized = isCodegraphInitialized(root)

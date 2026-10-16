@@ -331,6 +331,15 @@ function hasCodegraphBin() {
 }
 
 /**
+ * The npm package that provides the `codegraph` CLI.
+ *
+ * Scoped, and it has to be. The unscoped `codegraph` on npm is an unrelated
+ * 2024 library with no binary, so installing that name succeeds and leaves
+ * nothing on PATH — a silent no-op that looks like a working install.
+ */
+const CODEGRAPH_PACKAGE = "@colbymchenry/codegraph"
+
+/**
  * Install codegraph and register its MCP with OpenCode.
  *
  * The only consent gate is the flag itself, as the user requested: this is
@@ -342,16 +351,17 @@ function installCodegraph() {
   log("  installing codegraph as a companion MCP server...")
 
   if (!hasCodegraphBin()) {
-    log("  codegraph CLI missing; running npm install -g codegraph...")
+    log(`  codegraph CLI missing; running npm install -g ${CODEGRAPH_PACKAGE}...`)
     const npm = isWindows ? "npm.cmd" : "npm"
-    // --omit=... is not needed here: codegraph stands on its own, and a global
-    // install is what its own documentation assumes.
-    const installed = spawnSync(npm, ["install", "-g", "codegraph"], {
+    // Scoped on purpose. `codegraph` on the unscoped registry is an unrelated
+    // 2024 library with no CLI at all, and installing it would look successful
+    // while leaving nothing on PATH to register.
+    const installed = spawnSync(npm, ["install", "-g", CODEGRAPH_PACKAGE], {
       stdio: "inherit",
       shell: isWindows,
     })
     if (installed.error || installed.status !== 0) {
-      warn("  could not install codegraph (npm install -g codegraph failed); skipping MCP registration")
+      warn(`  could not install codegraph (npm install -g ${CODEGRAPH_PACKAGE} failed); skipping MCP registration`)
       return
     }
   }

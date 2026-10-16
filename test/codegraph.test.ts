@@ -2,6 +2,9 @@ import * as assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
+import { dirname, join } from "node:path"
+import { readFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
 import { afterEach, describe, test } from "node:test"
 
 import {
@@ -48,6 +51,46 @@ afterEach(() => {
     const dir = tempRoots.pop()!
     fs.rmSync(dir, { recursive: true, force: true })
   }
+})
+
+describe("which package actually provides the CLI", () => {
+  test("the message names the scoped package, not the unscoped namesake", async () => {
+    // `codegraph` on npm is an unrelated 2024 library by a different author with
+    // no binary at all. `npm install -g codegraph` exits 0, puts nothing on PATH,
+    // and the installer then reports success. The scoped name is the only correct
+    // one, and it is written in three places, so it is pinned here.
+    const { indexWithCodegraph: run } = await import("../src/codegraph.ts")
+    const { runner: cli } = runner({ installed: false })
+    const outcome = await run({
+      root: tempDir("pkgname"),
+      enabled: true,
+      runner: cli,
+      clock: fixedClock,
+    })
+    assert.equal(outcome.kind, "skipped")
+    if (outcome.kind !== "skipped") return
+    // The install instruction must name the scoped package. The bare word
+    // "codegraph" elsewhere is the CLI's own name and is correct there.
+    assert.match(outcome.reason, /npm i -g @colbymchenry\/codegraph/)
+    const instruction = outcome.reason.match(/npm i -g (\S+)/)?.[1] ?? ""
+    assert.ok(
+      instruction.startsWith("@"),
+      `the install instruction must be scoped, got ${JSON.stringify(instruction)}`,
+    )
+  })
+
+  test("install.mjs installs the same scoped package", () => {
+    // install.mjs has its own copy of the constant; a test cannot import an
+    // installer that runs on import, so this reads the source and asserts the
+    // name it will actually shell out with.
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "install.mjs"), "utf8")
+    assert.match(source, /@colbymchenry\/codegraph/)
+    assert.equal(
+      /"install",\s*"-g",\s*"codegraph"/.test(source),
+      false,
+      "install.mjs must never install the unscoped codegraph package",
+    )
+  })
 })
 
 describe("codegraph as a companion, never a dependency", () => {

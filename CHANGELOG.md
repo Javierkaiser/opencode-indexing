@@ -15,6 +15,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   install-time detail moved to *Install*, where `--with-codegraph` already
   lives, instead of being restated here.
 
+### Fixed
+- **The installer named the wrong package.** `install.mjs` and the skip message
+  in `src/codegraph.ts` both said `codegraph`, which on npm is an unrelated 2024
+  library by a different author with no binary at all. `npm install -g codegraph`
+  exits 0, puts nothing on `PATH`, and the step then reports success — the worst
+  shape of failure for an installer. The real package is
+  `@colbymchenry/codegraph`, which is what the CLI already on this machine came
+  from. Both call sites now use the scoped name, and a test reads `install.mjs`
+  and asserts the unscoped install never appears.
+
+### Documentation
+- The prompt-footer skill now tells the model that codegraph exists. It listed
+  `Grep` as the answer for exact symbols and never mentioned the graph tools at
+  all, so an assistant had no way to know the structural half was available —
+  the same class of problem as an indicator that renders nothing: the capability
+  was there and invisible. The guidance is conditional on the MCP server being
+  present, because it is optional.
+- `THIRD_PARTY_NOTICES.md` was missing four packages it distributes:
+  `solid-js`, `@opentui/core`, `@opentui/solid` (shipped since 0.2.4) and
+  `apache-arrow`, which had never been listed. Licenses read from the installed
+  manifests, not from memory. CodeGraph gets its own section: not bundled, MIT
+  per its manifest, and the license text is linked rather than reproduced
+  because the package ships no `LICENSE` file and declares no author, so there
+  is no copyright line this project can verify.
+- *How it works* and *Where each index lives* now show codegraph. The diagram
+  had one index and the table had two; there are three.
+- `indexing_search` and `indexing_status` descriptions mention the companion.
+
 ## [0.3.0] - 2026-10-16
 
 ### Added

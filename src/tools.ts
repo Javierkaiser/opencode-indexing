@@ -73,7 +73,8 @@ Use this tool early for open-ended exploration when you know the intent but not 
 Notes:
 - The index combines Kilo Code's index (when present and profile-compatible) with the plugin's own index, which can be backed by Qdrant or LanceDB.
 - If the index reports stale/incomplete, results may be incomplete — indexed files might not include recent edits.
-- Pass \`path\` to limit results to a subdirectory, relative to the workspace root.`
+- Pass \`path\` to limit results to a subdirectory, relative to the workspace root.
+- This finds code by meaning. For structure — who calls a symbol, what depends on it, what breaks if it changes — use the codegraph tools when that MCP server is available; a similarity search cannot answer those.`
 
 const STATUS_DESCRIPTION = `Report the state of the project's semantic code index.
 
@@ -82,6 +83,7 @@ Shows:
 - Kilo Code index sources available for import (Qdrant collection and/or local LanceDB database), with embedding profile and compatibility.
 - The plugin's own index (points, completion, embedding profile, last run).
 - Freshness: number of workspace files that were never indexed, possibly changed, or deleted since the last run.
+- The codegraph companion's state for this folder, when that setting is on: whether it is indexed, and that the next build will sync it.
 - A recommended next action (import/build/refresh).`
 
 const REFRESH_DESCRIPTION = `Incrementally update the plugin's own code index for this workspace.

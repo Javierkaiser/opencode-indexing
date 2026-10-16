@@ -57,9 +57,21 @@ npx @javierkaiser/opencode-indexing --with-codegraph
 
 ### The codegraph companion
 
-Installing codegraph is only half of it. `indexing_build` and `indexing_import`
-also start the CLI for the workspace, so both indexes are built by the same
-action: `codegraph init --yes` the first time a folder is seen, `codegraph sync`
+[CodeGraph](https://github.com/colbymchenry/codegraph) is a separate tool — a
+local code-graph indexer exposed as an MCP server — and this plugin drives it
+rather than reimplementing it. If it is not installed yet:
+
+```bash
+npm install -g @colbymchenry/codegraph
+```
+
+The package is scoped, and that matters: `codegraph` unscoped on npm is an
+unrelated 2024 library with no CLI, so installing that name exits 0 and leaves
+nothing on `PATH`.
+
+Installing it is only half of it. `indexing_build` and `indexing_import` also
+start the CLI for the workspace, so both indexes are built by the same action:
+`codegraph init --yes` the first time a folder is seen, `codegraph sync`
 afterwards. codegraph is a **companion, not a dependency** — with the CLI absent
 nothing is spawned, no build fails, and no line is added to the output. Turn it
 off with `/indexing-config set codegraph=false`, and see
@@ -126,12 +138,17 @@ resolve from the config file containing the entry:
 ```
 OpenCode ──► indexing_search ──┬──► Kilo's index (read-only)      Qdrant ws-*  ·  Kilo LanceDB
                                └──► own index (read/write)        own LanceDB (default)  ·  Qdrant oc-*
+
+OpenCode ──► codegraph_*  ───────► codegraph's graph (its own)    .codegraph/codegraph.db
+             ▲
+             └── indexing_build / indexing_import keep it in step
 ```
 
 - **Read-only reuse**: the plugin computes the same collection name Kilo uses (`ws-` + sha256 of the workspace path, first 16 hex chars), validates the embedding profile stored in the metadata point, and queries with an embedding from the *same* model (e.g. Mistral `codestral-embed-2505`, 1536d).
 - **Import without re-embedding**: `indexing_build` (or `indexing_import`) can copy vectors + chunks from an existing Kilo index — both its Qdrant collections and its local LanceDB database — at **zero embedding cost**, then incrementally index only the delta.
 - **Own index**: manifest-based incremental indexer (per-file sha256) writing to `oc-*` collections or an embedded LanceDB database, using the same chunk payload shape as Kilo (`filePath`, `fileHash`, `codeChunk`, `startLine`, `endLine`, `segmentHash`, `pathSegments`).
 - **Merge**: results from Kilo + own are merged; own (fresher) hits win on overlap; ghost hits (deleted files) are filtered out.
+- **Companion graph**: the same build starts codegraph for the workspace, which keeps its own index in `.codegraph/` and serves it over its own MCP server. This plugin never reads or writes that database — see [Semantic search and code graphs](#semantic-search-and-code-graphs).
 
 ## Tools (namespace `indexing`)
 
@@ -419,12 +436,13 @@ Word about data safety: Kilo's indexes (`ws-*` collections and its LanceDB direc
 ### Where each index lives
 
 The own index and Kilo's index are independent, and each one is chosen on its
-own:
+own. codegraph keeps a third, and it is the one this plugin never writes to:
 
 | Index | Default | Configured by |
 | --- | --- | --- |
 | Own index | embedded LanceDB, under `~/.local/state/opencode-indexing/lancedb` | `vectorStore` |
 | Kilo index (read-only) | whatever `kilo.jsonc` says | Kilo itself |
+| codegraph's graph | `.codegraph/` inside the workspace | codegraph itself |
 
 Kilo's `vectorStore` used to decide where this plugin's own index was written,
 because both were read from the same setting chain. That is no longer the case:
@@ -555,7 +573,9 @@ node test/cli.ts build      --vector-store lancedb --root .
 
 ## Acknowledgements
 
-This plugin interoperates with the open-source [Kilo Code](https://github.com/Kilo-Org/kilocode) indexing format (MIT License, Copyright (c) 2026 Kilo Code). The line-based chunker and the tree-sitter queries are ports of Kilo Code's implementation. It also builds on [opencode](https://github.com/anomalyco/opencode) (MIT), [LanceDB](https://github.com/lancedb/lancedb) (Apache-2.0), [web-tree-sitter](https://github.com/tree-sitter/tree-sitter) (MIT), [tree-sitter-wasms](https://github.com/Gregoor/tree-sitter-wasms) (Unlicense) and [ignore](https://github.com/kaelzhang/node-ignore) (MIT).
+This plugin interoperates with the open-source [Kilo Code](https://github.com/Kilo-Org/kilocode) indexing format (MIT License, Copyright (c) 2026 Kilo Code). The line-based chunker and the tree-sitter queries are ports of Kilo Code's implementation. It also builds on [opencode](https://github.com/anomalyco/opencode) (MIT), [LanceDB](https://github.com/lancedb/lancedb) (Apache-2.0), [Apache Arrow](https://github.com/apache/arrow) (Apache-2.0), [web-tree-sitter](https://github.com/tree-sitter/tree-sitter) (MIT), [tree-sitter-wasms](https://github.com/Gregoor/tree-sitter-wasms) (Unlicense), [ignore](https://github.com/kaelzhang/node-ignore) (MIT), and — for the terminal UI — [SolidJS](https://github.com/solidjs/solid) (MIT) and [OpenTUI](https://github.com/sst/opentui) (MIT).
+
+The companion code graph is [CodeGraph](https://github.com/colbymchenry/codegraph) (MIT), a separate project this one installs and drives rather than bundles. Its npm package is `@colbymchenry/codegraph`; the unscoped `codegraph` on npm is a different, unrelated project.
 
 Kilo Code is a trademark of its owners; this project is **unofficial and not affiliated** with Kilo Code or the OpenCode project.
 
