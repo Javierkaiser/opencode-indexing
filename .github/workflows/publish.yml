@@ -153,6 +153,7 @@ jobs:
           set -euo pipefail
           version="${{ steps.state.outputs.version }}"
           name=$(node -p "require('./package.json').name")
+          echo "version: $version · package: $name"
 
           if ! git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
             echo "v$version has no tag yet — nothing to release."
@@ -181,14 +182,29 @@ jobs:
             echo
             echo "Full history: https://github.com/${GITHUB_REPOSITORY}/blob/main/CHANGELOG.md"
           } > "$notes"
+          echo "notes: $(wc -c < "$notes") bytes"
 
           # The artefact that was actually published, not a fresh build of it.
-          tarball=$(npm pack "$name@$version" --silent | tail -1)
+          # Downloaded with --retry because the registry hiccups: this used to be
+          # `npm pack ... --silent`, and `--silent` hides the error while
+          # `pipefail` still fails the step, so a flaky run died with exit 1 and
+          # no output at all to explain it.
+          url=$(npm view "$name@$version" dist.tarball)
+          echo "tarball: $url"
+          curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors \
+            -o release-asset.tgz "$url"
+          ls -l release-asset.tgz
+
+          # Idempotent: an earlier attempt may have created it already.
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo "release v$version already exists — leaving it alone."
+            exit 0
+          fi
 
           gh release create "v$version" \
             --title "v$version" \
             --notes-file "$notes" \
-            "$tarball"
+            "release-asset.tgz"
 
       - name: Summary
         run: |
