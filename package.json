@@ -62,10 +62,10 @@
     "ignore": "^7.0.5"
   },
   "optionalDependencies": {
-    "@lancedb/lancedb": "0.26.2",
+    "@lancedb/lancedb": "0.40.0",
     "tree-sitter-wasms": "0.1.13",
-    "web-tree-sitter": "0.25.10",
-    "apache-arrow": "18.1.0"
+    "web-tree-sitter": "0.27.1",
+    "apache-arrow": "21.2.0"
   },
   "devDependencies": {
     "@opencode/plugin": "2.0.23",
