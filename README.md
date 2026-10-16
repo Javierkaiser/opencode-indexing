@@ -82,7 +82,7 @@ The other six tools only read. OpenCode's base policy already allows everything
 write them out only if you want to tighten the set.
 
 `install.sh` and `install.ps1` are thin wrappers over it; PowerShell also accepts
-`-Local`, `-Package`, `-Spec`, `-SkipDeps` and `-NoRestart`.
+`-Local`, `-Package`, `-Spec`, `-SkipDeps`, `-NoRestart` and `-WithCodegraph`.
 
 `--package` deletes any copied plugin it finds: both sources define the same
 plugin id and the config directory is scanned automatically, so leaving both

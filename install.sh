@@ -2,8 +2,12 @@
 # Installs opencode-indexing into the global OpenCode config directory.
 # Thin wrapper: the cross-platform logic lives in install.mjs.
 #
+# The preferred form from npm is:
+#   npx @javierkaiser/opencode-indexing --with-codegraph
+# This wrapper forwards to the same install.mjs, so it accepts the same flags.
+#
 # Usage:
-#   sh install.sh [--local|--package] [spec] [--skip-deps] [--no-restart]
+#   sh install.sh [--local|--package] [spec] [--skip-deps] [--no-restart] [--with-codegraph]
 set -eu
 
 dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
