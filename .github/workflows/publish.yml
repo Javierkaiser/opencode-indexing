@@ -91,7 +91,7 @@ jobs:
             -m "opencode-indexing v${{ steps.state.outputs.version }}"
           git push origin "v${{ steps.state.outputs.version }}"
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: steps.state.outputs.published == 'false'
         with:
           # Node 24 ships npm >= 11.5.1, which is required for trusted publishing.
