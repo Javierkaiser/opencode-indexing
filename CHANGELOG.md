@@ -5,6 +5,8 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-10-16
+
 ### Documentation
 - The README's code-graph section is no longer a roadmap. It said the plugin
   "deliberately stays on the semantic side" and offered `indexing_graph_*` tools
@@ -24,8 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `@colbymchenry/codegraph`, which is what the CLI already on this machine came
   from. Both call sites now use the scoped name, and a test reads `install.mjs`
   and asserts the unscoped install never appears.
-
-### Documentation
+- **The PowerShell wrapper could not pass `--with-codegraph`.** `install.mjs`
+  implemented the flag and `install.sh` forwards every argument, but
+  `install.ps1` declared only five switches, so on Windows the recommended
+  install was impossible through the wrapper. The switch exists now, and both
+  wrappers record the preferred `npx` form.
 - The prompt-footer skill now tells the model that codegraph exists. It listed
   `Grep` as the answer for exact symbols and never mentioned the graph tools at
   all, so an assistant had no way to know the structural half was available —
@@ -42,6 +47,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *How it works* and *Where each index lives* now show codegraph. The diagram
   had one index and the table had two; there are three.
 - `indexing_search` and `indexing_status` descriptions mention the companion.
+
+### CI
+- The release workflow now creates the GitHub Release itself, attaching the
+  tarball that was actually published and taking its notes from this file. It
+  also stopped hiding its own failures: the download ran under `--silent`
+  inside a `pipefail` pipeline, so a registry hiccup failed the step with no
+  output at all to explain it — which is how three versions shipped without a
+  release page.
+- Dependabot groups only what can move together. The old type-based groups
+  paired dependencies that contradict each other (`apache-arrow` against
+  `@lancedb/lancedb`'s peer ceiling, `@opencode/plugin` against the pinned
+  `@opentui` packages), and `npm ci` failed with ERESOLVE before any test ran.
 
 ## [0.3.0] - 2026-10-16
 
@@ -320,7 +337,12 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.1
+[0.3.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.0
+[0.2.4]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.2.4
+[0.2.3]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.2.3
+[0.2.1]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.2.0
 [0.1.1]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.1.0
