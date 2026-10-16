@@ -203,9 +203,11 @@ jobs:
           done
           url=$(npm view "$name@$version" dist.tarball)
           echo "tarball: $url"
-          curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors \
-            -o release-asset.tgz "$url"
-          ls -l release-asset.tgz
+          # Name the asset the way `npm pack` does, so every release page lists
+          # the same filename shape instead of a generic `release-asset.tgz`.
+          asset=$(node -p "require('./package.json').name.replace(/^@/, '').replace('/', '-') + '-$version.tgz'")
+          curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors -o "$asset" "$url"
+          ls -l "$asset"
 
           # Idempotent: an earlier attempt may have created it already.
           if gh release view "v$version" >/dev/null 2>&1; then
@@ -216,7 +218,7 @@ jobs:
           gh release create "v$version" \
             --title "v$version" \
             --notes-file "$notes" \
-            "release-asset.tgz"
+            "$asset"
 
       - name: Summary
         if: always()
