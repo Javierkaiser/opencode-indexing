@@ -26,28 +26,48 @@ index is still installed.
 
 ## Install
 
-### With the OpenCode CLI (recommended)
+### With npx (recommended)
+
+```bash
+npx @javierkaiser/opencode-indexing
+```
+
+This is the whole install: the installer runs `opencode plugin add`, writes the
+permission rules, restarts the service, and, when you ask for it, also installs
+and registers the companion `codegraph`
+MCP. It picks its strategy from where it runs — from an npx cache or an
+unpacked tarball it installs the published package, from a checkout it
+installs your working tree instead — so edits take effect on restart with no
+publish in between. It prints which one it chose.
+
+Add `--with-codegraph` to install and register codegraph as part of the same run
+(the flag is opt-in and only has effect in the published-package mode):
+
+```bash
+npx @javierkaiser/opencode-indexing --with-codegraph
+```
+
+| Flag | Effect |
+| --- | --- |
+| `--package [spec]` | Install the published package (default spec `@latest`) |
+| `--local` | Copy this directory into the config dir (development) |
+| `--skip-deps` | `--local` only: copy the files, install no dependencies |
+| `--no-restart` | Do not restart the service |
+| `--with-codegraph` | Install and register codegraph as a companion MCP (opt-in, `--package` only) |
+
+### With the OpenCode CLI
 
 ```bash
 opencode plugin add @javierkaiser/opencode-indexing
 ```
 
-That is the whole install. OpenCode downloads the package into its own cache and
-records it in the global `plugins` array, and it loads both halves of the plugin:
-the server side (`index.ts`, which registers the tools) and the terminal UI
-(`tui.ts`, which adds the prompt-footer indicator and the `/indexing` page).
-
-Update and remove it with the same command family:
-
-```bash
-opencode plugin check     # is there a newer version?
-opencode plugin update    # install it
-opencode plugin remove @javierkaiser/opencode-indexing
-```
-
-`plugin add` installs the plugin but knows nothing about its tools, so it does
-not write permission rules. Add this one to `opencode.json` to keep the host
-asking before the only tool that writes your settings file:
+OpenCode downloads the package into its own cache and records it in the global
+`plugins` array, and it loads both halves of the plugin: the server side
+(`index.ts`, which registers the tools) and the terminal UI (`tui.ts`, which
+adds the prompt-footer indicator and the `/indexing` page). It brings `plugin
+check`, `plugin update` and `plugin remove` with it, but it cannot write
+permission rules — add this one to `opencode.json` to keep the host asking
+before the only tool that writes your settings file:
 
 ```jsonc
 {
@@ -60,27 +80,6 @@ asking before the only tool that writes your settings file:
 The other six tools only read. OpenCode's base policy already allows everything
 (`{ "action": "*", "resource": "*", "effect": "allow" }`), so they need no rule;
 write them out only if you want to tighten the set.
-
-### One command, permissions included
-
-To skip the manual rule:
-
-```bash
-npx @javierkaiser/opencode-indexing
-```
-
-The installer runs `opencode plugin add`, writes the permission rules, and
-restarts the service. It picks its strategy from where it runs: from an installed
-copy — an npx cache, an unpacked tarball — it installs the published package;
-from a checkout it installs your working tree instead, so edits take effect on
-restart with no publish in between. It prints which one it chose.
-
-| Flag | Effect |
-| --- | --- |
-| `--package [spec]` | Install the published package (default spec `@latest`) |
-| `--local` | Copy this directory into the config dir (development) |
-| `--skip-deps` | `--local` only: copy the files, install no dependencies |
-| `--no-restart` | Do not restart the service |
 
 `install.sh` and `install.ps1` are thin wrappers over it; PowerShell also accepts
 `-Local`, `-Package`, `-Spec`, `-SkipDeps` and `-NoRestart`.
@@ -482,7 +481,7 @@ This plugin deliberately stays on the semantic side and coexists with grep/read
 (see the tool descriptions and the bundled skill). A code-graph mode (tree-sitter
 symbol/edge extraction into SQLite, exposed as `indexing_graph_*` tools that
 chain after `indexing_search`) is a candidate for a future major version; the
-tree-sitter infrastructure is already in place.
+tree-sitter infrastructure is already in place. Independently, the installer can itself install and register codegraph as a companion MCP (`--with-codegraph`, opt-in, published-package mode only).
 
 ## Development
 

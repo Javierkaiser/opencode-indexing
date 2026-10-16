@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-10-16
+
+### Added
+- `install.mjs` accepts `--with-codegraph`. It is **off by default** and only
+  has effect in `--package` mode, as consent comes from passing the flag. When
+  active it detects an existing `codegraph` CLI, installs it globally (`npm install
+  -g codegraph`) if it is missing, and registers its MCP with OpenCode via
+  `codegraph install --target opencode`. A failure in either step is reported and
+  does not cancel this plugin's own install.
+- The README now names `npx` (not `opencode plugin add`) as the recommended
+  install method, and shows the companion install in the recommended command:
+  `npx @javierkaiser/opencode-indexing --with-codegraph`.
+
 ## [0.2.1] - 2026-10-15
 
 ### Added
