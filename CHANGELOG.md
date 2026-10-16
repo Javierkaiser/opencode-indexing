@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+### Documentation
+- The README's code-graph section is no longer a roadmap. It said the plugin
+  "deliberately stays on the semantic side" and offered `indexing_graph_*` tools
+  as a future major version — both untrue once codegraph became a companion.
+  Rewritten around the two indexes: what each costs to keep fresh, what the
+  benchmark does and does not measure, how to move from one to the other, and an
+  explicit note that the graph tools are withdrawn rather than pending. The
+  install-time detail moved to *Install*, where `--with-codegraph` already
+  lives, instead of being restated here.
+
 ## [0.3.0] - 2026-10-16
 
 ### Added

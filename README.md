@@ -55,6 +55,24 @@ npx @javierkaiser/opencode-indexing --with-codegraph
 | `--no-restart` | Do not restart the service |
 | `--with-codegraph` | Install and register codegraph as a companion MCP (opt-in, `--package` only) |
 
+### The codegraph companion
+
+Installing codegraph is only half of it. `indexing_build` and `indexing_import`
+also start the CLI for the workspace, so both indexes are built by the same
+action: `codegraph init --yes` the first time a folder is seen, `codegraph sync`
+afterwards. codegraph is a **companion, not a dependency** — with the CLI absent
+nothing is spawned, no build fails, and no line is added to the output. Turn it
+off with `/indexing-config set codegraph=false`, and see
+[Semantic search and code graphs](#semantic-search-and-code-graphs) for why the
+two belong together.
+
+The launch is detached and reported as started, never as finished: on a large
+monorepo `init` runs for minutes, and a tool call that blocked that long would
+be worse than one that returns. Anything that fails afterwards lands in
+`.codegraph/daemon.log`. A home directory or a drive root is refused rather than
+indexed, and launches are limited to one per 15 seconds per workspace because
+codegraph's own daemon already watches files.
+
 ### With the OpenCode CLI
 
 ```bash
@@ -440,20 +458,31 @@ that. Set vectorStore=qdrant explicitly in
 Set `vectorStore=qdrant` in `~/.config/opencode/indexing.json` (or run
 `/indexing-config set vectorstore=qdrant`) to use a Qdrant server instead.
 
-## Semantic search vs. code graphs (roadmap)
+## Semantic search and code graphs
 
-`opencode-indexing` implements **semantic (vector) search**. It is worth being
-explicit about how it compares to **code-graph** tooling (call graphs, symbol
-graphs, SCIP-style indexes), because they answer different questions and are
-complementary:
+Two indexes, not two options. This plugin builds and searches the semantic one;
+it also keeps codegraph's code graph in step for the same folder, so a single
+`indexing_build` leaves both current. Neither replaces the other, and this is not
+a fork of codegraph — see [The codegraph companion](#the-codegraph-companion)
+for the install side.
 
-| | Semantic index (this plugin) | Code graph |
+### The two indexes
+
+| | Semantic index (this plugin) | Code graph (codegraph) |
 | --- | --- | --- |
 | Question it answers | "Where is the code that does something like X?" | "Who calls X? What breaks if I change it? Path from A to B?" |
 | Signal | Meaning (embeddings over chunks) | Structure (symbols, `CALLS`, `DEFINES`, `IMPORTS` edges) |
 | Strengths | Natural language, concepts without known identifiers, cross-language | Exact structural facts, multi-hop traversals, no similarity false positives |
 | Weaknesses | "Similar" is not "relevant"; no notion of connections | Cannot find a concept with no known symbol; fragile on dynamic code |
-| Cost profile | Embedding API + vector DB | Local parsing + small graph store |
+| What it costs to stay fresh | **Paid**: the embedding API, re-run when the model changes | **Free**: local parsing and a small graph store, re-run on every edit |
+
+That last row is what shapes the setup. A semantic index is re-embedded only when
+the model changes, and that is money; a graph is synced whenever a file is
+touched, and that is CPU. Two cadences for two economies — which is the reason
+to keep both pointed at one folder rather than at two projects that quietly
+drift apart.
+
+### Measuring the difference
 
 We measured this rather than assuming it. [`bench/`](./bench) runs the same
 real questions about code through four methods — word matching, symbol-name
@@ -472,37 +501,43 @@ What it found:
   better on both: more files found on one codebase, a better position on the
   other.
 
-One caveat that matters for reading that: the benchmark measures `codegraph
-query`, the one subcommand that matches names. It does **not** measure what a
-graph is actually good for — who calls what, what breaks if you change it,
-paths between two places. Those are the graph's real strength and they are not
-in the numbers above.
+One caveat, and it is larger than it looks. The benchmark measures
+`codegraph query`, the one subcommand that matches **names**. It does **not**
+measure what a graph is actually good for — who calls what, what breaks if you
+change it, paths between two places. So the fusion above is *semantic + name
+matching*, **not** *semantic + graph traversal*. What would actually justify
+reaching for the graph is not in those numbers, and this section does not claim
+it is.
 
-The broader consensus points the same way: use embeddings to find the entry node
-by intent, then walk the graph for exact relationships. Cursor reported ~12.5%
-retrieval-accuracy improvement combining semantic search with grep; Sourcegraph
-layers semantic search over a SCIP graph; Aider uses tree-sitter + PageRank with
-no embeddings at all for repo maps.
+### Using them together
 
-This plugin deliberately stays on the semantic side and coexists with grep/read
-(see the tool descriptions and the bundled skill). A code-graph mode (tree-sitter
-symbol/edge extraction into SQLite, exposed as `indexing_graph_*` tools that
-chain after `indexing_search`) is a candidate for a future major version; the
-tree-sitter infrastructure is already in place. Independently, the installer can itself install and register codegraph as a companion MCP (`--with-codegraph`, opt-in, published-package mode only).
+The division of labour is the one the wider field converges on: use embeddings
+to find the entry node **by intent**, then walk the graph for **exact
+relationships**.
 
-**Indexing both at once.** `indexing_build` and `indexing_import` also start
-codegraph for the workspace, so the two indexes are built by the same action:
-`codegraph init --yes` the first time a folder is seen, `codegraph sync`
-afterwards. codegraph is a **companion, not a dependency** — with the CLI absent
-nothing is spawned, no build fails and no line is added to the output. Turn it
-off with `/indexing-config set codegraph=false`.
+1. `indexing_search` — "where is the retry logic for failed webhooks". Finds the
+   neighbourhood from meaning alone, with no identifier to know in advance.
+2. `codegraph_explore` — the same area, returning the verbatim source of the
+   relevant symbols, the call paths between them, and what depends on them.
+3. `codegraph_impact` / `codegraph_callers` — once the question becomes "what
+   breaks if I change this", the graph answers exactly, and a similarity search
+   cannot.
 
-The launch is detached and reported as started, never as finished: on a large
-monorepo `init` runs for minutes, and a tool call that blocked that long would
-be worse than one that returns. Anything that fails afterwards lands in
-`.codegraph/daemon.log`. A home directory or a drive root is refused rather than
-indexed, and launches are limited to one per 15 seconds per workspace because
-codegraph's own daemon already watches files.
+Both are live in the same session, so an assistant moves between them without
+being asked to.
+
+### Why there are no graph tools in this plugin
+
+There are no `indexing_graph_*` tools here, and that is a decision rather than a
+gap. An earlier version of this section proposed adding tree-sitter symbol and
+edge extraction into SQLite as a candidate for a future major version. Once
+codegraph was available as a companion, that plan would have reimplemented
+something another tool already does better — in a second store, behind a second
+indexer that has to be kept alive and fresh.
+
+The plugin stays on the semantic side and coexists with grep/read (see the tool
+descriptions and the bundled skill). What it adds for the structural half is to
+keep it current, not to duplicate it.
 
 ## Development
 
