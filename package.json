@@ -68,13 +68,13 @@
     "apache-arrow": "18.1.0"
   },
   "devDependencies": {
-    "@opencode/plugin": "2.0.23",
+    "@opencode/plugin": "2.0.28",
     "@opencode/theme": "^2.0.23",
     "@opentui/core": "^0.5.14",
     "@opentui/solid": "^0.5.14",
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.6.5",
     "solid-js": "^1.9.12",
-    "typescript": "^5.8.2"
+    "typescript": "^7.0.2"
   },
   "peerDependencies": {
     "@opencode/plugin": ">=2.0.0",
