@@ -6,10 +6,35 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
-      dev-dependencies:
-        dependency-type: development
+      # Order matters: a dependency joins the FIRST group it matches, so the
+      # coupled set has to come before the broad type-based groups.
+      #
+      # @opencode/plugin's optional peers are the @opentui packages. Bumping the
+      # plugin on its own fails `npm ci` with ERESOLVE (peerOptional
+      # @opentui/core >=0.5.17 while 0.5.14 is installed) and bumping @opentui on
+      # its own can fail the other way, so they only work as one set.
+      opencode-ui:
+        patterns:
+          - "@opencode/*"
+          - "@opentui/*"
+          - "solid-js"
+
       production-dependencies:
         dependency-type: production
+        # Kept out of the group on purpose: see the note at the bottom.
+        exclude-patterns:
+          - "@lancedb/lancedb"
+          - "apache-arrow"
+
+      dev-dependencies:
+        dependency-type: development
+
+    # @lancedb/lancedb and apache-arrow stay outside every group. lancedb
+    # declares `peer apache-arrow >=15.0.0 <=18.1.0`, so arrow is pinned to that
+    # ceiling — and a group carrying both takes arrow to 21.x, which makes
+    # `npm ci` fail before a single test runs (that is what closed #9 and #11).
+    # Ungrouped, lancedb can move on its own while arrow stays at the ceiling,
+    # and arrow's own PR stays visible instead of hiding inside a broken group.
 
   - package-ecosystem: github-actions
     directory: "/"
