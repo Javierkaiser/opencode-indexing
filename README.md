@@ -383,6 +383,12 @@ Word about data safety: Kilo's indexes (`ws-*` collections and its LanceDB direc
 ## Requirements
 
 - OpenCode v2 (plugin API `@opencode/plugin@2.x`).
+- **For the prompt-footer indicator:** `solid-js`, `@opentui/core` and
+  `@opentui/solid`, which the plugin installs itself (~14 MB). They used to be
+  declared as optional *peer* dependencies, on the assumption that the host
+  already had them; OpenCode 2.0.30 stopped providing them and the indicator
+  silently stopped rendering. Everything else works without them — the settings
+  page degrades to dialogs and the footer is simply absent.
 - **For the own index: nothing to run.** The default store is embedded LanceDB
   (`@lancedb/lancedb@0.26.2`), so there is no server to start, no port to free and
   no container to keep alive.

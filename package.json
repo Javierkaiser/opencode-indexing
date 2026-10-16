@@ -1,6 +1,6 @@
 {
   "name": "@javierkaiser/opencode-indexing",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "OpenCode plugin: semantic code search that reuses Kilo Code indexes (Qdrant/LanceDB) and maintains its own independent index",
   "license": "MIT",
   "author": "Carlos Javier Lust <javierkaiser@gmail.com>",
@@ -37,6 +37,7 @@
     "tui.ts",
     "tui",
     "src",
+    "tsconfig.json",
     "install.mjs",
     "install.sh",
     "install.ps1",
@@ -65,38 +66,26 @@
     "@lancedb/lancedb": "0.26.2",
     "tree-sitter-wasms": "0.1.13",
     "web-tree-sitter": "0.25.10",
-    "apache-arrow": "18.1.0"
+    "apache-arrow": "18.1.0",
+    "solid-js": "^1.9.12",
+    "@opentui/core": "0.5.14",
+    "@opentui/solid": "0.5.14"
   },
   "devDependencies": {
     "@opencode/plugin": "2.0.23",
     "@opencode/theme": "^2.0.23",
-    "@opentui/core": "^0.5.14",
-    "@opentui/solid": "^0.5.14",
     "@types/node": "^24.0.0",
-    "solid-js": "^1.9.12",
     "typescript": "^5.8.2"
   },
   "peerDependencies": {
     "@opencode/plugin": ">=2.0.0",
-    "@opencode/theme": ">=2.0.23",
-    "@opentui/core": ">=0.5.14",
-    "@opentui/solid": ">=0.5.14",
-    "solid-js": ">=1.9.12"
+    "@opencode/theme": ">=2.0.23"
   },
   "peerDependenciesMeta": {
     "@opencode/plugin": {
       "optional": true
     },
     "@opencode/theme": {
-      "optional": true
-    },
-    "@opentui/core": {
-      "optional": true
-    },
-    "@opentui/solid": {
-      "optional": true
-    },
-    "solid-js": {
       "optional": true
     }
   }

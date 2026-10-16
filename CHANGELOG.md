@@ -5,6 +5,39 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4] - 2026-10-16
+
+### Fixed
+- **The prompt-footer indicator stopped rendering after OpenCode 2.0.30.** The
+  footer view imports `createSignal` from `solid-js` as a value, and `solid-js`,
+  `@opentui/core` and `@opentui/solid` were declared as *optional
+  peerDependencies* — which means npm never installs them, on the assumption that
+  the host already provides them. 2.0.30 stopped providing them, the plugin's own
+  `import()` of the footer view failed, the `catch` swallowed it, and the slot
+  rendered nothing. Everything else kept working, because nothing else needs
+  JSX: the command palette comes from `tui.ts` itself, which is what made it look
+  like a cosmetic regression rather than a missing dependency.
+
+  The three packages are now `optionalDependencies`. That still tolerates a
+  failed install, but unlike an optional peer it actually puts them on disk, so
+  the indicator no longer depends on what the host happens to supply.
+
+- **A package listed in both `optionalDependencies` and `devDependencies` is not
+  installed at all.** npm 12 lets the dev list win, so `--omit=dev` skips the
+  package and the optionalDependency never reaches disk — and `package.json`
+  still reads as though it is declared. This is why moving the three packages
+  was not by itself enough; they had to leave `devDependencies` as well.
+
+- `tsconfig.json` is published. `jsx: react-jsx` with
+  `jsxImportSource: "@opentui/solid"` is what makes a `.tsx` file load at all, and
+  it was not in `files`.
+
+### Added
+- `test/package-deps.test.ts` guards the manifest against all three of the
+  above, and asserts that every value import in the published sources resolves
+  to something the manifest installs — so the next third-party import fails a
+  test instead of becoming another silent missing module at load time.
+
 ## [0.2.3] - 2026-10-16
 
 ### Added
