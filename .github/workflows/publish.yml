@@ -185,10 +185,22 @@ jobs:
           echo "notes: $(wc -c < "$notes") bytes"
 
           # The artefact that was actually published, not a fresh build of it.
-          # Downloaded with --retry because the registry hiccups: this used to be
-          # `npm pack ... --silent`, and `--silent` hides the error while
-          # `pipefail` still fails the step, so a flaky run died with exit 1 and
-          # no output at all to explain it.
+          #
+          # Two things bite here and both are the registry, not the code. It
+          # serves a version a little after the publish returns, so looking it up
+          # immediately gives a 404 — which is how three versions ended up
+          # published with no release page. And `npm pack ... --silent` under
+          # `pipefail` hid that error while still failing the step, so the log had
+          # nothing to explain it. Hence: wait for the version to be visible, then
+          # fetch the tarball with retries.
+          encoded=$(node -p "encodeURIComponent(require('./package.json').name)")
+          for attempt in $(seq 1 20); do
+            if curl -sf "https://registry.npmjs.org/$encoded/$version" -o /dev/null; then
+              break
+            fi
+            echo "  $version is not on the registry yet (attempt $attempt), waiting 15s"
+            sleep 15
+          done
           url=$(npm view "$name@$version" dist.tarball)
           echo "tarball: $url"
           curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors \
@@ -207,6 +219,7 @@ jobs:
             "release-asset.tgz"
 
       - name: Summary
+        if: always()
         run: |
           version="${{ steps.state.outputs.version }}"
           if [ "${{ steps.state.outputs.published }}" = "true" ]; then
