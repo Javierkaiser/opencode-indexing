@@ -265,6 +265,14 @@ const KEY_SPECS: Record<string, KeySpec> = {
     toPatch: (value) => ({ enabled: Boolean(value) }),
     display: (settings) => (settings.enabled === false ? "false" : "true"),
   },
+  codegraph: {
+    group: "behavior",
+    kind: "boolean",
+    description: "Also run the codegraph CLI on build (companion code graph; no-op when codegraph is not installed)",
+    toPatch: (value) => ({ codegraph: Boolean(value) }),
+    // `!== false`, matching how the value resolves: absent means on.
+    display: (settings) => (settings.codegraph === false ? "false" : "true"),
+  },
   searchmaxresults: {
     group: "search",
     kind: "integer",

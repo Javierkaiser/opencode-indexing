@@ -26,28 +26,48 @@ index is still installed.
 
 ## Install
 
-### With the OpenCode CLI (recommended)
+### With npx (recommended)
+
+```bash
+npx @javierkaiser/opencode-indexing
+```
+
+This is the whole install: the installer runs `opencode plugin add`, writes the
+permission rules, restarts the service, and, when you ask for it, also installs
+and registers the companion `codegraph`
+MCP. It picks its strategy from where it runs — from an npx cache or an
+unpacked tarball it installs the published package, from a checkout it
+installs your working tree instead — so edits take effect on restart with no
+publish in between. It prints which one it chose.
+
+Add `--with-codegraph` to install and register codegraph as part of the same run
+(the flag is opt-in and only has effect in the published-package mode):
+
+```bash
+npx @javierkaiser/opencode-indexing --with-codegraph
+```
+
+| Flag | Effect |
+| --- | --- |
+| `--package [spec]` | Install the published package (default spec `@latest`) |
+| `--local` | Copy this directory into the config dir (development) |
+| `--skip-deps` | `--local` only: copy the files, install no dependencies |
+| `--no-restart` | Do not restart the service |
+| `--with-codegraph` | Install and register codegraph as a companion MCP (opt-in, `--package` only) |
+
+### With the OpenCode CLI
 
 ```bash
 opencode plugin add @javierkaiser/opencode-indexing
 ```
 
-That is the whole install. OpenCode downloads the package into its own cache and
-records it in the global `plugins` array, and it loads both halves of the plugin:
-the server side (`index.ts`, which registers the tools) and the terminal UI
-(`tui.ts`, which adds the prompt-footer indicator and the `/indexing` page).
-
-Update and remove it with the same command family:
-
-```bash
-opencode plugin check     # is there a newer version?
-opencode plugin update    # install it
-opencode plugin remove @javierkaiser/opencode-indexing
-```
-
-`plugin add` installs the plugin but knows nothing about its tools, so it does
-not write permission rules. Add this one to `opencode.json` to keep the host
-asking before the only tool that writes your settings file:
+OpenCode downloads the package into its own cache and records it in the global
+`plugins` array, and it loads both halves of the plugin: the server side
+(`index.ts`, which registers the tools) and the terminal UI (`tui.ts`, which
+adds the prompt-footer indicator and the `/indexing` page). It brings `plugin
+check`, `plugin update` and `plugin remove` with it, but it cannot write
+permission rules — add this one to `opencode.json` to keep the host asking
+before the only tool that writes your settings file:
 
 ```jsonc
 {
@@ -60,27 +80,6 @@ asking before the only tool that writes your settings file:
 The other six tools only read. OpenCode's base policy already allows everything
 (`{ "action": "*", "resource": "*", "effect": "allow" }`), so they need no rule;
 write them out only if you want to tighten the set.
-
-### One command, permissions included
-
-To skip the manual rule:
-
-```bash
-npx @javierkaiser/opencode-indexing
-```
-
-The installer runs `opencode plugin add`, writes the permission rules, and
-restarts the service. It picks its strategy from where it runs: from an installed
-copy — an npx cache, an unpacked tarball — it installs the published package;
-from a checkout it installs your working tree instead, so edits take effect on
-restart with no publish in between. It prints which one it chose.
-
-| Flag | Effect |
-| --- | --- |
-| `--package [spec]` | Install the published package (default spec `@latest`) |
-| `--local` | Copy this directory into the config dir (development) |
-| `--skip-deps` | `--local` only: copy the files, install no dependencies |
-| `--no-restart` | Do not restart the service |
 
 `install.sh` and `install.ps1` are thin wrappers over it; PowerShell also accepts
 `-Local`, `-Package`, `-Spec`, `-SkipDeps` and `-NoRestart`.
@@ -156,6 +155,7 @@ Settable keys (case-insensitive):
 | `ollamaurl` | Ollama base URL |
 | `openaicompatibleurl` / `openaicompatiblekey` | OpenAI-compatible endpoint |
 | `importfromkilo` | `true` to import from Kilo when building, `false` to start from scratch |
+| `codegraph` | `false` to stop also running the `codegraph` CLI on build. On by default; a no-op when codegraph is not installed |
 | `autorefresh` | Refresh the own index automatically on search |
 | `enabled` | Master switch. `false` pauses writing and refreshing; search keeps reading Kilo's index |
 | `searchmaxresults` | Result cap per search |
@@ -384,6 +384,12 @@ Word about data safety: Kilo's indexes (`ws-*` collections and its LanceDB direc
 ## Requirements
 
 - OpenCode v2 (plugin API `@opencode/plugin@2.x`).
+- **For the prompt-footer indicator:** `solid-js`, `@opentui/core` and
+  `@opentui/solid`, which the plugin installs itself (~14 MB). They used to be
+  declared as optional *peer* dependencies, on the assumption that the host
+  already had them; OpenCode 2.0.30 stopped providing them and the indicator
+  silently stopped rendering. Everything else works without them — the settings
+  page degrades to dialogs and the footer is simply absent.
 - **For the own index: nothing to run.** The default store is embedded LanceDB
   (`@lancedb/lancedb@0.26.2`), so there is no server to start, no port to free and
   no container to keep alive.
@@ -482,7 +488,21 @@ This plugin deliberately stays on the semantic side and coexists with grep/read
 (see the tool descriptions and the bundled skill). A code-graph mode (tree-sitter
 symbol/edge extraction into SQLite, exposed as `indexing_graph_*` tools that
 chain after `indexing_search`) is a candidate for a future major version; the
-tree-sitter infrastructure is already in place.
+tree-sitter infrastructure is already in place. Independently, the installer can itself install and register codegraph as a companion MCP (`--with-codegraph`, opt-in, published-package mode only).
+
+**Indexing both at once.** `indexing_build` and `indexing_import` also start
+codegraph for the workspace, so the two indexes are built by the same action:
+`codegraph init --yes` the first time a folder is seen, `codegraph sync`
+afterwards. codegraph is a **companion, not a dependency** — with the CLI absent
+nothing is spawned, no build fails and no line is added to the output. Turn it
+off with `/indexing-config set codegraph=false`.
+
+The launch is detached and reported as started, never as finished: on a large
+monorepo `init` runs for minutes, and a tool call that blocked that long would
+be worse than one that returns. Anything that fails afterwards lands in
+`.codegraph/daemon.log`. A home directory or a drive root is refused rather than
+indexed, and launches are limited to one per 15 seconds per workspace because
+codegraph's own daemon already watches files.
 
 ## Development
 

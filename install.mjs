@@ -4,7 +4,7 @@
  *
  * Works on Windows, Linux and macOS (Node >= 22.6; Node 26 recommended).
  *
- *   node install.mjs [--local|--package] [spec] [--skip-deps] [--no-restart]
+ *   node install.mjs [--local|--package] [spec] [--skip-deps] [--no-restart] [--with-codegraph]
  *   npx @javierkaiser/opencode-indexing
  *
  * There are two ways to install, because there are two audiences.
@@ -38,6 +38,7 @@ const argv = process.argv.slice(2)
 const has = (name) => argv.some((arg) => arg.toLowerCase() === name)
 const skipDeps = has("--skip-deps")
 const noRestart = has("--no-restart")
+const withCodegraph = has("--with-codegraph")
 
 const source = dirname(fileURLToPath(import.meta.url))
 const sourcePkg = JSON.parse(readFileSync(join(source, "package.json"), "utf8"))
@@ -75,6 +76,7 @@ const spec = positional[0] ?? `${sourcePkg.name}@latest`
 log(`Installing ${sourcePkg.name} ${sourcePkg.version}`)
 log(`  from: ${source}`)
 log(`  mode: ${mode} (${reason})`)
+if (withCodegraph) log("  + codegraph (via --with-codegraph, package mode)")
 
 // ---------------------------------------------------------------------------
 // Tool permissions (both modes)
@@ -309,13 +311,77 @@ function installPackage() {
 }
 
 // ---------------------------------------------------------------------------
+// Codegraph as a companion MCP (opt-in, --with-codegraph)
+// ---------------------------------------------------------------------------
+/**
+ * Whether a `codegraph` CLI is available on PATH.
+ *
+ * A plain spawn is the cheapest, shell-independent probe and matches what
+ * the bench harness `resolveBinary()` does. It is treated as read-only here.
+ */
+function hasCodegraphBin() {
+  try {
+    const probe = spawnSync("codegraph", ["--version"], { stdio: "ignore", shell: isWindows })
+    if (probe.error) return false
+    // status is either 0 or, on some wrappers, undefined-but-no-error; treat both as present
+    return probe.status === 0 || probe.status === null
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Install codegraph and register its MCP with OpenCode.
+ *
+ * The only consent gate is the flag itself, as the user requested: this is
+ * an install step, not a recommendation. A failure in either half is reported
+ * and tolerated — the plugin is already installed and still works with
+ * semantic search only.
+ */
+function installCodegraph() {
+  log("  installing codegraph as a companion MCP server...")
+
+  if (!hasCodegraphBin()) {
+    log("  codegraph CLI missing; running npm install -g codegraph...")
+    const npm = isWindows ? "npm.cmd" : "npm"
+    // --omit=... is not needed here: codegraph stands on its own, and a global
+    // install is what its own documentation assumes.
+    const installed = spawnSync(npm, ["install", "-g", "codegraph"], {
+      stdio: "inherit",
+      shell: isWindows,
+    })
+    if (installed.error || installed.status !== 0) {
+      warn("  could not install codegraph (npm install -g codegraph failed); skipping MCP registration")
+      return
+    }
+  }
+
+  const register = spawnSync("codegraph", ["install", "--target", "opencode"], {
+    stdio: "inherit",
+    shell: isWindows,
+  })
+  if (register.error || register.status !== 0) {
+    warn("  codegraph is present but `codegraph install --target opencode` failed")
+    warn("  run it manually once to finish MCP registration: codegraph install --target opencode")
+    return
+  }
+
+  log("  codegraph installed and registered with OpenCode")
+}
+
+// ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
 if (mode === "local") {
   installLocal()
-} else if (!installPackage()) {
+  if (withCodegraph) warn("  --with-codegraph is ignored in --local mode; codegraph is not installed there")
+} else {
+  if (!installPackage()) {
   warn("  not writing permissions or restarting: the install did not complete")
   process.exit(1)
+  }
+  if (withCodegraph) installCodegraph()
+
 }
 
 writePermissions()

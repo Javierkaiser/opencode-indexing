@@ -5,6 +5,97 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-16
+
+### Added
+- **`indexing_build` and `indexing_import` now also start codegraph** for the
+  workspace, so the semantic index and the code graph are built by the same
+  action instead of one silently going stale. `init` the first time a folder is
+  seen, `sync` afterwards — the second is what covers the case where codegraph's
+  daemon has already shut down, which it does after five minutes without
+  clients.
+
+  **codegraph is a companion, not a dependency.** Nothing about this plugin
+  requires it: with the CLI absent, `available()` returns false, nothing is
+  spawned, no build fails, and no line is added to the output. That path is
+  covered by a test that hides codegraph from `PATH` and runs the real spawner,
+  not a fake — an injected runner would have proved the logic while leaving the
+  wiring unchecked.
+
+- `codegraph` setting, on by default (`/indexing-config set codegraph=false` to
+  turn it off). Read as `!== false`, because the key is in no config file anyone
+  has and a default that required it to be present would never apply.
+
+- One line in `indexing_status` saying whether codegraph is indexed for the
+  folder. Read from the filesystem, so it costs no process — status runs on
+  every search through the footer.
+
+### Changed
+- The build summary reports the codegraph command it started, and always in the
+  past tense of a *launch*, never of a success: the process is detached, so at
+  the moment the tool answers, codegraph has only begun. Anything that goes
+  wrong afterwards lands in `.codegraph/daemon.log`, which is where the message
+  points.
+
+### Notes for review
+- A dangerous workspace root — the home directory or a drive root — is refused
+  rather than indexed. codegraph has `-f` for exactly that case, and passing it
+  because a tool call said so would index the whole machine.
+- Launches are rate-limited per workspace to one per 15 seconds, because
+  codegraph runs its own daemon with a file watcher and two `sync` invocations
+  seconds apart contend for the same SQLite database.
+- `.codegraph/` was already excluded from the scanner (every dot-directory that
+  is not explicitly allowed is skipped), and there is now a test pinning it:
+  codegraph writes a multi-megabyte SQLite database plus a WAL there, and
+  letting the scanner walk it would embed another indexer's storage into this
+  one, for money, forever.
+
+## [0.2.4] - 2026-10-16
+
+### Fixed
+- **The prompt-footer indicator stopped rendering after OpenCode 2.0.30.** The
+  footer view imports `createSignal` from `solid-js` as a value, and `solid-js`,
+  `@opentui/core` and `@opentui/solid` were declared as *optional
+  peerDependencies* — which means npm never installs them, on the assumption that
+  the host already provides them. 2.0.30 stopped providing them, the plugin's own
+  `import()` of the footer view failed, the `catch` swallowed it, and the slot
+  rendered nothing. Everything else kept working, because nothing else needs
+  JSX: the command palette comes from `tui.ts` itself, which is what made it look
+  like a cosmetic regression rather than a missing dependency.
+
+  The three packages are now `optionalDependencies`. That still tolerates a
+  failed install, but unlike an optional peer it actually puts them on disk, so
+  the indicator no longer depends on what the host happens to supply.
+
+- **A package listed in both `optionalDependencies` and `devDependencies` is not
+  installed at all.** npm 12 lets the dev list win, so `--omit=dev` skips the
+  package and the optionalDependency never reaches disk — and `package.json`
+  still reads as though it is declared. This is why moving the three packages
+  was not by itself enough; they had to leave `devDependencies` as well.
+
+- `tsconfig.json` is published. `jsx: react-jsx` with
+  `jsxImportSource: "@opentui/solid"` is what makes a `.tsx` file load at all, and
+  it was not in `files`.
+
+### Added
+- `test/package-deps.test.ts` guards the manifest against all three of the
+  above, and asserts that every value import in the published sources resolves
+  to something the manifest installs — so the next third-party import fails a
+  test instead of becoming another silent missing module at load time.
+
+## [0.2.3] - 2026-10-16
+
+### Added
+- `install.mjs` accepts `--with-codegraph`. It is **off by default** and only
+  has effect in `--package` mode, as consent comes from passing the flag. When
+  active it detects an existing `codegraph` CLI, installs it globally (`npm install
+  -g codegraph`) if it is missing, and registers its MCP with OpenCode via
+  `codegraph install --target opencode`. A failure in either step is reported and
+  does not cancel this plugin's own install.
+- The README now names `npx` (not `opencode plugin add`) as the recommended
+  install method, and shows the companion install in the recommended command:
+  `npx @javierkaiser/opencode-indexing --with-codegraph`.
+
 ## [0.2.1] - 2026-10-15
 
 ### Added

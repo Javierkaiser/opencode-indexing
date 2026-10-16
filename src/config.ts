@@ -38,6 +38,8 @@ export interface PluginOptionsInput {
   /** Master switch: when false the own index is neither written nor refreshed. */
   enabled?: boolean
   importFromKilo?: boolean
+  /** Also launch the codegraph CLI on build. Absent means on; see IndexingSettings. */
+  codegraph?: boolean
   /** Disable reading Kilo's config file entirely. */
   ignoreKiloConfig?: boolean
   homeDir?: string
@@ -283,6 +285,11 @@ export function resolveSettings(options: PluginOptionsInput): IndexingSettings {
   // but nothing is written and nothing is auto-refreshed. Toggled from the TUI
   // footer indicator or `/indexing-config set enabled false`.
   const enabled = options.enabled ?? file?.enabled !== false
+  // Companion indexer. On by default, and a no-op when codegraph is not
+  // installed, so enabling it costs nothing for someone who does not use it.
+  // `!== false` rather than `=== true`: the key is absent from most configs and
+  // absent has to mean "on" or the default would never apply.
+  const codegraph = options.codegraph ?? file?.codegraph !== false
 
   return {
     provider,
@@ -306,6 +313,7 @@ export function resolveSettings(options: PluginOptionsInput): IndexingSettings {
     autoRefresh,
     importFromKilo,
     enabled,
+    codegraph,
     credentials,
     warnings,
   }

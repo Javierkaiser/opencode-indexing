@@ -59,8 +59,14 @@ export const DEFAULT_IGNORE_GLOBS: readonly string[] = [
 
 const DEFAULT_MAX_FILE_SIZE_BYTES = 1024 * 1024
 
-/** Dot-directories that are still walked because they hold indexable config. */
-const ALLOWED_DOT_DIRS: ReadonlySet<string> = new Set([
+/**
+ * Dot-directories that are still walked because they hold indexable config.
+ *
+ * Exported for the test that pins `.codegraph` out of it: codegraph's SQLite
+ * database sits in that directory, and letting the scanner walk it would embed
+ * another indexer's storage into this one.
+ */
+export const ALLOWED_DOT_DIRS: ReadonlySet<string> = new Set([
   ".github",
   ".vscode",
   ".gitlab",
