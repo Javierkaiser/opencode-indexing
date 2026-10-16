@@ -96,6 +96,16 @@ export interface IndexingSettings extends EmbeddingProfile {
   importFromKilo: boolean
   /** Master switch: when false nothing is written to nor refreshed in the own index. */
   enabled: boolean
+  /**
+   * Also launch the codegraph CLI when the workspace is indexed.
+   *
+   * Optional so that every fixture, every caller and every consumer that builds
+   * settings by hand keeps compiling: a companion that must be threaded through
+   * eight test doubles to exist is a dependency, not a companion. Callers read
+   * it as `settings.codegraph !== false`, which treats absent as "try it" —
+   * and "try it" is a no-op when the CLI is not installed.
+   */
+  codegraph?: boolean
   credentials: ProviderCredentials
   /** Warnings produced while resolving configuration. */
   warnings: string[]

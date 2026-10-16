@@ -5,6 +5,7 @@ import { indexStatusLine } from "./index-state.ts"
 import { discoverKiloSources, importFromKilo, type KiloSourceInfo } from "./import.ts"
 import { createOwnStore, createSettingsQdrant } from "./store-factory.ts"
 import { assessScope } from "./scope.ts"
+import { codegraphStatusLine, indexWithCodegraph, type CodegraphOutcome } from "./codegraph.ts"
 import type { IndexingSettings, KVStore } from "./types.ts"
 import type { Qdrant } from "./qdrant.ts"
 
@@ -95,6 +96,11 @@ Behavior:
 - \`rebuild: true\` drops the own index first and re-imports/re-indexes everything.
 - \`skipImport: true\` forces indexing from scratch even when a Kilo index exists.
 
+If the codegraph CLI is installed, it is also started for this folder in the
+background (\`init\` the first time, \`sync\` afterwards) so the companion code
+graph stays in step. It never blocks this tool and never fails it: without
+codegraph this build is identical.
+
 This can take a while for large workspaces and may consume embedding API credits (except when importing).`
 
 const IMPORT_DESCRIPTION = `Import an existing Kilo Code index into the plugin's own index WITHOUT re-embedding.
@@ -103,7 +109,9 @@ Vectors and chunks are copied as-is (zero embedding API cost), which requires a 
 - Kilo's Qdrant collection (\`ws-*\`).
 - Kilo's local LanceDB database for this workspace, when present.
 
-Use indexing_status to list detected sources. If profiles do not match, rebuild with the matching model instead.`
+Use indexing_status to list detected sources. If profiles do not match, rebuild with the matching model instead.
+
+If the codegraph CLI is installed, it is also started for this folder in the background, so the companion code graph covers the files this import brought in. Without codegraph this import is identical.`
 
 const jsonSchema = (properties: Record<string, unknown>, required: string[] = []): Record<string, unknown> => ({
   type: "object",
@@ -242,6 +250,13 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
             `Freshness: ${status.freshness.total} files scanned, ${status.freshness.added} new, ${status.freshness.maybeStale} possibly changed, ${status.freshness.deleted} deleted.`,
           )
         }
+        // Only when the companion indexer is actually in play: saying
+        // "codegraph: not indexed" to someone who never asked for codegraph is
+        // noise. Read from the filesystem, so this costs no process.
+        if (settings.codegraph !== false) {
+          const codegraph = codegraphStatusLine(root)
+          if (codegraph) lines.push(codegraph)
+        }
         lines.push(`Recommendation: ${status.recommendation}`)
         if (status.warnings.length > 0) lines.push(`Warnings: ${status.warnings.join("; ")}`)
         return { output: lines.join("\n"), metadata: status as unknown as Record<string, unknown> }
@@ -298,9 +313,9 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
           { mode: "build", rebuild: input.rebuild === true, skipImport: input.skipImport === true },
         )
         const summary = formatReport("build", report)
-        const warning = scopeWarning(root)
+        const lines = [scopeWarning(root), summary, await codegraphLine(root, settings)].filter(Boolean)
         return {
-          output: warning ? `${warning}\n${summary}` : summary,
+          output: lines.join("\n"),
           metadata: report as unknown as Record<string, unknown>,
         }
       },
@@ -368,12 +383,36 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
         const lines = [
           `Imported ${report.imported} chunks from ${report.source.kind} ${report.source.name} in ${(report.durationMs / 1000).toFixed(1)}s.`,
           `Batches: ${report.batches}, skipped: ${report.skipped}. Embedding API calls: 0.`,
+          await codegraphLine(root, settings),
         ]
         if (report.errors.length > 0) lines.push(`Errors: ${report.errors.join("; ")}`)
-        return { output: lines.join("\n"), metadata: report as unknown as Record<string, unknown> }
+        return { output: lines.filter(Boolean).join("\n"), metadata: report as unknown as Record<string, unknown> }
       },
     },
   ]
+}
+
+/**
+ * One line about the companion indexer, for the write tools.
+ *
+ * Never throws and never reports success: the launch is detached, so by the time
+ * this returns the CLI has only started. Anything that went wrong afterwards
+ * lands in `.codegraph/daemon.log`, which is where the message points.
+ */
+async function codegraphLine(root: string, settings: IndexingSettings): Promise<string> {
+  let outcome: CodegraphOutcome
+  try {
+    outcome = await indexWithCodegraph({ root, enabled: settings.codegraph !== false })
+  } catch (error) {
+    return `Codegraph: not indexed (${error instanceof Error ? error.message : String(error)})`
+  }
+  if (outcome.kind === "launched") {
+    return `Codegraph: \`${outcome.launch.command}\` started in the background — ${outcome.launch.detail}.`
+  }
+  // A skip while the CLI is absent is the common case and not worth a line on
+  // every build; the other two say something the user may want to act on.
+  if (outcome.reason.startsWith("the codegraph CLI is not installed")) return ""
+  return `Codegraph: not indexed (${outcome.reason})`
 }
 
 function makeProgress(context: { progress?: (m: unknown) => Promise<void> }): (update: {

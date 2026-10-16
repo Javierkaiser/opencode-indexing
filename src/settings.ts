@@ -39,6 +39,8 @@ export interface SettingsFile {
   autoRefresh?: boolean
   /** Master switch: when false the own index is neither written nor refreshed. */
   enabled?: boolean
+  /** Also launch the codegraph CLI on build. Absent means on; a no-op if not installed. */
+  codegraph?: boolean
   searchMinScore?: number | null
   searchMaxResults?: number
   embeddingBatchSize?: number

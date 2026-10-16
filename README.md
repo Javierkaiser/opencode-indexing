@@ -155,6 +155,7 @@ Settable keys (case-insensitive):
 | `ollamaurl` | Ollama base URL |
 | `openaicompatibleurl` / `openaicompatiblekey` | OpenAI-compatible endpoint |
 | `importfromkilo` | `true` to import from Kilo when building, `false` to start from scratch |
+| `codegraph` | `false` to stop also running the `codegraph` CLI on build. On by default; a no-op when codegraph is not installed |
 | `autorefresh` | Refresh the own index automatically on search |
 | `enabled` | Master switch. `false` pauses writing and refreshing; search keeps reading Kilo's index |
 | `searchmaxresults` | Result cap per search |
@@ -488,6 +489,20 @@ This plugin deliberately stays on the semantic side and coexists with grep/read
 symbol/edge extraction into SQLite, exposed as `indexing_graph_*` tools that
 chain after `indexing_search`) is a candidate for a future major version; the
 tree-sitter infrastructure is already in place. Independently, the installer can itself install and register codegraph as a companion MCP (`--with-codegraph`, opt-in, published-package mode only).
+
+**Indexing both at once.** `indexing_build` and `indexing_import` also start
+codegraph for the workspace, so the two indexes are built by the same action:
+`codegraph init --yes` the first time a folder is seen, `codegraph sync`
+afterwards. codegraph is a **companion, not a dependency** — with the CLI absent
+nothing is spawned, no build fails and no line is added to the output. Turn it
+off with `/indexing-config set codegraph=false`.
+
+The launch is detached and reported as started, never as finished: on a large
+monorepo `init` runs for minutes, and a tool call that blocked that long would
+be worse than one that returns. Anything that fails afterwards lands in
+`.codegraph/daemon.log`. A home directory or a drive root is refused rather than
+indexed, and launches are limited to one per 15 seconds per workspace because
+codegraph's own daemon already watches files.
 
 ## Development
 
