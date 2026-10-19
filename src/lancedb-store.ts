@@ -50,7 +50,10 @@ const DEFAULT_MIN_SCORE = 0.4
 const DEFAULT_MAX_RESULTS = 50
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const EXPORT_COLUMNS = ["id", "vector", "filePath", "fileHash", "codeChunk", "startLine", "endLine"] as const
-const REQUIRED_PAYLOAD_FIELDS = ["filePath", "fileHash", "codeChunk", "startLine", "endLine"] as const
+// `fileHash` is deliberately absent: Kilo indexes written before it existed are
+// still readable, and a chunk without it is still a usable chunk. It only costs
+// the manifest seed, which falls back to re-reading the file on the next refresh.
+const REQUIRED_PAYLOAD_FIELDS = ["filePath", "codeChunk", "startLine", "endLine"] as const
 
 const METADATA_KEYS = {
   schema: "index_schema",
@@ -356,8 +359,9 @@ class LanceDbStoreAdapter implements VectorStoreAdapter {
     const table = await this.getVectorTable()
     if (!table) return { points: [], done: true }
 
+    const columns = await selectableExportColumns(table)
     const rows = (await this.runNative("export batch", () =>
-      table.query().select([...EXPORT_COLUMNS]).offset(offset).limit(limit).toArray(),
+      table.query().select(columns).offset(offset).limit(limit).toArray(),
     )) as Array<Record<string, unknown>>
 
     const points: QdrantPoint[] = []
@@ -517,7 +521,8 @@ export async function readLanceDbBatch(
       if (!names.includes(VECTOR_TABLE)) return { points: [], done: true }
       const table = await db.openTable(VECTOR_TABLE)
       // `Query.offset` is supported by @lancedb/lancedb 0.26.2 (no fallback needed).
-      const rows = (await table.query().select([...EXPORT_COLUMNS]).offset(offset).limit(limit).toArray()) as Array<
+      const columns = await selectableExportColumns(table)
+      const rows = (await table.query().select(columns).offset(offset).limit(limit).toArray()) as Array<
         Record<string, unknown>
       >
       const points: QdrantPoint[] = []
@@ -537,6 +542,26 @@ export async function readLanceDbBatch(
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * The export columns this table actually has.
+ *
+ * Asking LanceDB for a column that does not exist fails the whole query with a
+ * schema error, so one missing field makes an entire database unreadable —
+ * which is what happened to Kilo indexes written before `fileHash` was added.
+ * Selecting the intersection keeps every chunk that can still be used.
+ */
+async function selectableExportColumns(table: any): Promise<string[]> {
+  try {
+    const schema = await table.schema()
+    const present = new Set<string>((schema?.fields ?? []).map((field: any) => String(field.name)))
+    const columns = EXPORT_COLUMNS.filter((column) => present.has(column))
+    return columns.length > 0 ? columns : [...EXPORT_COLUMNS]
+  } catch {
+    // Schema unreadable: ask for everything, i.e. the previous behaviour.
+    return [...EXPORT_COLUMNS]
+  }
+}
 
 function sampleRow(dimension: number): Record<string, unknown> {
   return {
@@ -609,10 +634,12 @@ function isPayloadValid(payload: Record<string, unknown> | null | undefined): bo
 function chunkPayload(row: Record<string, unknown>): Record<string, unknown> | null {
   const payload: Record<string, unknown> = {
     filePath: row.filePath,
-    fileHash: row.fileHash,
     codeChunk: row.codeChunk,
     startLine: row.startLine,
     endLine: row.endLine,
+  }
+  if (typeof row.fileHash === "string" && row.fileHash.length > 0) {
+    payload.fileHash = row.fileHash
   }
   return isPayloadValid(payload) ? payload : null
 }

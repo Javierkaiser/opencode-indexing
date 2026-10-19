@@ -371,6 +371,38 @@ describe("readLanceDbInfoAt / readLanceDbBatch", { skip: lanceUnavailable }, () 
     assert.equal(second.points.length, 1)
   })
 
+  /**
+   * Kilo's first LanceDB indexes predate `fileHash`. Asking LanceDB for a column
+   * that does not exist fails the whole query, so those databases used to be
+   * unreadable end to end: discovery found them and the import died on the first
+   * page. The read now selects the intersection with the table's real schema.
+   */
+  test("reads a Kilo-era table that has no fileHash column", async () => {
+    const dir = path.join(DIRECTORY, uniqueName("legacy"))
+    const lancedb = await import("@lancedb/lancedb")
+    const db = await lancedb.connect(dir)
+    const table = await db.createTable("vector", [
+      { id: idFor(901), vector: [0.1, 0.2, 0.3, 0.4], filePath: "src/old.ts", codeChunk: "old chunk", startLine: 3, endLine: 9 },
+      { id: idFor(902), vector: [0.5, 0.6, 0.7, 0.8], filePath: "src/older.ts", codeChunk: "older chunk", startLine: 1, endLine: 4 },
+    ])
+    await table.close?.()
+    await db.close?.()
+
+    const page = await readLanceDbBatch(dir, { limit: 10, offset: 0 })
+    assert.equal(page.done, true)
+    assert.equal(page.points.length, 2)
+
+    const byPath = new Map(page.points.map((entry) => [String(entry.payload.filePath), entry.payload]))
+    // The key is absent, not present-and-undefined.
+    assert.deepEqual(byPath.get("src/old.ts"), {
+      filePath: "src/old.ts",
+      codeChunk: "old chunk",
+      startLine: 3,
+      endLine: 9,
+    })
+    assert.equal("fileHash" in (byPath.get("src/older.ts") ?? {}), false)
+  })
+
   test("missing paths yield empty values instead of throwing", async () => {
     const missing = path.join(DIRECTORY, "does-not-exist")
     assert.deepEqual(await readLanceDbInfoAt(missing), {

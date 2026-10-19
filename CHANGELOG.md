@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **A Kilo index written before `fileHash` existed could not be read at all.** The
+  LanceDB read asked for a fixed column list, and LanceDB fails the whole query
+  when one of those columns is missing — so a single absent field made an entire
+  database unreadable, even though every chunk in it was still usable. Discovery
+  reported the index and the import died on the first page. Reads now select the
+  intersection with the table's real schema, and a chunk without a hash imports
+  like any other; it only costs the manifest seed, which falls back to re-reading
+  the file on the next refresh.
+- The bug surfaced while checking that the `@lancedb/lancedb` 0.26.2 → 0.40.0
+  bump was safe for the Kilo compatibility the old pin existed for. It is: 26
+  real Kilo databases and a store written by the previous version all read
+  unchanged, vectors included. The same read fails identically on 0.26.2, so this
+  was never a version problem.
+
 ## [0.3.1] - 2026-10-16
 
 ### Documentation
