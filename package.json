@@ -61,8 +61,8 @@
   },
   "dependencies": {
     "ignore": "^7.0.5",
-    "@opentui/core": "0.5.14",
-    "@opentui/solid": "0.5.14",
+    "@opentui/core": "0.6.6",
+    "@opentui/solid": "0.6.6",
     "solid-js": "^1.9.12"
   },
   "optionalDependencies": {
@@ -72,7 +72,7 @@
     "apache-arrow": "18.1.0"
   },
   "devDependencies": {
-    "@opencode/plugin": "2.0.23",
+    "@opencode/plugin": "2.0.31",
     "@opencode/theme": "^2.0.23",
     "@types/node": "^22.19.0",
     "typescript": "^7.0.2"
