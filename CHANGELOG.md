@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.2] - 2026-10-19
 
 ### Fixed
 - **A Kilo index written before `fileHash` existed could not be read at all.** The
@@ -21,6 +21,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   real Kilo databases and a store written by the previous version all read
   unchanged, vectors included. The same read fails identically on 0.26.2, so this
   was never a version problem.
+
+### Changed
+- `@lancedb/lancedb` 0.26.2 → 0.40.0. The old pin existed to match the copy
+  Kilo Code uses, so it was checked against real data before moving: 26 Kilo
+  databases on a working machine and a store written by the previous version
+  all read unchanged, vectors included. The pin is no longer load-bearing.
+- `@types/node` follows the oldest supported runtime (`^22`) instead of
+  running ahead of it. Types newer than `engines.node` let an API that does
+  not exist in Node 22 typecheck cleanly, which is a trap rather than a
+  feature. TypeScript moves to 7 alongside it.
+
+### CI
+- Dependabot no longer proposes the `@opentui` major: 0.6 declares
+  `engines.node >= 26.4.0`, npm marks it optional in the lock, and an
+  optional dependency whose engine does not match is skipped rather than
+  warned about — on the Node 22 the CI runs, the TUI deps vanish and the
+  typecheck fails on missing modules. Verified with the CI's exact Node.
 
 ## [0.3.1] - 2026-10-16
 
@@ -354,7 +371,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.2
 [0.3.1]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.1
 [0.3.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.0
 [0.2.4]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.2.4
