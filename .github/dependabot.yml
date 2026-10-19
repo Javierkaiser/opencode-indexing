@@ -46,18 +46,6 @@ updates:
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
 
-      # @opentui 0.6 declares `engines.node >= 26.4.0`. npm marks it optional in
-      # the lock, and an optional dependency whose engine does not match the
-      # running Node is SKIPPED rather than warned about — so on the Node 22 the
-      # CI runs, the TUI deps silently vanish and the typecheck fails on missing
-      # modules (verified against the CI's exact Node). 0.5.x stays until the
-      # project's Node floor moves. Only the major is ignored, so 0.5.x fixes
-      # still come through.
-      - dependency-name: "@opentui/core"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "@opentui/solid"
-        update-types: ["version-update:semver-major"]
-
     # @lancedb/lancedb and apache-arrow stay outside every group. lancedb
     # declares `peer apache-arrow >=15.0.0 <=18.1.0`, so arrow is pinned to that
     # ceiling — and a group carrying both takes arrow to 21.x, which makes
