@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-10-19
+
+### Changed
+- `@opentui/core` and `@opentui/solid` move to 0.6.6, and `@opencode/plugin`
+  to 2.0.31 alongside them. That bump had been stuck: 0.6 was uninstallable
+  on Node 22 while the JSX runtime was optional, because npm skips an
+  optional dependency whose engine does not match. Declaring it as a real
+  dependency is what let the install through, and the group now passes on
+  all three platforms.
+
 ## [0.3.3] - 2026-10-19
 
 ### Changed
@@ -387,7 +397,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.4
 [0.3.3]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.3
 [0.3.2]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.2
 [0.3.1]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.1
