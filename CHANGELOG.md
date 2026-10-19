@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- `@opentui/core`, `@opentui/solid` and `solid-js` move from
+  `optionalDependencies` to `dependencies`. They declare
+  `engines.node >= 26.4.0`, and npm **skips** an optional dependency whose engine
+  does not match the running Node instead of warning about it — so on the Node 22
+  the CI runs, a plain lock regeneration dropped all three and the typecheck
+  failed on missing modules. As regular dependencies they warn rather than
+  vanish, which is what the TUI needs: present, and loud about the engine if it
+  ever matters. Verified with the CI's exact Node (v22.23.3): 477 packages
+  installed with all three present.
+
 ## [0.3.2] - 2026-10-19
 
 ### Fixed

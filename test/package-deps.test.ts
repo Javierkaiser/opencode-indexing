@@ -39,23 +39,36 @@ describe("published dependencies", () => {
     // command palette was the tell - it comes from tui.ts itself, which needs
     // no JSX at all.
     //
-    // An optional peer is an assumption that something else provides the
-    // package. OpenCode 2.0.30 stopped providing it, and the failure mode was
-    // silence. optionalDependencies still tolerates a failed install, so this
-    // keeps that tolerance without depending on anyone else.
+    // Moving them to optionalDependencies fixed that and restored the silence
+    // somewhere else: @opentui declares `engines.node >= 26.4.0`, and npm SKIPS
+    // an optional dependency whose engine does not match the running Node
+    // instead of warning about it. On Node 22 - which this package claims to
+    // support - every install from the registry came out without the three of
+    // them. Verified by installing the published tarball under Node 22: 115
+    // packages, none of the three, no error.
+    //
+    // As regular dependencies they warn about the engine and install anyway, so
+    // the failure is loud. A platform where they genuinely cannot install now
+    // fails the install rather than shipping a TUI that renders nothing - which
+    // is the trade this package wants, because the silent version of it stayed
+    // invisible through a release.
     for (const name of RUNTIME_JSX_PACKAGES) {
-      assert.ok(pkg.optionalDependencies?.[name], `${name} must be an optionalDependency so it gets installed`)
+      assert.ok(pkg.dependencies?.[name], `${name} must be a dependency so npm cannot skip it`)
+      assert.ok(
+        !pkg.optionalDependencies?.[name],
+        `${name} must not be an optionalDependency: npm skips it in silence when its engine does not match`,
+      )
       assert.ok(
         !pkg.peerDependencies?.[name],
         `${name} must not also be a peerDependency: npm resolves the two differently`,
       )
       // Listing it in devDependencies as well is silently fatal: npm 12 lets
       // devDependencies win, `npm install --omit=dev` then skips the package
-      // entirely, and the optionalDependency never reaches disk. Verified by
-      // trial, not inferred - it looks correct in package.json.
+      // entirely, and it never reaches disk. Verified by trial, not inferred -
+      // it looks correct in package.json.
       assert.ok(
         !pkg.devDependencies?.[name],
-        `${name} must not be in devDependencies: npm drops it from the install even though it is an optionalDependency`,
+        `${name} must not be in devDependencies: npm drops it from the install`,
       )
     }
   })
