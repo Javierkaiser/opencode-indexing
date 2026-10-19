@@ -6,13 +6,16 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
-      # Order matters: a dependency joins the FIRST group it matches, so the
-      # coupled set has to come before the broad type-based groups.
-      #
       # @opencode/plugin's optional peers are the @opentui packages. Bumping the
       # plugin on its own fails `npm ci` with ERESOLVE (peerOptional
       # @opentui/core >=0.5.17 while 0.5.14 is installed) and bumping @opentui on
       # its own can fail the other way, so they only work as one set.
+      #
+      # This group has no `dependency-type`, which is why it is listed first AND
+      # why the two type-based groups below have to exclude the same patterns. A
+      # `dependency-type` group claims a dependency before a pattern group ever
+      # sees it, regardless of the order here — listing it first is not enough,
+      # which is how #14 and #17 came out with the coupled set split apart.
       opencode-ui:
         patterns:
           - "@opencode/*"
@@ -25,9 +28,16 @@ updates:
         exclude-patterns:
           - "@lancedb/lancedb"
           - "apache-arrow"
+          - "@opencode/*"
+          - "@opentui/*"
+          - "solid-js"
 
       dev-dependencies:
         dependency-type: development
+        exclude-patterns:
+          - "@opencode/*"
+          - "@opentui/*"
+          - "solid-js"
 
     # @lancedb/lancedb and apache-arrow stay outside every group. lancedb
     # declares `peer apache-arrow >=15.0.0 <=18.1.0`, so arrow is pinned to that
