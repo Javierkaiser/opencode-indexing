@@ -5,18 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.3] - 2026-10-19
 
 ### Changed
 - `@opentui/core`, `@opentui/solid` and `solid-js` move from
   `optionalDependencies` to `dependencies`. They declare
   `engines.node >= 26.4.0`, and npm **skips** an optional dependency whose engine
-  does not match the running Node instead of warning about it — so on the Node 22
-  the CI runs, a plain lock regeneration dropped all three and the typecheck
-  failed on missing modules. As regular dependencies they warn rather than
-  vanish, which is what the TUI needs: present, and loud about the engine if it
-  ever matters. Verified with the CI's exact Node (v22.23.3): 477 packages
-  installed with all three present.
+  does not match the running Node instead of warning about it. On Node 22 — which
+  this package supports — that meant an install from the registry came out
+  without the three of them, no error, and a TUI that rendered nothing:
+  verified by installing the published 0.3.2 under the CI's exact Node
+  (v22.23.3), which produced 115 packages and none of the three. As regular
+  dependencies they warn about the engine and install anyway — 477 packages,
+  all three present — so the failure is loud instead of invisible. A platform
+  where they genuinely cannot install now fails the install rather than shipping
+  a TUI that renders nothing.
 
 ## [0.3.2] - 2026-10-19
 
@@ -384,7 +387,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.3
 [0.3.2]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.2
 [0.3.1]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.1
 [0.3.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.0
