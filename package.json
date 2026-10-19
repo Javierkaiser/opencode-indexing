@@ -74,8 +74,8 @@
   "devDependencies": {
     "@opencode/plugin": "2.0.23",
     "@opencode/theme": "^2.0.23",
-    "@types/node": "^24.0.0",
-    "typescript": "^5.8.2"
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
   },
   "peerDependencies": {
     "@opencode/plugin": ">=2.0.0",
