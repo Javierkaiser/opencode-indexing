@@ -1,9 +1,8 @@
 /**
  * Data layer for the TUI settings page (option B).
  *
- * Pure functions over the RPC client, separated from the JSX so they can be
- * unit-tested without a renderer. The JSX page (`tui/settings-page.tsx`)
- * consumes these.
+ * Pure functions over the RPC client, separated from the renderer so they can
+ * be unit-tested without one. The page (`tui/settings-page.ts`) consumes these.
  */
 
 import type { SettingsPageStore } from "./page-store.ts"
@@ -52,7 +51,7 @@ export interface StatusView {
  * because the bound client is what actually sends it.
  */
 export interface SettingsPageRpc {
-  "settings.get": (input: Record<string, never>) => Promise<{ settings: SettingsView }>
+  "settings.get": (input: Record<string, never>) => Promise<{ settings: SettingsView; version?: string }>
   "settings.set": (input: { patch: Record<string, unknown> }) => Promise<{ settings: SettingsView }>
   "settings.test": (input: { target: "qdrant" | "lancedb" | "provider" | "kilo"; directory?: string }) => Promise<{ ok: boolean; message: string }>
   "kilo.discover": (input?: { directory?: string }) => Promise<{ sources: KiloSourceView[]; problems?: string[] }>
@@ -65,10 +64,10 @@ export interface SettingsPageRpc {
 }
 
 /**
- * Props the JSX page receives from the host plugin.
+ * Props the page receives from the host plugin.
  *
- * Declared here rather than in the `.tsx` so the mount logic (`tui/page-mount.ts`)
- * can be unit-tested in Node, which cannot execute JSX.
+ * Declared here rather than in the page module so the mount logic
+ * (`tui/page-mount.ts`) can be unit-tested in Node without a renderer.
  */
 export interface SettingsPageProps {
   /** Resolves the RPC subclient lazily (the server plugin may still be starting). */
@@ -85,6 +84,13 @@ export interface SettingsPageProps {
 
 export interface SettingsPageData {
   settings: SettingsView
+  /**
+   * Version of the server plugin answering the RPC.
+   *
+   * "unknown" when the response did not carry one (older server, or a manifest
+   * it could not read), so the page never renders an empty value.
+   */
+  version: string
   sources: KiloSourceView[]
   /**
    * Sources that exist but could not be read.
@@ -122,23 +128,74 @@ export const UNKNOWN_SETTINGS: SettingsView = {
 }
 
 /**
+ * Budget for each RPC behind the page before it is treated as failed.
+ *
+ * The calls are local (host RPC to a plugin in the same process), so ten
+ * seconds is far past any healthy answer: reaching it means the call is hung,
+ * not slow.
+ */
+export const LOAD_TIMEOUT_MS = 10_000
+
+export interface LoadSettingsPageDataOptions {
+  /**
+   * Per-call budget, injectable so tests can exercise the timeout in
+   * milliseconds instead of ten seconds.
+   */
+  timeoutMs?: number
+}
+
+/**
+ * Rejects when `promise` has not settled within `ms`.
+ *
+ * A hung RPC is worse than a failed one: `settings.get` gates the whole render,
+ * so a call that never answers leaves the page on "Loading…" with no error and
+ * no way to retry. Timing out turns that into the same degradation as a
+ * rejection.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`no answer after ${ms}ms`)), ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error) => {
+        clearTimeout(timer)
+        reject(error)
+      },
+    )
+  })
+}
+
+/** The server's version, or "unknown" when the response did not carry one. */
+function knownVersion(version: string | undefined): string {
+  return typeof version === "string" && version.trim() !== "" ? version : "unknown"
+}
+
+/**
  * Load everything the page renders in one go (settings, sources, status).
  *
  * Every call degrades instead of rejecting: `settings.get` is what gates the
  * whole render, so letting it throw would leave the page on "Loading…" forever
  * with no explanation — which is exactly what happens if the server plugin is
- * not ready yet, the case the lazy RPC resolver exists for.
+ * not ready yet, the case the lazy RPC resolver exists for. Each call also gets
+ * a timeout, so an RPC that never answers degrades the same way instead of
+ * hanging the page.
  */
-export async function loadSettingsPageData(rpc: SettingsPageRpc): Promise<SettingsPageData> {
+export async function loadSettingsPageData(rpc: SettingsPageRpc, options: LoadSettingsPageDataOptions = {}): Promise<SettingsPageData> {
+  const timeoutMs = options.timeoutMs ?? LOAD_TIMEOUT_MS
   const [settingsResponse, sourcesResponse, status, workspaces] = await Promise.all([
-    rpc["settings.get"]({}).catch(() => ({ settings: UNKNOWN_SETTINGS })),
-    rpc["kilo.discover"]({}).catch(() => ({ sources: [] as KiloSourceView[], problems: [] as string[] })),
-    rpc["status.get"]({ checkFreshness: false }).catch(() => ({ summary: "(status unavailable)", recommendation: "" })),
-    // loadWorkspaces already degrades to an empty view, so it cannot reject.
-    loadWorkspaces(rpc),
+    withTimeout(rpc["settings.get"]({}), timeoutMs).catch(() => ({ settings: UNKNOWN_SETTINGS, version: "unknown" })),
+    withTimeout(rpc["kilo.discover"]({}), timeoutMs).catch(() => ({ sources: [] as KiloSourceView[], problems: [] as string[] })),
+    withTimeout(rpc["status.get"]({ checkFreshness: false }), timeoutMs).catch(() => ({ summary: "(status unavailable)", recommendation: "" })),
+    // loadWorkspaces already degrades to an empty view; the timeout covers a
+    // `workspaces.list` that never answers.
+    withTimeout(loadWorkspaces(rpc), timeoutMs).catch(() => ({ rows: [], unknownCount: 0 })),
   ])
   return {
     settings: settingsResponse.settings,
+    version: knownVersion(settingsResponse.version),
     sources: sourcesResponse.sources,
     problems: sourcesResponse.problems ?? [],
     status,
@@ -147,7 +204,7 @@ export async function loadSettingsPageData(rpc: SettingsPageRpc): Promise<Settin
 }
 
 /** Build the configuration rows shown in the page. */
-export function configRows(settings: SettingsView): ConfigRow[] {
+export function configRows(settings: SettingsView, version = "unknown"): ConfigRow[] {
   const rows: ConfigRow[] = [
     {
       label: "Vector store",
@@ -164,6 +221,9 @@ export function configRows(settings: SettingsView): ConfigRow[] {
     { label: "Auto-refresh", value: settings.autoRefresh ? "ON" : "OFF" },
     { label: "Max results", value: String(settings.searchMaxResults) },
     { label: "Settings file", value: settings.settingsFile },
+    // Right after the settings file: the two rows answer "where does this come
+    // from?", which is the pair a bug report needs.
+    { label: "Plugin version", value: version },
   ]
   // Derived from the server's list rather than a pair of booleans, so a
   // provider added anywhere else shows up here without a change to this file.

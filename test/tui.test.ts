@@ -75,6 +75,9 @@ type CommandLayer = {
   bindings?: readonly string[]
 }
 
+/** Route as the fake host's router stores it; mirrors the host's `Route` union. */
+type RouterRoute = { type: string; id?: string; name?: string; sessionID?: string }
+
 interface HarnessOptions {
   /** Scripted `dialog.select` results, consumed in call order. */
   selects?: Array<string | undefined>
@@ -208,9 +211,18 @@ function makeHarness(options: HarnessOptions = {}) {
   const capturedLayers: CommandLayer[] = []
   const control: { rpcFail?: Set<string> } = {}
   const slots: Array<{ path: string; placement: string; render: (input: { showDetails: boolean }) => unknown }> = []
-  let route: { type: string; id?: string; name?: string } = { type: "home" }
+  // One object for the life of the harness, mutated in place rather than
+  // replaced: the live host hands back a reference whose fields change with the
+  // route, so a plugin that keeps the object sees it change under its feet.
+  // Replacing it here (as this harness used to) hides that failure — escape kept
+  // a stale reference and every test still passed.
+  const route: RouterRoute = { type: "home" }
+  const applyRoute = (next: RouterRoute): void => {
+    for (const key of Object.keys(route)) delete (route as Record<string, unknown>)[key]
+    Object.assign(route, next)
+  }
   let releaseDialog: (() => void) | undefined
-  const navigated: Array<{ type: string; name?: string }> = []
+  const navigated: RouterRoute[] = []
 
   const claimSlot = (claim: {
     append?: string
@@ -247,6 +259,7 @@ function makeHarness(options: HarnessOptions = {}) {
       listen: () => () => {},
       session: {
         list: () => sessions,
+        get: (sessionID: string) => sessions.find((session) => session.id === sessionID),
       },
     },
     theme: {},
@@ -268,9 +281,9 @@ function makeHarness(options: HarnessOptions = {}) {
       ...(options.noSlotApi ? {} : { slot: claimSlot }),
       router: {
         register: () => () => {},
-        navigate: (destination: { type: string; name?: string }) => {
+        navigate: (destination: RouterRoute) => {
           navigated.push(destination)
-          route = destination
+          applyRoute(destination)
         },
         current: () => route,
       },
@@ -343,8 +356,8 @@ function makeHarness(options: HarnessOptions = {}) {
       return this.layerFor("opencode.indexing.page.close")
     },
     /** Makes the fake host report a different current route. */
-    setRoute(next: { type: string; id?: string; name?: string }): void {
-      route = next
+    setRoute(next: RouterRoute): void {
+      applyRoute(next)
     },
     /** Focuses one of the open tabs, the way the host does when the user picks it. */
     setActiveTab(sessionID: string): void {
@@ -398,6 +411,26 @@ async function runCommand(harness: Harness): Promise<void> {
   assert.ok(command, "layer must expose a command")
   assert.equal(typeof command.run, "function", "command must have a run function")
   await command.run?.()
+}
+
+/**
+ * Opens the settings page and parks the fake router on it, returning the escape
+ * command to run.
+ *
+ * `node --test` cannot load the JSX page, so the open falls back to the dialogs
+ * — but the origin is captured before the mount, exactly as on a host where the
+ * page renders, and the route the host would have landed on is set explicitly.
+ */
+async function openPage(harness: Harness): Promise<Command> {
+  const page = harness.getLayer().commands.find((command) => command.id === "opencode.indexing.settings")
+  assert.ok(page, "the settings command must be registered")
+  await page.run?.()
+
+  harness.setRoute({ type: "plugin", id: "opencode.indexing", name: SETTINGS_PAGE_NAME })
+
+  const close = harness.getNavigationLayer().commands.find((command) => command.id === "opencode.indexing.page.close")
+  assert.ok(close, "the escape command must be registered")
+  return close
 }
 
 function assertCalledWith(harness: Harness, method: string, input: unknown): void {
@@ -472,19 +505,58 @@ describe("tui plugin", () => {
     }
   })
 
-  test("the escape command navigates home once the page route is current", async () => {
+  test("the escape command returns home when the page was opened from home", async () => {
     const harness = await setupPlugin()
-    const layer = harness.getNavigationLayer()
+    const close = await openPage(harness)
 
-    harness.setRoute({ type: "plugin", id: "opencode.indexing", name: SETTINGS_PAGE_NAME })
-    const close = layer.commands.find((command) => command.id === "opencode.indexing.page.close")
-    assert.ok(close)
     assert.equal(typeof close.enabled === "function" ? close.enabled() : close.enabled, true)
 
     await close.run?.()
 
-    assert.equal(harness.navigated.length, 1)
-    assert.deepEqual(harness.navigated[0], { type: "home" })
+    assert.deepEqual(harness.navigated, [{ type: "home" }])
+  })
+
+  test("the escape command returns to the session the page was opened from", async () => {
+    const harness = await setupPlugin({
+      sessions: [{ id: "ses-1", location: { directory: "D:\\Proyectos" } }],
+    })
+    harness.setRoute({ type: "session", sessionID: "ses-1" })
+    const close = await openPage(harness)
+
+    await close.run?.()
+
+    assert.deepEqual(harness.navigated.at(-1), { type: "session", sessionID: "ses-1" })
+  })
+
+  test("re-opening the page while it is up keeps the session it came from", async () => {
+    const harness = await setupPlugin({
+      sessions: [{ id: "ses-1", location: { directory: "D:\\Proyectos" } }],
+    })
+    harness.setRoute({ type: "session", sessionID: "ses-1" })
+    const close = await openPage(harness)
+
+    // The slash command stays reachable while the page is current: that second
+    // open must not record the page itself as the origin.
+    const page = harness.getLayer().commands.find((command) => command.id === "opencode.indexing.settings")
+    assert.ok(page)
+    await page.run?.()
+    harness.setRoute({ type: "plugin", id: "opencode.indexing", name: SETTINGS_PAGE_NAME })
+
+    await close.run?.()
+
+    assert.deepEqual(harness.navigated.at(-1), { type: "session", sessionID: "ses-1" })
+  })
+
+  test("the escape command falls back home when that session is gone", async () => {
+    const harness = await setupPlugin()
+    harness.setRoute({ type: "session", sessionID: "ses-gone" })
+    const close = await openPage(harness)
+
+    await close.run?.()
+
+    // The session was closed while the page was open: landing on it would show a
+    // route with nothing behind it.
+    assert.deepEqual(harness.navigated.at(-1), { type: "home" })
   })
 
   test("page keys go to the dialog while the editor is stacked on the page", async () => {

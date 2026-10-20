@@ -1,7 +1,7 @@
 /**
  * Mount logic for the JSX settings page (option B).
  *
- * Node cannot execute `settings-page.tsx`, so the page module is injected by
+ * Node cannot execute `settings-page.ts`, so the page module is injected by
  * the caller. This keeps the decision logic — register the page, navigate to
  * it, or fall back to the dialog menu — unit-testable without a renderer or a
  * JSX runtime, which is exactly the situation the plugin has to survive when

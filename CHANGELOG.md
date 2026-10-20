@@ -5,6 +5,35 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.5] - 2026-10-20
+
+### Changed
+- **The TUI consumes the host's runtime instead of installing its own.** The
+  terminal code imports the host singletons by virtual module id
+  (`opentui:runtime-module:…`) and uses no JSX, and `solid-js`, `@opentui/core`
+  and `@opentui/solid` are no longer installable dependencies (they remain dev
+  dependencies and optional peers). A plugin installed from an npm spec used to
+  load its own copies from `node_modules`, and the host never bridged the Solid
+  runtime: the settings page and the footer indicator painted once and never
+  updated — upstream
+  [anomalyco/opencode#33884](https://github.com/anomalyco/opencode/issues/33884).
+
+### Added
+- The settings page and the dialog menu show the plugin version, so a report
+  about either names the build it came from.
+
+### Fixed
+- **Escape from the settings page returns to the session it was opened from**,
+  instead of navigating to the home screen and losing the user's place.
+
+### Documentation
+- The README's *Requirements* no longer says the plugin installs ~14 MB of
+  SolidJS/OpenTUI runtime; it states that the host provides those modules and
+  the TUI consumes them by virtual module id.
+- `THIRD_PARTY_NOTICES.md` moves `solid-js`, `@opentui/core` and
+  `@opentui/solid` out of the distributed runtime dependencies: installing the
+  package no longer brings copies of them.
+
 ## [0.3.4] - 2026-10-19
 
 ### Changed
@@ -397,7 +426,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.3.5...HEAD
+[0.3.5]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.5
 [0.3.4]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.4
 [0.3.3]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.3
 [0.3.2]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.2

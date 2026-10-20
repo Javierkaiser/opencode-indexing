@@ -23,6 +23,7 @@ import { createOwnStore, createSettingsQdrant } from "./src/store-factory.ts"
 import { createEmbedder } from "./src/embedder.ts"
 import { getOwnStoreInfo, OWN_COLLECTION_PREFIX, type OwnStoreInfo } from "./src/own-store.ts"
 import { forgetWorkspace, readWorkspaces } from "./src/workspaces.ts"
+import { pluginVersion } from "./src/plugin-version.ts"
 import { IndexingRpc } from "./src/rpc.ts"
 import {
   COMMAND_USAGE,
@@ -723,7 +724,9 @@ class ForgetRefusedError extends Error {}
       await ctx.rpc.register(IndexingRpc, {
         "settings.get": async () => {
           const settings = await getSettings()
-          return { settings: settingsView(settings) }
+          // `version` travels with the settings so a client can show which
+          // release it is talking to without a second round trip.
+          return { settings: settingsView(settings), version: pluginVersion() }
         },
 
         "settings.set": async (input: unknown) => {
@@ -731,7 +734,7 @@ class ForgetRefusedError extends Error {}
           const patch = (input as { patch?: Record<string, unknown> }).patch ?? {}
           writeSettingsFile(patch as never)
           const settings = await getSettings()
-          return { settings: settingsView(settings) }
+          return { settings: settingsView(settings), version: pluginVersion() }
         },
 
         "settings.test": async (input: unknown) => {

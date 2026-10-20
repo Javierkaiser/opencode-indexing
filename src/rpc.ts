@@ -58,7 +58,14 @@ export const IndexingRpc = {
   methods: {
     "settings.get": {
       input: empty,
-      output: { type: "object", properties: { settings: settingsShape }, required: ["settings"], additionalProperties: true },
+      // `version` names the release answering the call ("unknown" when its
+      // manifest could not be read); it rides along so the UI needs no extra call.
+      output: {
+        type: "object",
+        properties: { settings: settingsShape, version: { type: "string" } },
+        required: ["settings"],
+        additionalProperties: true,
+      },
     },
     "settings.set": {
       input: {
@@ -69,7 +76,12 @@ export const IndexingRpc = {
         required: ["patch"],
         additionalProperties: false,
       },
-      output: { type: "object", properties: { settings: settingsShape }, required: ["settings"], additionalProperties: true },
+      output: {
+        type: "object",
+        properties: { settings: settingsShape, version: { type: "string" } },
+        required: ["settings"],
+        additionalProperties: true,
+      },
     },
     "settings.test": {
       input: {

@@ -258,10 +258,11 @@ function installLocal() {
     return
   }
 
-  log("  installing runtime deps (ignore + optional lancedb/tree-sitter)...")
+  log("  installing runtime deps (ignore + optional lancedb/tree-sitter/apache-arrow)...")
   const npm = isWindows ? "npm.cmd" : "npm"
-  // --omit=peer is why apache-arrow has to be a real dependency above: the
-  // native LanceDB binary loads without it and throws on first use.
+  // --omit=peer drops peer dependencies, and apache-arrow is a peer of
+  // @lancedb/lancedb: it is declared explicitly above so the native binary
+  // does not load and then throw on first use.
   const result = spawnSync(
     npm,
     ["install", "--omit=dev", "--omit=peer", "--no-audit", "--no-fund", "--loglevel=error"],

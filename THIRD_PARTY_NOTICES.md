@@ -60,17 +60,24 @@ SOFTWARE.
 | [`web-tree-sitter`](https://github.com/tree-sitter/tree-sitter) | MIT | Tree-sitter contributors |
 | [`tree-sitter-wasms`](https://github.com/Gregoor/tree-sitter-wasms) | Unlicense | Gregor (packaging); grammars by their respective authors |
 | [`ignore`](https://github.com/kaelzhang/node-ignore) | MIT | Kael Zhang and contributors |
-| [`solid-js`](https://github.com/solidjs/solid) | MIT | Ryan Carniato and contributors |
-| [`@opentui/core`](https://github.com/sst/opentui) | MIT | SST and OpenTUI contributors |
-| [`@opentui/solid`](https://github.com/sst/opentui) | MIT | SST and OpenTUI contributors |
-
-`solid-js`, `@opentui/core` and `@opentui/solid` are what the terminal UI is
-rendered with. They are optional dependencies: without them the prompt-footer
-indicator and the settings page are absent, and everything else works.
 
 Tree-sitter grammar `.wasm` files bundled by `tree-sitter-wasms` are distributed
 under their upstream licenses (mostly MIT or Apache-2.0); see the
 `tree-sitter-wasms` package for details.
+
+## Provided by the host
+
+| Package | License | Copyright |
+| --- | --- | --- |
+| [`solid-js`](https://github.com/solidjs/solid) | MIT | Ryan Carniato and contributors |
+| [`@opentui/core`](https://github.com/sst/opentui) | MIT | SST and OpenTUI contributors |
+| [`@opentui/solid`](https://github.com/sst/opentui) | MIT | SST and OpenTUI contributors |
+
+These are what the terminal UI is rendered with. They are **not distributed**
+with this package: the host provides them at runtime and the TUI imports the
+host's own instances by virtual module id (`opentui:runtime-module:…`) instead
+of installing copies. Without them the prompt-footer indicator and the settings
+page are absent, and everything else works.
 
 ## CodeGraph (github.com/colbymchenry/codegraph)
 

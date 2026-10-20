@@ -111,6 +111,48 @@ describe("loadSettingsPageData", () => {
     assert.equal(configRows(data.settings)[0]?.value.includes("(unavailable)"), true)
   })
 
+  test("carries the version of the server answering the call", async () => {
+    const { rpc } = fakeRpc({
+      "settings.get": async () => ({ settings: SETTINGS, version: "0.3.5" }),
+    })
+    const data = await loadSettingsPageData(rpc)
+    assert.equal(data.version, "0.3.5")
+  })
+
+  test("reports an unknown version when the response does not carry one", async () => {
+    // Older servers answered `settings.get` without a version; the page must
+    // still render a value instead of blanking the row.
+    const { rpc } = fakeRpc({
+      "settings.get": async () => ({ settings: SETTINGS }),
+    })
+    const data = await loadSettingsPageData(rpc)
+    assert.equal(data.version, "unknown")
+  })
+
+  test("a hung RPC degrades after the timeout instead of hanging the page", async () => {
+    const never = (): Promise<never> => new Promise<never>(() => {})
+    const { rpc } = fakeRpc({
+      "settings.get": never,
+      "kilo.discover": never,
+      "status.get": never,
+      "workspaces.list": never,
+    })
+    const data = await loadSettingsPageData(rpc, { timeoutMs: 20 })
+    assert.equal(data.settings, UNKNOWN_SETTINGS)
+    assert.equal(data.version, "unknown")
+    assert.deepEqual(data.sources, [])
+    assert.equal(data.status.summary, "(status unavailable)")
+    assert.deepEqual(data.workspaces, { rows: [], unknownCount: 0 })
+  })
+
+  test("a hung settings.get alone still renders the rest of the page", async () => {
+    const never = (): Promise<never> => new Promise<never>(() => {})
+    const { rpc } = fakeRpc({ "settings.get": never })
+    const data = await loadSettingsPageData(rpc, { timeoutMs: 20 })
+    assert.equal(data.settings, UNKNOWN_SETTINGS)
+    assert.equal(data.sources.length, 1, "the calls that answered must still be used")
+  })
+
   test("never rejects, whatever fails", async () => {
     const boom = async (): Promise<never> => {
       throw new Error("boom")
@@ -164,6 +206,18 @@ describe("configRows", () => {
   test("renders lancedb backend path", () => {
     const rows = configRows({ ...SETTINGS, vectorStore: "lancedb" })
     assert.ok(rows.find((row) => row.label === "Vector store")?.value.includes("LanceDB"))
+  })
+
+  test("shows the plugin version next to the settings file", () => {
+    const rows = configRows(SETTINGS, "0.3.5")
+    const labels = rows.map((row) => row.label)
+    assert.equal(rows.find((row) => row.label === "Plugin version")?.value, "0.3.5")
+    // Both rows answer "where does this come from?", so they travel together.
+    assert.equal(labels[labels.indexOf("Settings file") + 1], "Plugin version")
+  })
+
+  test("says unknown when no version was reported", () => {
+    assert.equal(configRows(SETTINGS).find((row) => row.label === "Plugin version")?.value, "unknown")
   })
 })
 

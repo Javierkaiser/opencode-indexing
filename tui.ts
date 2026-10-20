@@ -4,8 +4,10 @@
  * Two settings surfaces, both driven by the server plugin's RPC so
  * configuration stays in one place (`~/.config/opencode/indexing.json`):
  *
- *  1. `/indexing` → the JSX settings page (`tui/settings-page.tsx`), loaded
- *     lazily. If the host cannot resolve the JSX runtime, it degrades to:
+ *  1. `/indexing` → the settings page (`tui/settings-page.ts`), loaded
+ *     lazily. It is JSX-free and takes its runtime from the host (see
+ *     `tui/host-runtime.ts`); if the host cannot provide those modules it
+ *     degrades to:
  *  2. the same options as modal dialogs, dialogs-only and dependency-free, so
  *     the plugin still works on any host build. Reached with `e` from the page,
  *     automatically as the fallback, and from the palette ("Indexing: settings
@@ -15,6 +17,7 @@
  * resolves the real package (documented layout: `tui.ts` beside `index.ts`).
  */
 import type { Plugin } from "@opencode/plugin/tui"
+import type { Route } from "@opencode/plugin/tui/context"
 import type { JSX } from "@opentui/solid"
 
 import { IndexingRpc } from "./src/rpc.ts"
@@ -27,7 +30,7 @@ import { activeWorkspace, type WorkspaceSources } from "./tui/footer.ts"
 import { bindWorkspace } from "./tui/workspace-rpc.ts"
 import { describeRow, forgetWorkspaceFlow, type WorkspacesRpc } from "./tui/workspaces.ts"
 import { pagePalette } from "./tui/page-style.ts"
-import type { FooterHandle, FooterState } from "./tui/footer-view.tsx"
+import type { FooterHandle, FooterState } from "./tui/footer-view.ts"
 import { describeError } from "./src/errors.ts"
 import { getDefaultModelId, isLiveTested, listModelIds } from "./src/registry.ts"
 import type { EmbedderProvider } from "./src/types.ts"
@@ -47,7 +50,7 @@ const ID = "opencode.indexing"
 const CUSTOM_MODEL = "\u0000custom-model"
 
 type RpcClient = {
-  "settings.get": (input: Record<string, never>) => Promise<{ settings: SettingsView }>
+  "settings.get": (input: Record<string, never>) => Promise<{ settings: SettingsView; version?: string }>
   "settings.set": (input: { patch: Record<string, unknown> }) => Promise<{ settings: SettingsView }>
   "settings.test": (input: {
     target: "qdrant" | "lancedb" | "provider" | "kilo"
@@ -191,15 +194,23 @@ const plugin = {
 
     async function mainMenu(): Promise<void> {
       let settings: SettingsView
+      let version: string | undefined
       try {
-        settings = await loadSettings()
+        // Read the whole response rather than `loadSettings()`: the version is
+        // only needed here, and it rides along with the settings, so naming the
+        // release in the dialog costs no extra round trip.
+        const response = await rpc()["settings.get"]({})
+        settings = response.settings
+        version = response.version
       } catch (error) {
         fail(error)
         return
       }
 
       const choice = await context.ui.dialog.select({
-        title: "Indexing settings",
+        // Named in the title so a report about this dialog can quote the build
+        // it came from. Omitted when the server could not read its manifest.
+        title: version ? `Indexing settings · v${version}` : "Indexing settings",
         current: settings.vectorStore,
         options: [
           {
@@ -592,6 +603,16 @@ const plugin = {
     let pageStore: SettingsPageStore | undefined
 
     /**
+     * Where the user was when the page was opened, so escape hands them back
+     * there instead of always dropping them on home.
+     *
+     * Captured before the page takes the route, and only while the page is not
+     * already current: re-opening the page while it is up must not record the
+     * page itself as the origin, or the session the user came from is lost.
+     */
+    let returnRoute: Route | undefined
+
+    /**
      * Set while `openSettingsPage` is in flight.
      *
      * Two concurrent opens would interleave their `router.register` calls, and
@@ -654,6 +675,20 @@ const plugin = {
       if (opening) return
       opening = true
       try {
+        // Remember where the user was before the page takes the route: by the
+        // time `mountSettingsPage` returns, the page is already current and the
+        // origin would be gone. A re-open while the page is up must keep the
+        // capture it already has.
+        //
+        // Snapshotted into a plain object on purpose: the host hands back a live
+        // reference whose fields change with the route, so keeping it would let
+        // the page overwrite the session under us — escape then read the page as
+        // its own origin and fell back to home.
+        if (!onSettingsPage()) {
+          const current = context.ui.router?.current?.()
+          returnRoute = current ? { ...current } : undefined
+        }
+
         // Clear any registration left over from a previous open before asking the
         // host for another one with the same page name.
         releasePage()
@@ -662,7 +697,7 @@ const plugin = {
         pageStore = store
         const result = await mountSettingsPage({
           router: context.ui.router as unknown as RouterLike,
-          load: async () => await import("./tui/settings-page.tsx"),
+          load: async () => await import("./tui/settings-page.ts"),
           props: {
             rpc: () => rpc() as unknown as SettingsPageRpc,
             toast,
@@ -744,10 +779,21 @@ const plugin = {
           }
           if (entry.command === "close") {
             pageStore = undefined
+            // Consume the origin: the next open captures its own, and a stale one
+            // would send a later close somewhere the user never came from.
+            const origin = returnRoute
+            returnRoute = undefined
+            // The session can be gone by now — closed while the page was open —
+            // and navigating to it would land on a route with nothing behind it,
+            // so a dead session falls back to home like every other origin.
+            const back =
+              origin?.type === "session" && context.data?.session?.get?.(origin.sessionID)
+                ? { type: "session" as const, sessionID: origin.sessionID }
+                : { type: "home" as const }
             // Navigate first, unregister after: unregistering the page while it is
             // still the current route risks the host rendering a route that has no
             // page behind it.
-            context.ui.router.navigate({ type: "home" })
+            context.ui.router.navigate(back)
             releasePage()
             return
           }
@@ -865,7 +911,7 @@ const plugin = {
     // The footer content is JSX, so the module is awaited before the slot is
     // registered. A host without a JSX runtime simply gets no indicator; the rest
     // of the plugin, including the page and the dialogs, is unaffected.
-    const footerModule = await import("./tui/footer-view.tsx").catch((error: unknown) => {
+    const footerModule = await import("./tui/footer-view.ts").catch((error: unknown) => {
       console.warn(`[${ID}] footer indicator unavailable: ${describeError(error)}`)
       return undefined
     })
