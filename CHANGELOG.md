@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.6] - 2026-10-27
+
+### Changed
+- **Verified against OpenCode 2.2 and OpenTUI 0.7.** OpenTUI 0.7 moves custom
+  renderables onto construction-time hooks and replaces
+  `defineNativeIntegration()`; this plugin uses neither, and its only OpenTUI
+  surface — the JSX runtime (`jsx`/`jsxs`/`Fragment`) and
+  `createTextAttributes` — is unchanged. The virtual module scheme the TUI
+  relies on is unchanged in 2.2 as well, so there is no runtime change here:
+  the development dependencies move to `@opentui/* 0.7` and the 2.2 SDK so the
+  typecheck matches the host, and the optional peer ranges stay at `>=0.5.17`
+  because both 0.6 and 0.7 work. Because `@opentui/*` are optional peers rather
+  than dependencies, the new install-time requirement — plugins that pin
+  OpenTUI 0.6 fail to install — does not apply.
+
 ## [0.3.5] - 2026-10-20
 
 ### Changed
@@ -426,7 +441,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.6
 [0.3.5]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.5
 [0.3.4]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.4
 [0.3.3]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.3
