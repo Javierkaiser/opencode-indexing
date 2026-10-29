@@ -24,6 +24,8 @@
  * `500ms * 2^attempt`. Other 4xx responses fail immediately.
  */
 
+import type { StaticModel } from "mini-semantic-search"
+
 import {
   DEFAULT_EMBEDDING_BATCH_SIZE,
   getModelDimension,
@@ -533,6 +535,41 @@ function createOllamaRequest(settings: IndexingSettings): BatchRequest {
   }
 }
 
+/**
+ * The bundled static model, shared by every embedder in the process.
+ *
+ * `mini-semantic-search` packs potion-base-8M to 128 dimensions at 4 bits
+ * (~2 MB) and implements Model2Vec inference plus a BERT tokenizer in plain
+ * TypeScript: no native addon, no ONNX session and no background process, at
+ * about 0.2 ms per chunk. A failed load clears the cache so a later attempt can
+ * retry instead of pinning a rejected promise for the life of the process.
+ */
+let localModel: Promise<StaticModel> | undefined
+
+function loadLocalModel(): Promise<StaticModel> {
+  localModel ??= import("mini-semantic-search")
+    .then((module) => module.StaticModel.load())
+    .catch((error: unknown) => {
+      localModel = undefined
+      throw new Error(`local: could not load the bundled embedding model: ${errorMessage(error)}`)
+    })
+  return localModel
+}
+
+/**
+ * Local embeddings through the packaged static model.
+ *
+ * There is no server and no request: the batch is embedded in this process.
+ * Vectors come back unit length, which is what the store and the cosine score
+ * assume, and the model's 128 dimensions are fixed by its catalog entry.
+ */
+function createLocalRequest(): BatchRequest {
+  return async (texts) => {
+    const model = await loadLocalModel()
+    return texts.map((text) => Array.from(model.embed(text)))
+  }
+}
+
 function requireSpec(provider: EmbedderProvider): ProviderSpec {
   const spec = PROVIDER_SPECS[provider]
   if (!spec) throw new Error(`Unsupported embedder provider: ${provider}`)
@@ -603,6 +640,8 @@ export function createEmbedder(settings: IndexingSettings): Embedder {
   // sets. Mistral and OpenAI declare none.
   const prefix = getModelQueryPrefix(provider, settings.modelId) ?? settings.queryPrefix
   switch (provider) {
+    case "local":
+      return createEmbedderImpl(settings, createLocalRequest(), prefix)
     case "mistral":
       return createEmbedderImpl(settings, createMistralRequest(settings), undefined)
     case "openai":

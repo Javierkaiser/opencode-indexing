@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-29
+
+### Added
+- **Bundled local embeddings: no API key and no network required.**
+  `provider: "local"` embeds with a ~2 MB static model (potion-base-8M packed to
+  128 dimensions at 4 bits) that runs in plain TypeScript in the same process —
+  no native addon, no ONNX runtime, no background service — at about 0.2 ms per
+  chunk. It becomes the default when no cloud credential is configured, so a
+  fresh install indexes without any setup.
+
+  Measured on this repository with `bench/run.mjs` (25 labelled queries):
+  recall@10 stays at 100% and MRR moves from 0.518 (Mistral `codestral-embed`,
+  1536 dimensions) to 0.490, while a full rebuild drops from ~2 minutes to
+  ~6 seconds. The model is English-only: Spanish queries retrieve noticeably
+  worse, and the cloud and Ollama providers remain for that case.
+
+### Changed
+- An unknown `provider` falls back by the same rule as the default: the bundled
+  local model when there are no credentials, Mistral when there are.
+
 ## [0.3.6] - 2026-10-27
 
 ### Changed
@@ -441,7 +461,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.3.6...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.4.0
 [0.3.6]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.6
 [0.3.5]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.5
 [0.3.4]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.4

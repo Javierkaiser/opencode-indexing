@@ -258,7 +258,7 @@ function installLocal() {
     return
   }
 
-  log("  installing runtime deps (ignore + optional lancedb/tree-sitter/apache-arrow)...")
+  log("  installing runtime deps (ignore + mini-semantic-search + optional lancedb/tree-sitter/apache-arrow)...")
   const npm = isWindows ? "npm.cmd" : "npm"
   // --omit=peer drops peer dependencies, and apache-arrow is a peer of
   // @lancedb/lancedb: it is declared explicitly above so the native binary

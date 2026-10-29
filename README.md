@@ -24,6 +24,12 @@ and you only ever pay to index the files that changed since.
 *called*, in a search that keeps working whether or not the tool that built the
 index is still installed.
 
+**Zero setup.** With no API key configured the plugin embeds locally: the package
+ships a ~2 MB static model (potion-base-8M, 128 dimensions) that runs in plain
+TypeScript in the same process. No network, no account, no service — and about
+0.2 ms per chunk, so a full index of this repository takes seconds instead of
+minutes. It is English-only; a configured cloud key still wins.
+
 ## Install
 
 ### With npx (recommended)
@@ -258,13 +264,14 @@ Configurable from all three:
 
 ### Embedding providers
 
-All seven have an adapter. Every model below is in the catalog, which is what
+All eight have an adapter. Every model below is in the catalog, which is what
 supplies the dimension, the score threshold and the input ceiling; a model that
 is not listed still works, and its dimension is probed from the provider on
 first use. See the next section for how far each one has actually been tested.
 
 | Provider | Default model | Also in the catalog | Input ceiling |
 | --- | --- | --- | --- |
+| `local` | `potion-base-8M-128d` | — | 512 |
 | `mistral` | `codestral-embed-2505` | `codestral-embed`, `mistral-embed` | 8,192 |
 | `openai` | `text-embedding-3-small` | `text-embedding-3-large`, `text-embedding-ada-002` | 8,192 |
 | `voyage` | `voyage-code-3` | **`voyage-code-4`**, `voyage-4`, `voyage-4-large`, `voyage-4-lite`, `voyage-3-lite` | **32,000** |
@@ -273,10 +280,34 @@ first use. See the next section for how far each one has actually been tested.
 | `ollama` | `nomic-embed-text` | `mxbai-embed-large`, `all-minilm`, `bge-m3` | 512 – 8,192 |
 | `openai-compatible` | none | whatever your endpoint serves | probed |
 
+#### Local embeddings (no key, no network)
+
+The package ships a static model — [potion-base-8M](https://huggingface.co/minishlab/potion-base-8M)
+packed to 128 dimensions at 4 bits, ~2 MB — and embeds in this process. Model2Vec
+embeddings are one vector per token, averaged, so there is no neural network, no
+ONNX runtime and no background process: a chunk costs about 0.2 ms of CPU and the
+model adds no dependency beyond itself.
+
+It is the default when no cloud credential is configured, and it can be selected
+explicitly with `provider: "local"`. Measured on this repository with
+`bench/run.mjs` (25 labelled queries):
+
+| Strategy | Hit@10 | Recall@10 | MRR | nDCG@10 |
+| --- | --- | --- | --- | --- |
+| keyword (`grep`) | 64.0% | 64.0% | 0.212 | 0.315 |
+| `local` (potion, 128d) | 100% | 100% | 0.490 | 0.625 |
+| `mistral` (codestral, 1536d) | 100% | 100% | 0.518 | 0.643 |
+
+Same recall, ~5% lower MRR than the cloud model, and a full rebuild takes ~6 s
+instead of ~2 min. The catch: it is **English-only**. Queries written in Spanish
+against English code retrieve noticeably worse; use a cloud provider or Ollama
+(`bge-m3`) when that matters.
+
 #### Getting an API key (Mistral)
 
-Mistral is the default provider and the only one tested end to end here, so it is
-the shortest path to a working index. API access is enabled by default on a free
+Mistral is the default provider when a Mistral key is configured, and the only
+cloud one tested end to end here, so it is the shortest path to a cloud-backed
+index. API access is enabled by default on a free
 account — **no credit card** — with a usage limit that is enough to index a
 repository.
 
@@ -434,6 +465,10 @@ Word about data safety: Kilo's indexes (`ws-*` collections and its LanceDB direc
   The three remain declared as dev dependencies and optional peers, never as
   installable dependencies. Without the host runtime the settings page degrades
   to dialogs and the footer is simply absent.
+- **For embeddings: nothing to install or run by default.** With no cloud key the
+  plugin uses the bundled static model (English-only, ~2 MB, no network). Set a
+  provider key to switch to a cloud model, or run Ollama for a local multilingual
+  one.
 - **For the own index: nothing to run.** The default store is embedded LanceDB
   (`@lancedb/lancedb`), so there is no server to start, no port to free and
   no container to keep alive.

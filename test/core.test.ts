@@ -89,16 +89,34 @@ describe("config", () => {
     assert.doesNotThrow(() => stripJsonComments(bom))
   })
 
-  test("resolveSettings defaults to mistral/codestral and localhost qdrant", () => {
+  test("resolveSettings defaults to the bundled local model when no key exists", () => {
     const settings = resolveSettings({ ignoreKiloConfig: true })
-    assert.equal(settings.provider, "mistral")
-    assert.equal(settings.modelId, "codestral-embed-2505")
-    assert.equal(settings.dimension, 1536)
+    assert.equal(settings.provider, "local")
+    assert.equal(settings.modelId, "potion-base-8M-128d")
+    assert.equal(settings.dimension, 128)
     assert.equal(settings.qdrantUrl, "http://localhost:6333")
-    assert.equal(settings.scoreThreshold, 0.35)
+    assert.equal(settings.scoreThreshold, 0.3)
     assert.equal(settings.searchMaxResults, 50)
     assert.equal(settings.embeddingBatchSize, 60)
     assert.ok(settings.fileExtensions.includes(".cs"))
+    assert.ok(
+      settings.warnings.some((warning) => warning.includes("bundled local model")),
+      "the zero-setup default must say why it was chosen",
+    )
+  })
+
+  test("a cloud key keeps mistral as the default provider", () => {
+    const previous = process.env.KILO_INDEX_MISTRAL_KEY
+    process.env.KILO_INDEX_MISTRAL_KEY = "test-key"
+    try {
+      const settings = resolveSettings({ ignoreKiloConfig: true })
+      assert.equal(settings.provider, "mistral")
+      assert.equal(settings.modelId, "codestral-embed-2505")
+      assert.equal(settings.dimension, 1536)
+    } finally {
+      if (previous === undefined) delete process.env.KILO_INDEX_MISTRAL_KEY
+      else process.env.KILO_INDEX_MISTRAL_KEY = previous
+    }
   })
 
   test("options override kilo config and env", () => {

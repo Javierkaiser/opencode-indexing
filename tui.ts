@@ -383,6 +383,7 @@ const plugin = {
         title: "Embedding provider",
         current: settings.provider,
         options: [
+          { title: "local (on-device, no key)", value: "local", description: "Bundled lightweight model · no network · ~0.2 ms/chunk" },
           { title: "mistral (codestral-embed)", value: "mistral", description: "Default. Requires a Mistral API key" },
           { title: "openai", value: "openai", description: "text-embedding-3-small/large" },
           { title: "ollama (local)", value: "ollama", description: "Local models, no API key" },

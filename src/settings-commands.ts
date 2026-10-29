@@ -107,6 +107,7 @@ export const SETTING_GROUPS = [
 export type SettingGroupId = (typeof SETTING_GROUPS)[number]["id"]
 
 const PROVIDERS = [
+  "local",
   "mistral",
   "openai",
   "ollama",

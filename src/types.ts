@@ -4,6 +4,7 @@
  */
 
 export type EmbedderProvider =
+  | "local"
   | "mistral"
   | "openai"
   | "ollama"

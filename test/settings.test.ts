@@ -158,7 +158,8 @@ describe("resolveSettings with indexing.json", () => {
   test("unknown provider falls back with a warning", () => {
     const home = makeHome()
     const settings = resolveSettings({ homeDir: home, provider: "nope" })
-    assert.equal(settings.provider, "mistral")
+    // With no credentials the zero-setup default is the bundled local model.
+    assert.equal(settings.provider, "local")
     assert.ok(settings.warnings.some((warning) => warning.includes("nope")))
   })
 })

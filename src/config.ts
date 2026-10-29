@@ -66,6 +66,7 @@ interface KiloConfigIndexing {
 }
 
 export const VALID_PROVIDERS: readonly EmbedderProvider[] = [
+  "local",
   "mistral",
   "openai",
   "ollama",
@@ -130,34 +131,9 @@ export function resolveSettings(options: PluginOptionsInput): IndexingSettings {
   const kilo = options.ignoreKiloConfig ? undefined : readKiloIndexingConfig(options.homeDir)
   const apiKeys = file?.apiKeys
 
-  const provider =
-    pickProvider(options.provider) ??
-    pickProvider(file?.provider) ??
-    pickProvider(process.env.KILO_INDEX_PROVIDER) ??
-    pickProvider(kilo?.provider) ??
-    ("mistral" as EmbedderProvider)
-  if (options.provider && !pickProvider(options.provider)) {
-    warnings.push(`Unknown provider "${options.provider}" in plugin options; using "${provider}"`)
-  }
-
-  const modelId =
-    nonEmpty(options.model) ??
-    nonEmpty(file?.model) ??
-    nonEmpty(process.env.KILO_INDEX_MODEL) ??
-    nonEmpty(kilo?.model) ??
-    getDefaultModelId(provider) ??
-    ""
-  if (!modelId) warnings.push(`No embedding model configured for provider "${provider}"`)
-
-  const dimension =
-    (typeof options.dimension === "number" && options.dimension > 0 ? options.dimension : undefined) ??
-    (typeof file?.dimension === "number" && file.dimension > 0 ? file.dimension : undefined) ??
-    (typeof kilo?.dimension === "number" && kilo.dimension > 0 ? kilo.dimension : undefined) ??
-    getModelDimension(provider, modelId)
-  if (!dimension) {
-    warnings.push(`Unknown embedding dimension for ${provider}/${modelId}; it will be detected on first use`)
-  }
-
+  // Credentials are resolved before the provider because the default depends on
+  // them: a machine with no cloud key at all should still index, so it falls
+  // back to the bundled local model instead of a provider it cannot call.
   const credentials: ProviderCredentials = {
     mistralApiKey:
       nonEmpty(apiKeys?.mistral) ??
@@ -185,6 +161,50 @@ export function resolveSettings(options: PluginOptionsInput): IndexingSettings {
       nonEmpty(apiKeys?.openrouter) ??
       nonEmpty(process.env.KILO_INDEX_OPENROUTER_KEY) ??
       nonEmpty(kilo?.openrouter?.apiKey),
+  }
+
+  /** Whether any cloud embedding provider could be called without more setup. */
+  const hasCloudKey = Boolean(
+    credentials.mistralApiKey ||
+      credentials.openAiApiKey ||
+      credentials.geminiApiKey ||
+      credentials.voyageApiKey ||
+      credentials.openRouterApiKey,
+  )
+
+  const explicitProvider =
+    pickProvider(options.provider) ??
+    pickProvider(file?.provider) ??
+    pickProvider(process.env.KILO_INDEX_PROVIDER) ??
+    pickProvider(kilo?.provider)
+
+  // The zero-setup default: local embeddings when there is nothing to call.
+  const provider = explicitProvider ?? (hasCloudKey ? ("mistral" as EmbedderProvider) : ("local" as EmbedderProvider))
+  if (!explicitProvider && !hasCloudKey) {
+    warnings.push(
+      "No embedding credentials found; using the bundled local model (English-only, no network).",
+    )
+  }
+  if (options.provider && !pickProvider(options.provider)) {
+    warnings.push(`Unknown provider "${options.provider}" in plugin options; using "${provider}"`)
+  }
+
+  const modelId =
+    nonEmpty(options.model) ??
+    nonEmpty(file?.model) ??
+    nonEmpty(process.env.KILO_INDEX_MODEL) ??
+    nonEmpty(kilo?.model) ??
+    getDefaultModelId(provider) ??
+    ""
+  if (!modelId) warnings.push(`No embedding model configured for provider "${provider}"`)
+
+  const dimension =
+    (typeof options.dimension === "number" && options.dimension > 0 ? options.dimension : undefined) ??
+    (typeof file?.dimension === "number" && file.dimension > 0 ? file.dimension : undefined) ??
+    (typeof kilo?.dimension === "number" && kilo.dimension > 0 ? kilo.dimension : undefined) ??
+    getModelDimension(provider, modelId)
+  if (!dimension) {
+    warnings.push(`Unknown embedding dimension for ${provider}/${modelId}; it will be detected on first use`)
   }
 
   // Kilo decides where an import reads FROM; it does not decide where the own

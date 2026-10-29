@@ -65,6 +65,21 @@ const profiles: Partial<Record<EmbedderProvider, Record<string, ModelProfile>>> 
     // simply made every Gemini-via-OpenRouter index un-importable.
     "google/gemini-embedding-2-preview": { dimension: 3072, scoreThreshold: 0.35, maxInputTokens: 8192 },
   },
+  local: {
+    // Packed potion-base-8M: 128 of its 256 dimensions at 4 bits. Model2Vec
+    // embeddings are static — one vector per token, averaged — so there is no
+    // neural network to run: the model is a ~2 MB lookup table and a chunk
+    // costs about 0.2 ms of CPU. English only, hence the id says nothing about
+    // other languages; a multilingual model is a separate id when it exists.
+    "potion-base-8M-128d": {
+      dimension: 128,
+      scoreThreshold: 0.3,
+      maxInputTokens: 512,
+      maxBatchItems: 64,
+      normalized: true,
+      kiloMirror: false,
+    },
+  },
   // Kilo's registry also lists `bedrock` and `vercel-ai-gateway`. Both are
   // deliberately absent: bedrock needs SigV4 request signing, and neither is a
   // provider this plugin offers. A catalog entry with no implemented adapter is
@@ -73,6 +88,7 @@ const profiles: Partial<Record<EmbedderProvider, Record<string, ModelProfile>>> 
 }
 
 const defaults: Record<string, string> = {
+  local: "potion-base-8M-128d",
   openai: "text-embedding-3-small",
   ollama: "nomic-embed-text",
   gemini: "gemini-embedding-001",
@@ -193,7 +209,7 @@ export function getDefaultModelId(provider: EmbedderProvider): string {
  * every test and fail on first use. Surfacing that where a provider is chosen is
  * cheaper than letting a user discover it from a failed indexing run.
  */
-export const LIVE_TESTED_PROVIDERS: ReadonlySet<string> = new Set(["mistral"])
+export const LIVE_TESTED_PROVIDERS: ReadonlySet<string> = new Set(["mistral", "local"])
 
 export function isLiveTested(provider: EmbedderProvider): boolean {
   return LIVE_TESTED_PROVIDERS.has(provider)

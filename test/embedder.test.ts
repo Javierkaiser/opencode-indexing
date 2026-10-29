@@ -387,6 +387,7 @@ test("every declared provider has an implementation", () => {
   const implemented: Array<
     [EmbedderProvider, Partial<IndexingSettings>, Partial<IndexingSettings["credentials"]>]
   > = [
+    ["local", { modelId: "potion-base-8M-128d", dimension: 128 }, {}],
     ["mistral", {}, { mistralApiKey: "k" }],
     ["openai", { modelId: "text-embedding-3-small", dimension: 1536 }, { openAiApiKey: "k" }],
     ["voyage", { modelId: "voyage-code-4", dimension: 1024 }, { voyageApiKey: "k" }],
@@ -406,6 +407,32 @@ test("every declared provider has an implementation", () => {
       `${provider} is selectable but has no adapter`,
     )
   }
+})
+
+test("local: embeds through the bundled static model without any request", async () => {
+  const embedder = createEmbedder(
+    baseSettings({ provider: "local", modelId: "potion-base-8M-128d", dimension: 128 }),
+  )
+
+  const vectors = await embedder.embed(["where files are discovered before indexing", "manifest store"])
+
+  assert.equal(vectors.length, 2)
+  assert.equal(vectors[0]?.length, 128, "the catalog dimension must match the model")
+  assert.equal(vectors[1]?.length, 128)
+  // The model normalizes and the store scores with cosine, so a vector that is
+  // not unit length means the wrong model or a broken pooling step.
+  const norm = Math.hypot(...(vectors[0] as number[]))
+  assert.ok(Math.abs(norm - 1) < 1e-3, `expected unit length, got ${norm}`)
+  assert.equal(calls.length, 0, "the local provider must not call fetch")
+})
+
+test("local: the same text embeds to the same vector", async () => {
+  const embedder = createEmbedder(
+    baseSettings({ provider: "local", modelId: "potion-base-8M-128d", dimension: 128 }),
+  )
+  const [first] = await embedder.embed(["workspace scanner"])
+  const [second] = await embedder.embed(["workspace scanner"])
+  assert.deepEqual(first, second)
 })
 
 test("ollama: refuses to truncate an over-long chunk instead of embedding a prefix", async () => {

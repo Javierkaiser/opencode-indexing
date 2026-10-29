@@ -60,6 +60,8 @@ SOFTWARE.
 | [`web-tree-sitter`](https://github.com/tree-sitter/tree-sitter) | MIT | Tree-sitter contributors |
 | [`tree-sitter-wasms`](https://github.com/Gregoor/tree-sitter-wasms) | Unlicense | Gregor (packaging); grammars by their respective authors |
 | [`ignore`](https://github.com/kaelzhang/node-ignore) | MIT | Kael Zhang and contributors |
+| [`mini-semantic-search`](https://github.com/ShakirasHips/model2vec-js) | MIT | ShakirasHips contributors |
+| [`potion-base-8M`](https://huggingface.co/minishlab/potion-base-8M) (bundled model) | MIT | Minish Lab |
 
 Tree-sitter grammar `.wasm` files bundled by `tree-sitter-wasms` are distributed
 under their upstream licenses (mostly MIT or Apache-2.0); see the
