@@ -271,7 +271,7 @@ first use. See the next section for how far each one has actually been tested.
 
 | Provider | Default model | Also in the catalog | Input ceiling |
 | --- | --- | --- | --- |
-| `local` | `potion-base-8M-128d` | — | 512 |
+| `local` | `potion-base-8M-128d` | `potion-multilingual-128M` | 512 |
 | `mistral` | `codestral-embed-2505` | `codestral-embed`, `mistral-embed` | 8,192 |
 | `openai` | `text-embedding-3-small` | `text-embedding-3-large`, `text-embedding-ada-002` | 8,192 |
 | `voyage` | `voyage-code-3` | **`voyage-code-4`**, `voyage-4`, `voyage-4-large`, `voyage-4-lite`, `voyage-3-lite` | **32,000** |
@@ -282,26 +282,37 @@ first use. See the next section for how far each one has actually been tested.
 
 #### Local embeddings (no key, no network)
 
-The package ships a static model — [potion-base-8M](https://huggingface.co/minishlab/potion-base-8M)
-packed to 128 dimensions at 4 bits, ~2 MB — and embeds in this process. Model2Vec
-embeddings are one vector per token, averaged, so there is no neural network, no
-ONNX runtime and no background process: a chunk costs about 0.2 ms of CPU and the
-model adds no dependency beyond itself.
+Two static models, and neither runs a neural network: Model2Vec keeps one vector
+per token and averages them, so embedding a chunk is a lookup plus a mean — about
+0.2 ms of CPU — with no ONNX runtime and no service.
 
-It is the default when no cloud credential is configured, and it can be selected
-explicitly with `provider: "local"`. Measured on this repository with
-`bench/run.mjs` (25 labelled queries):
-
-| Strategy | Hit@10 | Recall@10 | MRR | nDCG@10 |
+| Model id | Dim | Where it lives | Cost while loaded | Languages |
 | --- | --- | --- | --- | --- |
-| keyword (`grep`) | 64.0% | 64.0% | 0.212 | 0.315 |
-| `local` (potion, 128d) | 100% | 100% | 0.490 | 0.625 |
-| `mistral` (codestral, 1536d) | 100% | 100% | 0.518 | 0.643 |
+| `potion-base-8M-128d` | 128 | bundled (~2 MB) | ~40 MB | English |
+| `potion-multilingual-128M` | 256 | downloaded once (512 MB fp32 → 123 MB int8) | ~500 MB, released 5 min after the last use | 101 |
 
-Same recall, ~5% lower MRR than the cloud model, and a full rebuild takes ~6 s
-instead of ~2 min. The catch: it is **English-only**. Queries written in Spanish
-against English code retrieve noticeably worse; use a cloud provider or Ollama
-(`bge-m3`) when that matters.
+`potion-base-8M-128d` is the default when no cloud credential is configured, so a
+fresh install indexes offline with no setup. `potion-multilingual-128M` is for
+non-English queries or corpora; it is opt-in by model id because the first use
+downloads the weights and quantizes them.
+
+Measured on this repository with `bench/run.mjs`:
+
+| Queries | Model | Hit@10 | Recall@10 | MRR | nDCG@10 |
+| --- | --- | --- | --- | --- | --- |
+| English (25) | `local` English, 128d | 100% | 100% | 0.490 | 0.625 |
+| English (25) | `local` multilingual, 256d | 100% | 100% | 0.404 | 0.555 |
+| English (25) | `mistral` codestral, 1536d | 100% | 100% | 0.518 | 0.643 |
+| Spanish (5, mixed) | `local` English, 128d | 100% | 100% | 0.500 | 0.631 |
+| Spanish (5, mixed) | `local` multilingual, 256d | 100% | 100% | 0.433 | 0.579 |
+
+The multilingual model does bridge languages — cosine 0.69–0.77 between a Spanish
+question and its English translation, against 0.25 for unrelated text — but on a
+corpus of English code the English model still ranks better on both sets. Reach
+for the multilingual id when the repository itself carries other languages in
+prose or comments; on an English-only codebase the smaller model is both faster
+and more accurate. A full rebuild takes ~6 s (English) or ~12 s (multilingual,
+warm cache) instead of ~2 min through Mistral.
 
 #### Getting an API key (Mistral)
 
@@ -466,9 +477,10 @@ Word about data safety: Kilo's indexes (`ws-*` collections and its LanceDB direc
   installable dependencies. Without the host runtime the settings page degrades
   to dialogs and the footer is simply absent.
 - **For embeddings: nothing to install or run by default.** With no cloud key the
-  plugin uses the bundled static model (English-only, ~2 MB, no network). Set a
-  provider key to switch to a cloud model, or run Ollama for a local multilingual
-  one.
+  plugin uses the bundled static model (English-only, ~2 MB, no network). The
+  catalog also offers a multilingual static model that is downloaded once
+  (~123 MB after quantization). Set a provider key to switch to a cloud model, or
+  run Ollama for a local multilingual one.
 - **For the own index: nothing to run.** The default store is embedded LanceDB
   (`@lancedb/lancedb`), so there is no server to start, no port to free and
   no container to keep alive.

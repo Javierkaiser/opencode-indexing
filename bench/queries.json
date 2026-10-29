@@ -26,6 +26,11 @@
     { "id": "q22", "type": "concept", "query": "extract headings and sections from markdown documents", "expected": ["src/treesitter/markdown.ts"] },
     { "id": "q23", "type": "concept", "query": "delete stored points that belong to specific files", "expected": ["src/own-store.ts"] },
     { "id": "q24", "type": "concept", "query": "adapt the host plugin key value storage to the internal interface", "expected": ["src/storage.ts"] },
-    { "id": "q25", "type": "identifier", "query": "chunkPaths batching of file paths for delete requests", "expected": ["src/own-store.ts"] }
+    { "id": "q25", "type": "identifier", "query": "chunkPaths batching of file paths for delete requests", "expected": ["src/own-store.ts"] },
+    { "id": "q26", "type": "concept", "query": "dónde se descubren los archivos del workspace antes de indexarlos", "expected": ["src/scanner.ts"] },
+    { "id": "q27", "type": "concept", "query": "dónde se guardan los ajustes del plugin y sus credenciales", "expected": ["src/settings.ts"] },
+    { "id": "q28", "type": "concept", "query": "cómo se calcula el hash del workspace para nombrar la colección", "expected": ["src/registry.ts"] },
+    { "id": "q29", "type": "concept", "query": "dónde se importa un índice de Kilo sin volver a generar los embeddings", "expected": ["src/import.ts"] },
+    { "id": "q30", "type": "concept", "query": "dónde se resuelven el proveedor de embeddings y sus claves", "expected": ["src/config.ts"] }
   ]
 }

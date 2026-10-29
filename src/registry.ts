@@ -79,6 +79,18 @@ const profiles: Partial<Record<EmbedderProvider, Record<string, ModelProfile>>> 
       normalized: true,
       kiloMirror: false,
     },
+    // Multilingual: 101 languages, 256 dimensions, ~128 MB of int8 weights that
+    // are downloaded once. Same static scheme, so it is slow to fetch and fast
+    // to run — the opposite of the ONNX tier, which was fast to fetch and cost
+    // ~870 MB of resident memory.
+    "potion-multilingual-128M": {
+      dimension: 256,
+      scoreThreshold: 0.3,
+      maxInputTokens: 512,
+      maxBatchItems: 64,
+      normalized: true,
+      kiloMirror: false,
+    },
   },
   // Kilo's registry also lists `bedrock` and `vercel-ai-gateway`. Both are
   // deliberately absent: bedrock needs SigV4 request signing, and neither is a

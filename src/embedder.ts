@@ -35,6 +35,8 @@ import {
 } from "./registry.ts"
 import type { Embedder, EmbedderProvider, IndexingSettings } from "./types.ts"
 import { describeError } from "./errors.ts"
+import { LOCAL_MODELS, localModelSpec } from "./local/models.ts"
+import { loadWeightsModel, releaseWeightsModel } from "./local/weights.ts"
 
 const REQUEST_TIMEOUT_MS = 60_000
 const OLLAMA_TIMEOUT_MS = 120_000
@@ -536,37 +538,84 @@ function createOllamaRequest(settings: IndexingSettings): BatchRequest {
 }
 
 /**
- * The bundled static model, shared by every embedder in the process.
+ * One loaded local model.
  *
- * `mini-semantic-search` packs potion-base-8M to 128 dimensions at 4 bits
- * (~2 MB) and implements Model2Vec inference plus a BERT tokenizer in plain
- * TypeScript: no native addon, no ONNX session and no background process, at
- * about 0.2 ms per chunk. A failed load clears the cache so a later attempt can
- * retry instead of pinning a rejected promise for the life of the process.
+ * `embed` is synchronous: both sources are lookup tables in memory, so there is
+ * no request to await per text and nothing to keep alive between calls.
  */
-let localModel: Promise<StaticModel> | undefined
+interface LocalEngine {
+  embed(text: string): ArrayLike<number>
+}
 
-function loadLocalModel(): Promise<StaticModel> {
-  localModel ??= import("mini-semantic-search")
-    .then((module) => module.StaticModel.load())
-    .catch((error: unknown) => {
-      localModel = undefined
-      throw new Error(`local: could not load the bundled embedding model: ${errorMessage(error)}`)
-    })
-  return localModel
+const localEngines = new Map<string, Promise<LocalEngine>>()
+
+/**
+ * Load (once per process) the local model named by `modelId`.
+ *
+ * The bundled model is the English default and costs no download. The weights
+ * model is the multilingual one: its first load downloads and quantizes ~512 MB
+ * (see `local/weights.ts`), so it is deliberately opt-in by model id rather than
+ * the default. A failed load clears the cache so a later attempt can retry
+ * instead of pinning a rejected promise for the life of the process.
+ */
+function loadLocalEngine(modelId: string): Promise<LocalEngine> {
+  const cached = localEngines.get(modelId)
+  if (cached) return cached
+
+  const spec = localModelSpec(modelId)
+  if (!spec) {
+    throw new Error(`local: unknown model "${modelId}" (known: ${Object.keys(LOCAL_MODELS).join(", ")})`)
+  }
+
+  const pending =
+    spec.source.kind === "bundled"
+      ? import("mini-semantic-search").then((module) => module.StaticModel.load())
+      : loadWeightsModel(modelId, spec)
+
+  const engine = pending.catch((error: unknown) => {
+    localEngines.delete(modelId)
+    throw new Error(`local: could not load "${modelId}": ${errorMessage(error)}`)
+  })
+  localEngines.set(modelId, engine)
+  return engine
 }
 
 /**
- * Local embeddings through the packaged static model.
+ * How long a local model stays in memory after its last use.
+ *
+ * The bundled English model is small enough to keep (~38 MB). The multilingual
+ * one is not: its int8 weights are 123 MB and its XLM-R tokenizer another
+ * ~275 MB, so a process that offered one Spanish query would otherwise pay
+ * ~500 MB until it exits. Dropping the references lets the next idle period
+ * reclaim them, at the cost of a ~2 s reload on the next use.
+ */
+const LOCAL_IDLE_UNLOAD_MS = 5 * 60_000
+let localIdleTimer: ReturnType<typeof setTimeout> | undefined
+
+function scheduleLocalUnload(modelId: string): void {
+  if (localIdleTimer) clearTimeout(localIdleTimer)
+  localIdleTimer = setTimeout(() => {
+    localIdleTimer = undefined
+    localEngines.delete(modelId)
+    releaseWeightsModel(modelId)
+  }, LOCAL_IDLE_UNLOAD_MS)
+  // Never keep a process alive just to release memory.
+  localIdleTimer.unref?.()
+}
+
+/**
+ * Local embeddings through the model named in the settings.
  *
  * There is no server and no request: the batch is embedded in this process.
  * Vectors come back unit length, which is what the store and the cosine score
- * assume, and the model's 128 dimensions are fixed by its catalog entry.
+ * assume, and the model's dimensions are fixed by its catalog entry.
  */
-function createLocalRequest(): BatchRequest {
+function createLocalRequest(settings: IndexingSettings): BatchRequest {
   return async (texts) => {
-    const model = await loadLocalModel()
-    return texts.map((text) => Array.from(model.embed(text)))
+    const engine = await loadLocalEngine(settings.modelId)
+    const vectors = texts.map((text) => Array.from(engine.embed(text)))
+    scheduleLocalUnload(settings.modelId)
+    return vectors
   }
 }
 
@@ -641,7 +690,7 @@ export function createEmbedder(settings: IndexingSettings): Embedder {
   const prefix = getModelQueryPrefix(provider, settings.modelId) ?? settings.queryPrefix
   switch (provider) {
     case "local":
-      return createEmbedderImpl(settings, createLocalRequest(), prefix)
+      return createEmbedderImpl(settings, createLocalRequest(settings), prefix)
     case "mistral":
       return createEmbedderImpl(settings, createMistralRequest(settings), undefined)
     case "openai":

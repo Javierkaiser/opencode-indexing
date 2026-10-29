@@ -5,6 +5,32 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-10-29
+
+### Added
+- **A multilingual local model.** `provider: "local"` now also accepts
+  `potion-multilingual-128M` (256 dimensions, 101 languages, MIT). It uses the
+  same static scheme as the English default — no ONNX, no service, ~0.35 ms per
+  chunk — and downloads its weights once (512 MB fp32, cached as 123 MB int8
+  plus its tokenizer).
+
+  Weights are quantized per token row. A single scale for the whole table was
+  dominated by its largest value (5.7 against a mean of 0.25), so small rows
+  rounded to zero: those rows ended up with a cosine of 0 against their fp32
+  originals. Per-row scales keep every row above 0.9998 for 2 MB of extra
+  scales.
+
+  Measured with `bench/run.mjs`: English recall stays at 100% and MRR is 0.404
+  against 0.490 for the English model and 0.518 for Mistral codestral; on five
+  Spanish queries it is 0.433 against 0.500. The model does align the languages
+  (cosine 0.69–0.77 between a Spanish question and its English translation,
+  0.25 for unrelated text), but on this repository's English code the English
+  model still ranks better. It is opt-in by model id because it holds ~500 MB
+  while loaded; the process drops it after five idle minutes.
+
+### Changed
+- The benchmark set grows from 25 to 30 queries with five Spanish ones.
+
 ## [0.4.0] - 2026-10-29
 
 ### Added
@@ -461,7 +487,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.4.0
 [0.3.6]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.6
 [0.3.5]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.5
