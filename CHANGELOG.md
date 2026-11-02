@@ -5,6 +5,31 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-11-02
+
+### Fixed
+- **The Desktop settings page rendered blank.** It asked `status.get` for a
+  freshness check. A settings page has no session, so the request carried no
+  directory and the server scanned its own — on a service started from a home
+  directory, that is the whole machine. The scan outlived the RPC transport
+  timeout, the promise rejected, and the page had nothing left to render. The
+  read is now the cheap one: freshness belongs to the index actions, not to
+  opening a page.
+
+- **A failed read shows its reason instead of producing a blank page.** The
+  resource resolves with `{ error }` rather than rejecting, and the page renders
+  that reason with a Reload button. A rejected resource has nothing to render,
+  which is how the bug above stayed invisible long enough to ship.
+
+- **The page takes the setup context as a prop.** It called `usePlugin`, which
+  throws outside the host's provider; the SDK documents that provider for
+  routes, dialogs and slots, not for settings pages. Whether the host wraps this
+  page was an assumption, and it did not need to be one.
+
+### Added
+- Three tests pin those three properties by reading the source, because each is
+  invisible to the typecheck and only fails at runtime inside the app.
+
 ## [0.6.0] - 2026-11-02
 
 ### Added
@@ -541,7 +566,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.6.1
 [0.6.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.6.0
 [0.5.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.4.0

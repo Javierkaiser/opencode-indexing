@@ -52,4 +52,36 @@ describe("Desktop GUI entry", () => {
     assert.match(file, /"index\.refresh"/)
     assert.match(file, /ctx\.add\(\s*ComposerPill\s*,/)
   })
+
+  test("the settings page never asks for a freshness scan", () => {
+    // Settings has no session, so the directory is undefined and the server
+    // falls back to its own. `checkFreshness: true` then scans that directory:
+    // on a service running from a home directory that is the whole machine, and
+    // the scan outlives the RPC transport timeout. The page rendered nothing.
+    const file = read("src/gui.tsx")
+
+    assert.doesNotMatch(file, /checkFreshness:\s*true/)
+    assert.match(file, /checkFreshness:\s*false/)
+  })
+
+  test("a failed read resolves with the reason instead of rejecting", () => {
+    // A rejected resource leaves the page with nothing to render, and a blank
+    // page is how this bug stayed hidden. The fetcher has to catch and return.
+    const file = read("src/gui.tsx")
+
+    assert.match(file, /catch\s*\(error\)/)
+    assert.match(file, /return\s*\{\s*error:\s*describeError\(error\)\s*\}/)
+    assert.match(file, /"error"\s+in\s+result/)
+  })
+
+  test("the page takes the setup context as a prop, not from usePlugin", () => {
+    // `usePlugin` throws outside the host's provider. The page is rendered by
+    // the settings window, and the SDK only documents that provider for routes,
+    // dialogs and slots. Passing the setup context through a prop removes the
+    // assumption instead of betting on it.
+    const file = read("src/gui.tsx")
+
+    assert.doesNotMatch(file, /usePlugin/)
+    assert.match(file, /<IndexingSettings\s+ctx=\{ctx\}/)
+  })
 })

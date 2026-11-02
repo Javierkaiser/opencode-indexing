@@ -12,7 +12,6 @@ import {
   createKeyed,
   Plugin,
   SettingsPage,
-  usePlugin,
   type Context,
 } from "@opencode/plugin/gui"
 import { Show, createResource, createSignal, type JSX } from "solid-js"
@@ -123,40 +122,62 @@ function Section(props: { readonly title: string; readonly children: JSX.Element
   )
 }
 
-/** The Settings > Indexing page: effective configuration and index state. */
-function IndexingSettings() {
-  const ctx = usePlugin()
+/** What the page renders once the two reads settle: data, or a reason. */
+type SettingsPageResult =
+  | {
+      config: { settings: SettingsView; version?: string }
+      index: StatusView
+    }
+  | { error: string }
 
-  const [data, { refetch }] = createResource(async () => {
+/** The Settings > Indexing page: effective configuration and index state. */
+function IndexingSettings(props: { readonly ctx: Context }) {
+  const ctx = props.ctx
+
+  const [data, { refetch }] = createResource<SettingsPageResult>(async () => {
     const api = client(ctx)
+    // Settings has no session of its own, so this is usually undefined and the
+    // server falls back to its own directory. That is only safe because the
+    // read is cheap: asking for a freshness scan walks the workspace, and a
+    // service running from a home directory would walk the whole machine until
+    // the RPC transport timed out - which is exactly what left this page blank.
     const directory = ctx.sessions.current()?.directory
-    const [config, index] = await Promise.all([
-      api["settings.get"]({}),
-      api["status.get"]({ checkFreshness: true, directory }),
-    ])
-    return { config, index }
+    try {
+      const [config, index] = await Promise.all([
+        api["settings.get"]({}),
+        api["status.get"]({ checkFreshness: false, directory }),
+      ])
+      return { config, index }
+    } catch (error) {
+      // Resolve with the reason instead of rejecting. A rejected resource
+      // leaves the page with nothing to render, and a blank page hid this bug
+      // once already.
+      return { error: describeError(error) }
+    }
   })
 
   return (
     <div style={PAGE_STYLE}>
       <Show
         when={data()}
-        fallback={
-          <div style={{ display: "grid", gap: "8px", "justify-items": "start" }}>
-            <p style={{ margin: "0", opacity: 0.7 }}>
-              {data.error ? ctx.t("settings.failed") : ctx.t("settings.loading")}
-            </p>
-            <Show when={data.error}>
-              <button type="button" style={BUTTON_STYLE} onClick={() => void refetch()}>
-                {ctx.t("settings.reload")}
-              </button>
-            </Show>
-          </div>
-        }
+        fallback={<p style={{ margin: "0", opacity: 0.7 }}>{ctx.t("settings.loading")}</p>}
       >
         {(loaded) => {
-          const settings = () => loaded().config.settings
-          const index = () => loaded().index
+          const result = loaded()
+          if ("error" in result) {
+            return (
+              <div style={{ display: "grid", gap: "8px", "justify-items": "start" }}>
+                <p style={{ margin: "0" }}>{ctx.t("settings.failed")}</p>
+                <p style={{ margin: "0", opacity: 0.7 }}>{result.error}</p>
+                <button type="button" style={BUTTON_STYLE} onClick={() => void refetch()}>
+                  {ctx.t("settings.reload")}
+                </button>
+              </div>
+            )
+          }
+
+          const settings = () => result.config.settings
+          const index = () => result.index
           const state = () => stateOf(settings(), index())
 
           return (
@@ -195,7 +216,7 @@ function IndexingSettings() {
                   value={settings().configuredProviders.join(", ") || ctx.t("settings.none")}
                 />
                 <Row label={ctx.t("settings.file")} value={settings().settingsFile} />
-                <Row label={ctx.t("settings.version")} value={text(loaded().config.version)} />
+                <Row label={ctx.t("settings.version")} value={text(result.config.version)} />
               </Section>
 
               <div style={{ display: "flex", gap: "8px" }}>
@@ -367,7 +388,7 @@ export default Plugin.define({
       get title() {
         return ctx.t("settings.title")
       },
-      render: () => <IndexingSettings />,
+      render: () => <IndexingSettings ctx={ctx} />,
     })
 
     ctx.add(
