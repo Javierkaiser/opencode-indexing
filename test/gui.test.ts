@@ -84,4 +84,31 @@ describe("Desktop GUI entry", () => {
     assert.doesNotMatch(file, /usePlugin/)
     assert.match(file, /<IndexingSettings\s+ctx=\{ctx\}/)
   })
+
+  test("the page is built from the host's components, not raw controls", () => {
+    // A settings page that draws its own buttons reads as a different app. The
+    // SDK exposes the host's controls through ctx.ui and no theme tokens, so
+    // the layout is ours but every interactive piece must be the host's.
+    const file = read("src/gui.tsx")
+
+    assert.match(file, /ctx\.ui\.Button/)
+    assert.match(file, /ctx\.ui\.IconButton/)
+    assert.match(file, /ctx\.ui\.Switch/)
+    assert.match(file, /ctx\.ui\.Loader/)
+    assert.match(file, /ctx\.ui\.Icon/)
+    assert.match(file, /ctx\.ui\.Tooltip/)
+    assert.doesNotMatch(file, /<button\b/)
+  })
+
+  test("the three booleans persist through settings.set and adopt the server's answer", () => {
+    // The switch must show what the server stored, not what was asked for: a
+    // clamped or rejected value would otherwise look accepted until a reload.
+    const file = read("src/gui.tsx")
+
+    assert.match(file, /"settings\.set"/)
+    assert.match(file, /saveToggle\("enabled"/)
+    assert.match(file, /saveToggle\("importFromKilo"/)
+    assert.match(file, /saveToggle\("autoRefresh"/)
+    assert.match(file, /mutate\(/)
+  })
 })

@@ -187,7 +187,9 @@ OpenCode ──► codegraph_*  ───────► codegraph's graph (its 
 
 The terminal page and its dialog editor write the same file through the server
 plugin's RPC; `/indexing-config set` writes it from the server. The Desktop
-settings page and the `indexing_config` tool report the configuration read-only.
+settings page edits the three booleans (indexing enabled, import from Kilo,
+auto refresh) through the same RPC and reports the rest read-only; the
+`indexing_config` tool reports the configuration without writing it.
 
 ### `/indexing-config` — slash command
 
@@ -251,10 +253,10 @@ The terminal footer shows whether the current workspace is indexed, in one glyph
 The footer itself is terminal-only: `prompt.footer` is a TUI slot, and OpenCode
 Desktop has no equivalent status line under its composer. Desktop does not load
 the TUI part; it loads the package's separate `./gui-experimental` part instead.
-That part adds a **settings page** that reports the plugin's configuration
-read-only, with Build and Refresh actions, **palette commands** for those two
-index actions, and a **composer pill** that carries the index state beside the
-composer. They share
+That part adds a **settings page** with the configuration, Build and Refresh
+actions and native switches for the three booleans, **palette commands** for
+those two index actions, and a **composer pill** that carries the index state
+beside the composer. They share
 the same server-side state through the plugin's RPC, so the terminal page, the
 Desktop page and the tools share one settings file and one index. The footer and
 the composer pill are two expressions of the same state, not two indexes. The
@@ -278,7 +280,7 @@ The terminal dialog-based flow is reachable three ways:
 - Automatically: if the host cannot resolve the TUI runtime modules the page
   needs, `/indexing` opens this flow instead of the page.
 
-OpenCode Desktop has a read-only settings page for the same configuration, with Build and Refresh actions; in Desktop, change a value with `indexing_config_set` or by editing the settings file.
+OpenCode Desktop has a settings page for the same configuration, with Build and Refresh actions and switches for the three booleans; the remaining values are read-only there and change with `indexing_config_set` or by editing the settings file.
 
 `indexing_config` (the tool) reports the same configuration as `/indexing-config` and works in every client, because tools run server-side, and `indexing_config_set` changes a value the same way. Together they are the whole configuration surface for clients that do not dispatch slash commands.
 

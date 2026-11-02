@@ -5,6 +5,31 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-11-02
+
+### Changed
+- **The Desktop settings page looks like the rest of the app.** It was drawing
+  its own buttons, borders and typography, which is why it read as a different
+  application next to Pairing or Projects. The page now has a title and
+  subtitle, cards with a section header and separated rows, and uses the host's
+  own controls: `ctx.ui.Button`, `IconButton`, `Tooltip`, `Loader`, `Icon` and
+  `Switch`. The SDK exposes no theme tokens, so the layout stays ours and every
+  border is mixed from `currentColor`, which follows the host's light and dark
+  themes instead of hardcoding a grey.
+
+- **Indexing enabled, Import from Kilo and Auto refresh are now editable from
+  Desktop.** They are the three booleans, so they use the host's switch rather
+  than a checkbox that only exists here. Each write goes through
+  `settings.set`, and the page adopts the settings the server returns rather
+  than the value it asked for: a clamped or rejected change cannot look accepted
+  until the next reload. A failed write shows a toast and leaves the switch on
+  the stored value.
+
+### Added
+- Two tests pin the presentation: the page uses the host's components and
+  contains no raw `<button>`, and the three booleans are wired to `settings.set`
+  with the server's answer adopted through `mutate`.
+
 ## [0.6.1] - 2026-11-02
 
 ### Fixed
@@ -566,7 +591,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.6.2
 [0.6.1]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.6.1
 [0.6.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.6.0
 [0.5.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.5.0
