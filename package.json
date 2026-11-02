@@ -1,6 +1,6 @@
 {
   "name": "@javierkaiser/opencode-indexing",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "OpenCode plugin: semantic code search that reuses Kilo Code indexes (Qdrant/LanceDB) and maintains its own independent index",
   "license": "MIT",
   "author": "Carlos Javier Lust <javierkaiser@gmail.com>",
@@ -27,7 +27,8 @@
   "exports": {
     ".": "./index.ts",
     "./rpc": "./src/rpc.ts",
-    "./tui": "./tui.ts"
+    "./tui": "./tui.ts",
+    "./gui-experimental": "./dist/gui-experimental.cjs"
   },
   "bin": {
     "opencode-indexing": "./install.mjs"
@@ -37,6 +38,7 @@
     "tui.ts",
     "tui",
     "src",
+    "dist",
     "tsconfig.json",
     "install.mjs",
     "install.sh",
@@ -47,10 +49,12 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.gui.json --noEmit",
     "test:unit": "node --test \"test/*.test.ts\"",
     "test:integration": "node --test \"test/integration/*.test.ts\"",
     "test": "npm run typecheck && npm run test:unit",
+    "build:gui": "vite build",
+    "prepack": "npm run build:gui -- --logLevel warn",
     "bench": "node bench/run.mjs --strategy grep"
   },
   "engines": {
@@ -71,13 +75,15 @@
     "web-tree-sitter": "0.25.10"
   },
   "devDependencies": {
-    "@opencode/plugin": "^2.2.0",
-    "@opencode/theme": "^2.2.0",
-    "@opentui/core": "^0.7.0",
-    "@opentui/solid": "^0.7.0",
+    "@opencode/plugin": "^2.2.5",
+    "@opencode/theme": "^2.2.5",
+    "@opentui/core": "^0.8.1",
+    "@opentui/solid": "^0.8.1",
     "@types/node": "^22.19.0",
     "solid-js": "^1.9.12",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vite-plugin-solid": "^2.11.15"
   },
   "peerDependencies": {
     "@opencode/plugin": ">=2.0.0",

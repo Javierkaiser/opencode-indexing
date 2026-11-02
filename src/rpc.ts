@@ -54,7 +54,7 @@ const settingsShape = {
 } as const
 
 export const IndexingRpc = {
-  id: "opencode.indexing",
+  id: "javierkaiser.indexing",
   methods: {
     "settings.get": {
       input: empty,

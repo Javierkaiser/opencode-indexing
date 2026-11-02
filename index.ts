@@ -221,7 +221,7 @@ function summarizeReport(report: {
 }
 
 const plugin = {
-  id: "opencode.indexing",
+  id: "javierkaiser.indexing",
   async setup(ctx: Plugin.Context): Promise<void> {
     const root = ctx.location.directory as string
 

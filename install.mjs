@@ -286,7 +286,7 @@ function registeredCount() {
   return result.stdout
     .split("\n")
     .map((line) => line.trim().split(/\s+/)[0])
-    .filter((id) => id === "opencode.indexing").length
+    .filter((id) => id === "javierkaiser.indexing").length
 }
 
 function installPackage() {
@@ -301,7 +301,7 @@ function installPackage() {
   }
 
   // Remove the copied plugin *after* the package is in place. Both sources
-  // define `id: "opencode.indexing"`, and the config directory is scanned
+  // define `id: "javierkaiser.indexing"`, and the config directory is scanned
   // automatically, so leaving the copy behind would load the plugin twice.
   if (existsSync(dest)) {
     rmSync(dest, { recursive: true, force: true })
@@ -403,7 +403,7 @@ restartService()
 if (mode === "package") {
   const count = registeredCount()
   if (count !== undefined && count > 1) {
-    warn(`  ${count} entries report id opencode.indexing; only one should. Check \`opencode plugin list\`.`)
+    warn(`  ${count} entries report id javierkaiser.indexing; only one should. Check \`opencode plugin list\`.`)
   }
 }
 

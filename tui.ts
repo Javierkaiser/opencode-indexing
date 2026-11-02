@@ -44,7 +44,7 @@ import type { EmbedderProvider } from "./src/types.ts"
  */
 const PAGE_ROW_COUNT = PAGE_ROWS.length
 
-const ID = "opencode.indexing"
+const ID = "javierkaiser.indexing"
 
 /** Sentinel for the "type it yourself" entry in the model chooser. */
 const CUSTOM_MODEL = "\u0000custom-model"

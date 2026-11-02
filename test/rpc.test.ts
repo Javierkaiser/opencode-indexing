@@ -5,7 +5,7 @@ import { IndexingRpc } from "../src/rpc.ts"
 
 describe("IndexingRpc contract", () => {
   test("defines the settings/status/index methods with JSON schemas", () => {
-    assert.equal(IndexingRpc.id, "opencode.indexing")
+    assert.equal(IndexingRpc.id, "javierkaiser.indexing")
     const methods = Object.keys(IndexingRpc.methods)
     for (const method of [
       "settings.get",

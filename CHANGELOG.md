@@ -5,6 +5,60 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-11-02
+
+### Added
+- **An OpenCode Desktop GUI part.** The package now exports
+  `./gui-experimental` as one prebuilt CommonJS file,
+  `dist/gui-experimental.cjs`, built with Vite from `src/gui.tsx` and the
+  `@opencode/plugin/gui` SDK. Desktop loads it beside the server and TUI parts
+  and gets three surfaces: a settings page that reports the plugin's
+  configuration read-only, with Build and Refresh actions, palette commands for
+  those two index actions, and a composer pill for index state. The TUI footer
+  stays terminal-only; the composer pill is how the same state reaches Desktop.
+
+  This is also the package's fourth V2 part. The same npm package now exports
+  `.` (server), `./tui`, `./gui-experimental` and `./rpc`, and the host loads
+  the parts a given client needs. The build tools are `devDependencies`: the
+  published package ships the bundle, not Vite, vite-plugin-solid or SolidJS.
+
+### Changed
+- **The plugin id is `javierkaiser.indexing`, not `opencode.indexing`.** OpenCode
+  reserves the `opencode` namespace for its own plugin ids, and a plugin id in
+  that namespace prevents OpenCode Desktop from loading the plugin's GUI at all:
+  keeping the old id would have kept the new Desktop part from appearing, no
+  matter what the package exported. The package name, tool namespace and
+  settings file are unchanged.
+
+  The id is also the host storage namespace, so the file manifest written under
+  `opencode.indexing` is not visible under `javierkaiser.indexing`. On first use
+  after upgrading, the own index is reindexed once: the workspace is rescanned
+  and every indexed file is embedded again. No vectors are deleted, and Kilo's
+  index is untouched. With the bundled local model the pass makes no API calls;
+  with a cloud provider it is one full embedding run.
+
+  The TUI command ids still begin with `opencode.indexing` (`settings`,
+  `dialogs`, `toggle` and the page keys). They are a keybinding contract
+  independent of the plugin id, and renaming them would break existing
+  `cli.json` bindings. The new Desktop commands are published as
+  `javierkaiser.indexing.build` and `.refresh`; they had no earlier id to
+  preserve.
+
+- **Development dependencies move to the host's current SDK.** `@opencode/plugin`
+  and `@opencode/theme` go to 2.2.5 and `@opentui/*` to 0.8.1, which is what
+  OpenCode 2.2.5 ships. The peer ranges stay at `>=0.5.17` because the TUI's
+  virtual modules resolve against whatever runtime the host provides; only the
+  typecheck needs a concrete version. This also removes a fresh-install
+  conflict: `^2.2.0` resolved to 2.2.5, whose OpenTUI peer is `>=0.8.0`, against
+  a 0.7 development dependency.
+
+- **The peer dependency policy was re-examined and kept.** `@opencode/plugin`,
+  `@opencode/theme`, `@opentui/core`, `@opentui/solid` and `solid-js` remain
+  optional peers rather than installable dependencies. The ranges document the
+  host runtime version the plugin targets; the repository's devDependencies pin
+  the versions its typecheck and tests run against. Requiring them would install
+  a second copy of a runtime the host already provides, the failure 0.3.5 fixed.
+
 ## [0.5.0] - 2026-10-29
 
 ### Added
@@ -487,7 +541,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.6.0
 [0.5.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.4.0
 [0.3.6]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.3.6

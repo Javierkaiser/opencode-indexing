@@ -104,10 +104,11 @@ export function indexState(input: StatusInput): IndexingState {
 /**
  * One-line status appended to tool output.
  *
- * Chat clients have no footer slot, and the Desktop app has no status area at
- * all, so this rides along with the results of the tool people run constantly
- * instead. It costs no extra message and adds no noise: a reader who ignores it
- * sees exactly the output they saw before.
+ * Chat clients have no footer slot, and the Desktop app shows index state in
+ * its own composer pill rather than under the prompt, so this rides along with
+ * the results of the tool people run constantly instead. It costs no extra
+ * message and adds no noise: a reader who ignores it sees exactly the output
+ * they saw before.
  *
  * The workspace root is part of the line because the server plugin runs in the
  * service's directory, not the session's: saying which workspace was searched

@@ -62,6 +62,19 @@ const tuiSources = (): string[] =>
   shippedFiles().filter((file) => file.startsWith(join(root, "tui") + sep) || file === join(root, "tui.ts"))
 
 /**
+ * The GUI build input: `src/gui.tsx` and any `src/gui/` module it imports.
+ *
+ * It is not loaded as TypeScript. `vite build` turns it into
+ * `dist/gui-experimental.cjs` through the SDK preset, which keeps `solid-js`,
+ * `@opencode/*` and Node built-ins external because the app provides them to
+ * the bundle. Value imports of those modules here are therefore correct, and
+ * the runtime-import scan below would otherwise flag every one of them; the
+ * preset, not npm, is what validates them.
+ */
+const isGuiSource = (file: string): boolean =>
+  file === join(root, "src", "gui.tsx") || file.startsWith(join(root, "src", "gui") + sep)
+
+/**
  * Declaration files are erased before anything executes. `tui/virtual-modules.d.ts`
  * is exactly such a file: its `export * from "solid-js"` re-exports types only,
  * so it is out of scope for the runtime-import scan below.
@@ -109,7 +122,7 @@ const valueImports = (): Array<{ file: string; specifier: string }> => {
     /\bimport\s*\(\s*"([^"]+)"\s*\)/g,
   ]
   for (const file of shippedFiles()) {
-    if (isDeclaration(file)) continue
+    if (isDeclaration(file) || isGuiSource(file)) continue
     const text = readFileSync(file, "utf8")
     for (const match of text.matchAll(STATIC_IMPORT)) {
       const braces = [match[1], match[2]].filter((part): part is string => part !== undefined)

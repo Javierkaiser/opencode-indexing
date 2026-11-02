@@ -1,8 +1,9 @@
 # Third-party notices
 
 `opencode-indexing` is MIT-licensed (see [LICENSE](./LICENSE)). It interoperates
-with — and contains code derived from — the projects listed below. The full
-license text of each project is included with its notice.
+with — and contains code derived from — the projects listed below. Each notice
+gives the license; full texts are reproduced for the code derived from other
+projects, and dependencies are listed with their license identifiers.
 
 ## Kilo Code (github.com/Kilo-Org/kilocode)
 
@@ -82,6 +83,24 @@ with this package: the host provides them at runtime and the TUI imports the
 host's own instances by virtual module id (`opentui:runtime-module:…`) instead
 of installing copies. Without them the prompt-footer indicator and the settings
 page are absent, and everything else works.
+
+## Build-time toolchain (not distributed)
+
+The Desktop GUI bundle (`dist/gui-experimental.cjs`) is compiled before
+publishing. The packages below form its build-time toolchain: they are declared
+as `devDependencies`, are not installable dependencies of the published package,
+and no copy of them is shipped in the tarball.
+
+| Package | License | Copyright |
+| --- | --- | --- |
+| [`vite`](https://github.com/vitejs/vite) | MIT | Copyright (c) 2019-present, VoidZero Inc. and Vite contributors |
+| [`vite-plugin-solid`](https://github.com/solidjs/solid-vite-plugin) | MIT, as declared in its package manifest | Not stated in the installed package (no license file) |
+| [`solid-js`](https://github.com/solidjs/solid) | MIT | Copyright (c) 2016-2025 Ryan Carniato |
+
+The GUI bundle keeps `solid-js` external and uses the host's instance at
+runtime, which is why it also appears under *Provided by the host* above. That
+entry describes the runtime; this table describes the build-time tools. No
+license text is reproduced for them because no copy is distributed.
 
 ## CodeGraph (github.com/colbymchenry/codegraph)
 
