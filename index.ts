@@ -104,8 +104,9 @@ Grep remains the right fallback.
 \`indexing_config\` reports the effective settings (backend, model, credentials —
 masked, search and behaviour). \`indexing_config_set { key, value }\` changes one
 and persists it. Use them when the user asks what the indexing configuration is,
-or asks to change it. Credentials are refused by design: an API key has to come
-from the environment or from plugin options, never from a tool call.
+or asks to change it. Credentials are refused by design: a tool call is recorded
+in the conversation. Set an API key from the terminal \`/indexing\` page or the
+Desktop settings page, or through the environment or plugin options.
 
 ## Freshness
 
@@ -279,7 +280,7 @@ const plugin = {
      */
     const CONFIG_TOOL_DESCRIPTION = `Show the current semantic indexing configuration: the vector store, the embedding provider and model, which credentials are configured (always masked), search and behavior settings, the settings file path, and which Kilo Code index sources exist for this workspace.
 
-Use this whenever the user asks to see, review or check the indexing configuration, or before suggesting a change to it. It is read-only and never writes settings. To change a value, use \`/indexing-config set <key>=<value>\` in a client that dispatches commands, or edit the settings file.`
+Use this whenever the user asks to see, review or check the indexing configuration, or before suggesting a change to it. It is read-only and never writes settings. To change a value, use \`indexing_config_set\` (or \`/indexing-config set <key>=<value>\` in a client that dispatches commands). The terminal \`/indexing\` page and the Desktop settings page edit the same file directly.`
 
     tools.push({
       name: "config",
@@ -302,7 +303,7 @@ Use this when the user asks to change a setting: switching the vector store, cha
 
 Behavior:
 - Validated with the same rules as \`/indexing-config set <key>=<value>\`, and persisted immediately.
-- Credentials are refused. A tool call is recorded in the conversation, and the settings file never stores keys in plain text, so an API key has to come from the environment or from plugin options in \`opencode.json\`.
+- Credentials are refused: a tool call is recorded in the conversation. Set an API key from the terminal \`/indexing\` page or the Desktop settings page, or through the environment or plugin options in \`opencode.json\`.
 - The host asks the user to confirm before this runs; nothing is written unless they approve.`
 
     tools.push({

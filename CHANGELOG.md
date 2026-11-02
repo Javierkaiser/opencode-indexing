@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-11-02
+
+### Fixed
+- The `indexing_config_set` description and the bundled skill still said the
+  settings file never stores keys in plain text, and pointed only at the
+  environment or plugin options. Keys can be typed in the TUI and the Desktop
+  page; both messages now say so, and still refuse credentials on a tool call.
+- The `indexing_config` description now points at `indexing_config_set` and the
+  settings surfaces, instead of only the slash command and the file.
+- The README's surface list said “all three terminal surfaces”; it now lists the
+  four, including the Desktop page, and the duplicated “model is chosen from a
+  catalog” sentence is gone.
+
 ## [0.7.0] - 2026-11-02
 
 ### Added
@@ -640,7 +653,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.7.1
 [0.7.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.7.0
 [0.6.3]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.6.3
 [0.6.2]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.6.2

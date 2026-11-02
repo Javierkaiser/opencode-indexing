@@ -287,14 +287,15 @@ OpenCode Desktop has a settings page for the same configuration: provider and mo
 
 `indexing_config` (the tool) reports the same configuration as `/indexing-config` and works in every client, because tools run server-side, and `indexing_config_set` changes a value the same way. Together they are the whole configuration surface for clients that do not dispatch slash commands.
 
-Configurable from all three terminal surfaces:
+Configurable from all four surfaces (the three above plus the Desktop settings page):
 
 - **Vector store** for the own index: Qdrant or LanceDB.
 - **Qdrant URL + API key** (local or remote) with connection test.
 - **LanceDB directory** with availability test.
-- **Embedding provider/model** (mistral, openai, ollama, openai-compatible, gemini, voyage, openrouter) and **API key**. The model is chosen from a catalog rather than typed blind. The model is chosen from a catalog rather than typed blind.
+- **Embedding provider/model** (local, mistral, openai, ollama, openai-compatible, gemini, voyage, openrouter) and **API key**. The model is chosen from a catalog rather than typed blind.
 - **Import from Kilo** toggle with live source detection ("Qdrant ws-… (31,261 pts) · LanceDB …").
 - **Auto-refresh on search** toggle.
+- **Search limits and file extensions.**
 - Build / refresh / import actions and a status summary.
 
 ### Embedding providers
