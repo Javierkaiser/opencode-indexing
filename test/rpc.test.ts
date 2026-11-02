@@ -10,6 +10,9 @@ describe("IndexingRpc contract", () => {
     for (const method of [
       "settings.get",
       "settings.set",
+      "settings.apply",
+      "settings.credential",
+      "catalog.get",
       "settings.test",
       "kilo.discover",
       "status.get",
@@ -37,6 +40,33 @@ describe("IndexingRpc contract", () => {
       properties: { patch: { type: string } }
     }
     assert.equal(input.properties.patch.type, "object")
+  })
+
+  test("settings.apply carries one key and one value", () => {
+    const input = IndexingRpc.methods["settings.apply"].input as {
+      properties: Record<string, { type: string }>
+      required: readonly string[]
+    }
+    assert.equal(input.properties.key.type, "string")
+    assert.equal(input.properties.value.type, "string")
+    assert.deepEqual([...input.required].sort(), ["key", "value"])
+  })
+
+  test("settings.credential is separate from settings.apply", () => {
+    // The chat tool refuses secrets; the settings surfaces may write them. A
+    // distinct method keeps that exception visible in the contract.
+    const input = IndexingRpc.methods["settings.credential"].input as {
+      properties: Record<string, { type: string }>
+    }
+    assert.equal(input.properties.provider.type, "string")
+    assert.equal(input.properties.value.type, "string")
+  })
+
+  test("catalog.get returns providers with their models", () => {
+    const output = IndexingRpc.methods["catalog.get"].output as unknown as {
+      properties: { providers: { type: string } }
+    }
+    assert.equal(output.properties.providers.type, "array")
   })
 
   test("settings.test targets enum", () => {

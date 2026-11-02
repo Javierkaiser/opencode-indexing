@@ -1,14 +1,14 @@
 /**
  * OpenCode Desktop GUI for this plugin: the `./gui-experimental` bundle.
  *
- * It contributes a Settings page, two palette commands and a composer pill, and
- * only reads and triggers the server part through the RPC contract in
- * `src/rpc.ts`. The index itself is never touched from this process.
+ * It contributes a settings page, two palette commands and a composer pill, and
+ * only reads and writes through the server part's RPC contract. The index itself
+ * is never touched from this process.
  *
- * The page is built from the host's own components (`ctx.ui`): its buttons,
- * switches, loader and icons. A settings page that draws its own controls reads
- * as a different app; the SDK does not expose theme tokens, so the layout is
- * ours but every interactive piece is the host's.
+ * The page is built from the host's own components (`ctx.ui`) and its native
+ * dialogs (`ctx.dialogs`): a settings page that draws its own controls reads as
+ * a different app. The layout numbers come from the host's settings CSS; the
+ * colours from its `--v2-*` theme variables.
  */
 
 import {
@@ -28,8 +28,9 @@ import { IndexingRpc } from "./rpc.ts"
 
 /** The `settings.get` fields this GUI reads. */
 interface SettingsView {
-  readonly vectorStore: string
+  readonly vectorStore: "qdrant" | "lancedb"
   readonly qdrantUrl: string
+  readonly qdrantApiKey: string
   readonly lancedbDirectory: string
   readonly provider: string
   readonly model: string
@@ -37,9 +38,14 @@ interface SettingsView {
   readonly importFromKilo: boolean
   readonly autoRefresh: boolean
   readonly enabled: boolean
+  readonly codegraph: boolean
   readonly searchMaxResults: number
+  readonly searchMinScore: number | null
+  readonly embeddingBatchSize: number
+  readonly fileExtensions: string[]
   readonly configuredProviders: string[]
   readonly settingsFile: string
+  readonly warnings: string[]
 }
 
 /** The `status.get` fields this GUI reads. */
@@ -52,30 +58,51 @@ interface StatusView {
   readonly ownStoreReachable?: boolean
 }
 
+interface ModelView {
+  readonly id: string
+  readonly dimension: number | null
+  readonly kiloMirrored: boolean
+}
+
+interface ProviderView {
+  readonly id: string
+  readonly defaultModel: string
+  readonly liveTested: boolean
+  readonly models: readonly ModelView[]
+}
+
+interface CatalogView {
+  readonly providers: readonly ProviderView[]
+}
+
+interface WriteResult {
+  readonly ok: boolean
+  readonly error?: string
+  readonly display?: string
+  readonly settings?: SettingsView
+}
+
 interface IndexResult {
   readonly summary: string
   readonly error?: string
 }
 
-/** The booleans this page can change. Everything else stays read-only. */
-type ToggleKey = "enabled" | "autoRefresh" | "importFromKilo"
-
 /** The RPC methods this GUI calls, typed as the server answers them. */
 interface IndexingClient {
   readonly "settings.get": (input: Record<string, never>) => Promise<{ settings: SettingsView; version?: string }>
-  readonly "settings.set": (input: { patch: Record<string, unknown> }) => Promise<{ settings: SettingsView }>
+  readonly "settings.set": (input: { patch: Record<string, unknown> }) => Promise<{ settings: SettingsView; version?: string }>
+  readonly "settings.apply": (input: { key: string; value: string }) => Promise<WriteResult>
+  readonly "settings.credential": (input: { provider: string; value: string }) => Promise<WriteResult>
+  readonly "settings.test": (input: { target: "qdrant" | "lancedb" | "provider" | "kilo"; directory?: string }) => Promise<{
+    ok: boolean
+    message: string
+  }>
+  readonly "catalog.get": (input: Record<string, never>) => Promise<CatalogView>
   readonly "status.get": (input: { checkFreshness?: boolean; directory?: string }) => Promise<StatusView>
   readonly "index.build": (input: { rebuild?: boolean; skipImport?: boolean; directory?: string }) => Promise<IndexResult>
   readonly "index.refresh": (input: { maxFiles?: number; directory?: string }) => Promise<IndexResult>
 }
 
-/**
- * The RPC client with the server's field names.
- *
- * `IndexingRpc` declares portable JSON schemas, so the SDK types every payload
- * as `unknown`. This is the one place the GUI names what it reads, like the TUI
- * does with its own client slice.
- */
 const client = (ctx: Context): IndexingClient => ctx.client.rpc(IndexingRpc) as unknown as IndexingClient
 
 const NO_VALUE = "—"
@@ -86,7 +113,6 @@ const text = (value: string | number | null | undefined): string =>
 const pointsText = (points: number | null | undefined): string =>
   points === null || points === undefined ? NO_VALUE : formatPoints(points)
 
-/** Maps the two RPC payloads to the state vocabulary shared with the TUI. */
 const stateOf = (settings: SettingsView, status: StatusView): IndexingState =>
   indexState({
     enabled: settings.enabled !== false,
@@ -96,7 +122,6 @@ const stateOf = (settings: SettingsView, status: StatusView): IndexingState =>
     ownStoreReachable: status.ownStoreReachable,
   })
 
-/** The host icon that names a state, so the vocabulary is not text-only. */
 const stateIcon = (state: IndexingState): IconName => {
   switch (state) {
     case "ready":
@@ -115,17 +140,7 @@ const stateIcon = (state: IndexingState): IconName => {
   }
 }
 
-/*
- * Layout, taken from the host's own settings CSS.
- *
- * The app exposes its theme as CSS variables (`--v2-*`), so the colours follow
- * light and dark without a token API. The numbers are the host's:
- * `[data-component=settings-list]` uses a layer-01 background, a half-pixel
- * inset border and 20px inline padding; `[data-slot=settings-row]` uses 20px
- * vertical padding and a half-pixel separator; the settings column is 720px
- * and the tab header starts 48px down. Approximating these is what made the
- * page read as a different application.
- */
+/* Layout, taken from the host's settings CSS and its theme variables. */
 const PAGE_STYLE: JSX.CSSProperties = {
   display: "grid",
   gap: "32px",
@@ -196,7 +211,6 @@ const VALUE_STYLE: JSX.CSSProperties = {
 }
 const BUTTONS_STYLE: JSX.CSSProperties = { display: "flex", gap: "8px", "align-items": "center" }
 
-/** One row of a list: a bright title on the left, a muted value on the right. */
 function Row(props: {
   readonly label: string
   readonly value?: string
@@ -211,7 +225,6 @@ function Row(props: {
   )
 }
 
-/** A row whose control sits on the right, with a muted explanation below. */
 function SwitchRow(props: {
   readonly label: string
   readonly description: string
@@ -229,7 +242,6 @@ function SwitchRow(props: {
   )
 }
 
-/** A section: a title above the host's list container, never a header inside it. */
 function Section(props: { readonly title: string; readonly children: JSX.Element }) {
   return (
     <section style={SECTION_STYLE}>
@@ -239,21 +251,14 @@ function Section(props: { readonly title: string; readonly children: JSX.Element
   )
 }
 
-/** What the page renders once the two reads settle: data, or a reason. */
 type SettingsPageResult =
   | {
       config: { settings: SettingsView; version?: string }
       index: StatusView
+      catalog: CatalogView
     }
   | { error: string }
 
-/**
- * Runs an index action and reports the outcome in a toast.
- *
- * Shared by the palette commands and the page buttons so the two cannot
- * disagree about what a build says. It does not refresh the pill: the caller
- * owns that because only `setup` knows the current session.
- */
 async function runIndexAction(ctx: Context, method: "index.build" | "index.refresh"): Promise<void> {
   const pending = ctx.toast.show({
     variant: "loading",
@@ -275,48 +280,83 @@ async function runIndexAction(ctx: Context, method: "index.build" | "index.refre
   }
 }
 
-/** The Settings > Indexing page: effective configuration and index state. */
+/** The Settings > Indexing page. */
 function IndexingSettings(props: { readonly ctx: Context }) {
   const ctx = props.ctx
-  const [saving, setSaving] = createSignal<ToggleKey>()
-  const [running, setRunning] = createSignal<"build" | "refresh">()
+  const [saving, setSaving] = createSignal<string>()
+  const [running, setRunning] = createSignal<"build" | "refresh" | "local">()
 
   const [data, { refetch, mutate }] = createResource<SettingsPageResult>(async () => {
     const api = client(ctx)
-    // Settings has no session of its own, so this is usually undefined and the
-    // server falls back to its own directory. That is only safe because the
-    // read is cheap: asking for a freshness scan walks the workspace, and a
-    // service running from a home directory would walk the whole machine until
-    // the RPC transport timed out - which is exactly what left this page blank.
     const directory = ctx.sessions.current()?.directory
     try {
-      const [config, index] = await Promise.all([
+      const [config, index, catalog] = await Promise.all([
         api["settings.get"]({}),
         api["status.get"]({ checkFreshness: false, directory }),
+        api["catalog.get"]({}),
       ])
-      return { config, index }
+      return { config, index, catalog }
     } catch (error) {
-      // Resolve with the reason instead of rejecting. A rejected resource
-      // leaves the page with nothing to render, and a blank page hid this bug
-      // once already.
       return { error: describeError(error) }
     }
   })
 
-  /** Persists one boolean and adopts the server's answer, never the request. */
-  const saveToggle = async (key: ToggleKey, checked: boolean): Promise<void> => {
+  const adopt = (settings: SettingsView): void => {
+    mutate((current) => {
+      if (!current || "error" in current) return current
+      return { ...current, config: { ...current.config, settings } }
+    })
+  }
+
+  const saveFailed = (error: unknown): void => {
+    ctx.toast.show({ variant: "error", title: ctx.t("settings.saveFailed"), description: describeError(error) })
+  }
+
+  const applyKey = async (key: string, value: string): Promise<boolean> => {
     setSaving(key)
     try {
-      const response = await client(ctx)["settings.set"]({ patch: { [key]: checked } })
-      mutate((current) => {
-        if (!current || "error" in current) return current
-        return { ...current, config: { ...current.config, settings: response.settings } }
-      })
+      const result = await client(ctx)["settings.apply"]({ key, value })
+      if (!result.ok) {
+        ctx.toast.show({ variant: "error", title: ctx.t("settings.saveFailed"), description: result.error })
+        return false
+      }
+      if (result.settings) adopt(result.settings)
+      return true
     } catch (error) {
-      ctx.toast.show({ variant: "error", title: ctx.t("settings.saveFailed"), description: describeError(error) })
+      saveFailed(error)
+      return false
     } finally {
       setSaving(undefined)
     }
+  }
+
+  const setCredential = async (provider: string, title: string): Promise<void> => {
+    const value = await ctx.dialogs.prompt({
+      title,
+      secret: true,
+      placeholder: ctx.t("settings.secretPlaceholder"),
+    })
+    if (value === undefined) return
+    setSaving(`credential:${provider}`)
+    try {
+      const result = await client(ctx)["settings.credential"]({ provider, value })
+      if (!result.ok) {
+        ctx.toast.show({ variant: "error", title: ctx.t("settings.saveFailed"), description: result.error })
+        return
+      }
+      if (result.settings) adopt(result.settings)
+      ctx.toast.show({ variant: "success", title: ctx.t("toast.saved") })
+    } catch (error) {
+      saveFailed(error)
+    } finally {
+      setSaving(undefined)
+    }
+  }
+
+  const editValue = async (key: string, title: string, value?: string): Promise<void> => {
+    const typed = await ctx.dialogs.prompt({ title, value })
+    if (typed === undefined) return
+    await applyKey(key, typed)
   }
 
   const runFromPage = async (method: "index.build" | "index.refresh", key: "build" | "refresh"): Promise<void> => {
@@ -368,10 +408,151 @@ function IndexingSettings(props: { readonly ctx: Context }) {
 
           const settings = () => result.config.settings
           const index = () => result.index
+          const catalog = () => result.catalog
           const state = () => stateOf(settings(), index())
+          const points = () => pointsText(index().ownPoints)
+          const providerView = () => catalog().providers.find((provider) => provider.id === settings().provider)
+          const modelLabel = () => settings().model || providerView()?.defaultModel || ctx.t("settings.defaultModel")
+          const isConfigured = (provider: string) => settings().configuredProviders.includes(provider)
+
+          const confirmReindex = async (title: string, body: string): Promise<boolean> =>
+            ctx.dialogs.confirm({
+              title,
+              description: body.replace("{points}", points()),
+              confirm: ctx.t("settings.continue"),
+              cancel: ctx.t("settings.cancel"),
+              danger: true,
+            })
+
+          const chooseProvider = async (): Promise<void> => {
+            const picked = await ctx.dialogs.select<string>({
+              title: ctx.t("settings.chooseProvider"),
+              current: settings().provider,
+              options: catalog().providers.map((provider) => ({
+                title: provider.id,
+                value: provider.id,
+                description: provider.liveTested ? ctx.t("settings.tested") : ctx.t("settings.notTested"),
+              })),
+            })
+            if (!picked || picked === settings().provider) return
+            if (!(await confirmReindex(ctx.t("confirm.providerTitle"), ctx.t("confirm.providerBody")))) return
+            await applyKey("provider", picked)
+          }
+
+          const chooseModel = async (): Promise<void> => {
+            const provider = providerView()
+            const options = (provider?.models ?? []).map((model) => ({
+              title: model.id,
+              value: model.id,
+              description: [
+                model.dimension ? `${model.dimension}d` : undefined,
+                model.kiloMirrored ? ctx.t("settings.kiloImportable") : undefined,
+              ]
+                .filter(Boolean)
+                .join(" · "),
+            }))
+            if (options.length === 0) {
+              await editValue("model", ctx.t("settings.chooseModel"), settings().model)
+              return
+            }
+            const custom = "\u0000custom"
+            const picked = await ctx.dialogs.select<string>({
+              title: ctx.t("settings.chooseModel"),
+              current: settings().model,
+              options: [...options, { title: ctx.t("settings.customModel"), value: custom }],
+            })
+            if (picked === undefined) return
+            let model = picked
+            if (picked === custom) {
+              const typed = await ctx.dialogs.prompt({ title: ctx.t("settings.customModel"), value: settings().model })
+              if (!typed) return
+              model = typed.trim()
+            }
+            if (!model || model === settings().model) return
+            if (!(await confirmReindex(ctx.t("confirm.modelTitle"), ctx.t("confirm.modelBody")))) return
+            await applyKey("model", model)
+          }
+
+          const chooseStore = async (): Promise<void> => {
+            const picked = await ctx.dialogs.select<"lancedb" | "qdrant">({
+              title: ctx.t("settings.chooseStore"),
+              current: settings().vectorStore,
+              options: [
+                { title: "lancedb", value: "lancedb", description: ctx.t("settings.lancedbHint") },
+                { title: "qdrant", value: "qdrant", description: ctx.t("settings.qdrantHint") },
+              ],
+            })
+            if (!picked || picked === settings().vectorStore) return
+            const ok = await ctx.dialogs.confirm({
+              title: ctx.t("confirm.storeTitle"),
+              description: ctx.t("confirm.storeBody"),
+              confirm: ctx.t("settings.continue"),
+              cancel: ctx.t("settings.cancel"),
+              danger: true,
+            })
+            if (!ok) return
+            await applyKey("vectorstore", picked)
+          }
+
+          const testBackend = async (target: "qdrant" | "lancedb" | "provider"): Promise<void> => {
+            const outcome = await client(ctx)["settings.test"]({ target })
+            ctx.toast.show({
+              variant: outcome.ok ? "success" : "error",
+              title: outcome.ok ? ctx.t("settings.testPassed") : ctx.t("settings.testFailed"),
+              description: outcome.message,
+            })
+          }
+
+          const setupLocal = async (): Promise<void> => {
+            const ok = await ctx.dialogs.confirm({
+              title: ctx.t("setup.title"),
+              description: ctx.t("setup.description"),
+              confirm: ctx.t("setup.confirm"),
+              cancel: ctx.t("settings.cancel"),
+            })
+            if (!ok) return
+            setRunning("local")
+            try {
+              const probe = await client(ctx)["settings.test"]({ target: "lancedb" })
+              if (!probe.ok) {
+                ctx.toast.show({ variant: "error", title: ctx.t("setup.failed"), description: probe.message })
+                return
+              }
+              const written = await client(ctx)["settings.set"]({
+                patch: {
+                  vectorStore: "lancedb",
+                  provider: "local",
+                  model: "",
+                  importFromKilo: true,
+                  autoRefresh: true,
+                },
+              })
+              if (written.settings) adopt(written.settings)
+              await runIndexAction(ctx, "index.build")
+              await refetch()
+            } catch (error) {
+              ctx.toast.show({ variant: "error", title: ctx.t("setup.failed"), description: describeError(error) })
+            } finally {
+              setRunning(undefined)
+            }
+          }
 
           return (
             <>
+              <Section title={ctx.t("settings.quickStart")}>
+                <div style={{ display: "grid", gap: "12px", "padding-block": "20px", "justify-items": "start" }}>
+                  <p style={{ ...DESCRIPTION_STYLE, margin: "0" }}>{ctx.t("setup.description")}</p>
+                  <ctx.ui.Button
+                    variant="contrast"
+                    icon="cube"
+                    busy={running() === "local"}
+                    onClick={() => void setupLocal()}
+                  >
+                    {ctx.t("setup.action")}
+                  </ctx.ui.Button>
+                </div>
+              </Section>
+
               <Section title={ctx.t("settings.status")}>
                 <Row label={ctx.t("settings.state")}>
                   <span
@@ -387,21 +568,146 @@ function IndexingSettings(props: { readonly ctx: Context }) {
                     {ctx.t(`state.${state()}`)}
                   </span>
                 </Row>
-                <Row label={ctx.t("settings.points")} value={pointsText(index().ownPoints)} />
+                <Row label={ctx.t("settings.points")} value={points()} />
                 <Row label={ctx.t("settings.workspace")} value={text(index().workspace)} />
                 <Row label={ctx.t("settings.recommendation")} value={index().recommendation} last />
               </Section>
 
-              <Section title={ctx.t("settings.configuration")}>
-                <Row label={ctx.t("settings.store")} value={settings().vectorStore} />
+              <Section title={ctx.t("settings.embedding")}>
+                <Row label={ctx.t("settings.provider")}>
+                  <span style={{ display: "inline-flex", gap: "8px", "align-items": "center" }}>
+                    <span style={VALUE_STYLE}>{settings().provider}</span>
+                    <ctx.ui.Button variant="ghost" size="small" onClick={() => void chooseProvider()}>
+                      {ctx.t("settings.change")}
+                    </ctx.ui.Button>
+                  </span>
+                </Row>
+                <Row label={ctx.t("settings.model")}>
+                  <span style={{ display: "inline-flex", gap: "8px", "align-items": "center" }}>
+                    <span style={VALUE_STYLE}>{modelLabel()}</span>
+                    <ctx.ui.Button variant="ghost" size="small" onClick={() => void chooseModel()}>
+                      {ctx.t("settings.change")}
+                    </ctx.ui.Button>
+                  </span>
+                </Row>
+                <Row label={ctx.t("settings.dimension")} value={String(settings().dimension)} />
+                <Show when={["mistral", "openai", "gemini", "voyage", "openrouter"].includes(settings().provider)}>
+                  <Row label={ctx.t("settings.apiKey")}>
+                    <span style={{ display: "inline-flex", gap: "8px", "align-items": "center" }}>
+                      <span style={VALUE_STYLE}>
+                        {isConfigured(settings().provider) ? ctx.t("settings.configured") : ctx.t("settings.notConfigured")}
+                      </span>
+                      <ctx.ui.Button
+                        variant="ghost"
+                        size="small"
+                        busy={saving() === `credential:${settings().provider}`}
+                        onClick={() =>
+                          void setCredential(settings().provider, `${settings().provider} ${ctx.t("settings.apiKey")}`)
+                        }
+                      >
+                        {ctx.t("settings.setKey")}
+                      </ctx.ui.Button>
+                    </span>
+                  </Row>
+                </Show>
+                <Row label={ctx.t("settings.ollamaUrl")}>
+                  <ctx.ui.Button
+                    variant="ghost"
+                    size="small"
+                    onClick={() => void editValue("ollamaurl", ctx.t("settings.ollamaUrl"))}
+                  >
+                    {ctx.t("settings.edit")}
+                  </ctx.ui.Button>
+                </Row>
+                <Row label={ctx.t("settings.compatUrl")}>
+                  <ctx.ui.Button
+                    variant="ghost"
+                    size="small"
+                    onClick={() => void editValue("openaicompatibleurl", ctx.t("settings.compatUrl"))}
+                  >
+                    {ctx.t("settings.edit")}
+                  </ctx.ui.Button>
+                </Row>
+                <Row label={ctx.t("settings.compatKey")}>
+                  <span style={{ display: "inline-flex", gap: "8px", "align-items": "center" }}>
+                    <span style={VALUE_STYLE}>
+                      {isConfigured("openai-compatible") ? ctx.t("settings.configured") : ctx.t("settings.notConfigured")}
+                    </span>
+                    <ctx.ui.Button
+                      variant="ghost"
+                      size="small"
+                      onClick={() => void setCredential("openai-compatible", ctx.t("settings.compatKey"))}
+                    >
+                      {ctx.t("settings.setKey")}
+                    </ctx.ui.Button>
+                  </span>
+                </Row>
+                <Row label={ctx.t("settings.testProvider")} last>
+                  <ctx.ui.Button variant="ghost" size="small" onClick={() => void testBackend("provider")}>
+                    {ctx.t("settings.test")}
+                  </ctx.ui.Button>
+                </Row>
+              </Section>
+
+              <Section title={ctx.t("settings.storage")}>
+                <Row label={ctx.t("settings.store")}>
+                  <span style={{ display: "inline-flex", gap: "8px", "align-items": "center" }}>
+                    <span style={VALUE_STYLE}>{settings().vectorStore}</span>
+                    <ctx.ui.Button variant="ghost" size="small" onClick={() => void chooseStore()}>
+                      {ctx.t("settings.change")}
+                    </ctx.ui.Button>
+                  </span>
+                </Row>
                 <Row
                   label={ctx.t("settings.location")}
                   value={settings().vectorStore === "qdrant" ? settings().qdrantUrl : settings().lancedbDirectory}
                 />
-                <Row label={ctx.t("settings.provider")} value={settings().provider} />
-                <Row label={ctx.t("settings.model")} value={settings().model} />
-                <Row label={ctx.t("settings.dimension")} value={String(settings().dimension)} />
+                <Row label={ctx.t("settings.qdrantUrl")}>
+                  <ctx.ui.Button
+                    variant="ghost"
+                    size="small"
+                    onClick={() => void editValue("qdranturl", ctx.t("settings.qdrantUrl"), settings().qdrantUrl)}
+                  >
+                    {ctx.t("settings.edit")}
+                  </ctx.ui.Button>
+                </Row>
+                <Row label={ctx.t("settings.qdrantKey")}>
+                  <span style={{ display: "inline-flex", gap: "8px", "align-items": "center" }}>
+                    <span style={VALUE_STYLE}>
+                      {settings().qdrantApiKey ? settings().qdrantApiKey : ctx.t("settings.notConfigured")}
+                    </span>
+                    <ctx.ui.Button
+                      variant="ghost"
+                      size="small"
+                      onClick={() => void setCredential("qdrant", ctx.t("settings.qdrantKey"))}
+                    >
+                      {ctx.t("settings.setKey")}
+                    </ctx.ui.Button>
+                  </span>
+                </Row>
+                <Row label={ctx.t("settings.lancedbDir")}>
+                  <ctx.ui.Button
+                    variant="ghost"
+                    size="small"
+                    onClick={() =>
+                      void editValue("lancedbdirectory", ctx.t("settings.lancedbDir"), settings().lancedbDirectory)
+                    }
+                  >
+                    {ctx.t("settings.edit")}
+                  </ctx.ui.Button>
+                </Row>
+                <Row label={ctx.t("settings.testStore")} last>
+                  <ctx.ui.Button
+                    variant="ghost"
+                    size="small"
+                    onClick={() => void testBackend(settings().vectorStore === "qdrant" ? "qdrant" : "lancedb")}
+                  >
+                    {ctx.t("settings.test")}
+                  </ctx.ui.Button>
+                </Row>
+              </Section>
 
+              <Section title={ctx.t("settings.indexing")}>
                 <SwitchRow
                   label={ctx.t("settings.enabled")}
                   description={ctx.t("settings.enabledDescription")}
@@ -411,7 +717,7 @@ function IndexingSettings(props: { readonly ctx: Context }) {
                       hideLabel
                       checked={settings().enabled !== false}
                       disabled={saving() === "enabled"}
-                      onChange={(checked) => void saveToggle("enabled", checked)}
+                      onChange={(checked) => void applyKey("enabled", String(checked))}
                     />
                   }
                 />
@@ -423,8 +729,8 @@ function IndexingSettings(props: { readonly ctx: Context }) {
                       label={ctx.t("settings.importFromKilo")}
                       hideLabel
                       checked={settings().importFromKilo}
-                      disabled={saving() === "importFromKilo"}
-                      onChange={(checked) => void saveToggle("importFromKilo", checked)}
+                      disabled={saving() === "importfromkilo"}
+                      onChange={(checked) => void applyKey("importfromkilo", String(checked))}
                     />
                   }
                 />
@@ -436,19 +742,99 @@ function IndexingSettings(props: { readonly ctx: Context }) {
                       label={ctx.t("settings.autoRefresh")}
                       hideLabel
                       checked={settings().autoRefresh}
-                      disabled={saving() === "autoRefresh"}
-                      onChange={(checked) => void saveToggle("autoRefresh", checked)}
+                      disabled={saving() === "autorefresh"}
+                      onChange={(checked) => void applyKey("autorefresh", String(checked))}
                     />
                   }
                 />
-
-                <Row label={ctx.t("settings.searchMaxResults")} value={String(settings().searchMaxResults)} />
-                <Row
-                  label={ctx.t("settings.providers")}
-                  value={settings().configuredProviders.join(", ") || ctx.t("settings.none")}
+                <SwitchRow
+                  label={ctx.t("settings.codegraph")}
+                  description={ctx.t("settings.codegraphDescription")}
+                  last
+                  control={
+                    <ctx.ui.Switch
+                      label={ctx.t("settings.codegraph")}
+                      hideLabel
+                      checked={settings().codegraph !== false}
+                      disabled={saving() === "codegraph"}
+                      onChange={(checked) => void applyKey("codegraph", String(checked))}
+                    />
+                  }
                 />
-                <Row label={ctx.t("settings.file")} value={settings().settingsFile} />
-                <Row label={ctx.t("settings.version")} value={text(result.config.version)} last />
+              </Section>
+
+              <Section title={ctx.t("settings.search")}>
+                <Row label={ctx.t("settings.searchMaxResults")}>
+                  <span style={{ display: "inline-flex", gap: "8px", "align-items": "center" }}>
+                    <span style={VALUE_STYLE}>{String(settings().searchMaxResults)}</span>
+                    <ctx.ui.Button
+                      variant="ghost"
+                      size="small"
+                      onClick={() =>
+                        void editValue("searchmaxresults", ctx.t("settings.searchMaxResults"), String(settings().searchMaxResults))
+                      }
+                    >
+                      {ctx.t("settings.edit")}
+                    </ctx.ui.Button>
+                  </span>
+                </Row>
+                <Row label={ctx.t("settings.searchMinScore")}>
+                  <span style={{ display: "inline-flex", gap: "8px", "align-items": "center" }}>
+                    <span style={VALUE_STYLE}>
+                      {settings().searchMinScore === null ? ctx.t("settings.modelDefault") : String(settings().searchMinScore)}
+                    </span>
+                    <ctx.ui.Button
+                      variant="ghost"
+                      size="small"
+                      onClick={() =>
+                        void editValue(
+                          "searchminscore",
+                          ctx.t("settings.searchMinScore"),
+                          settings().searchMinScore === null ? "default" : String(settings().searchMinScore),
+                        )
+                      }
+                    >
+                      {ctx.t("settings.edit")}
+                    </ctx.ui.Button>
+                  </span>
+                </Row>
+                <Row label={ctx.t("settings.batchSize")}>
+                  <span style={{ display: "inline-flex", gap: "8px", "align-items": "center" }}>
+                    <span style={VALUE_STYLE}>{String(settings().embeddingBatchSize)}</span>
+                    <ctx.ui.Button
+                      variant="ghost"
+                      size="small"
+                      onClick={() =>
+                        void editValue(
+                          "embeddingbatchsize",
+                          ctx.t("settings.batchSize"),
+                          String(settings().embeddingBatchSize),
+                        )
+                      }
+                    >
+                      {ctx.t("settings.edit")}
+                    </ctx.ui.Button>
+                  </span>
+                </Row>
+                <Row label={ctx.t("settings.extensions")}>
+                  <span style={{ display: "inline-flex", gap: "8px", "align-items": "center" }}>
+                    <span style={VALUE_STYLE}>{settings().fileExtensions.length}</span>
+                    <ctx.ui.Button
+                      variant="ghost"
+                      size="small"
+                      onClick={() =>
+                        void editValue(
+                          "fileextensions",
+                          ctx.t("settings.extensions"),
+                          settings().fileExtensions.join(","),
+                        )
+                      }
+                    >
+                      {ctx.t("settings.edit")}
+                    </ctx.ui.Button>
+                  </span>
+                </Row>
+                <Row label={ctx.t("settings.file")} value={settings().settingsFile} last />
               </Section>
 
               <div style={BUTTONS_STYLE}>
@@ -517,27 +903,68 @@ export default Plugin.define({
       "command.refresh": "Refresh the search index",
       "settings.title": "Indexing",
       "settings.subtitle": "Semantic code search for this workspace.",
+      "settings.quickStart": "Quick start",
       "settings.status": "Index status",
       "settings.state": "State",
       "settings.points": "Points",
       "settings.workspace": "Workspace",
       "settings.recommendation": "Next step",
-      "settings.configuration": "Configuration",
-      "settings.store": "Vector store",
-      "settings.location": "Location",
+      "settings.embedding": "Embedding",
+      "settings.storage": "Storage",
+      "settings.indexing": "Indexing",
+      "settings.search": "Search",
       "settings.provider": "Embedding provider",
       "settings.model": "Embedding model",
+      "settings.defaultModel": "(provider default)",
       "settings.dimension": "Dimensions",
+      "settings.apiKey": "API key",
+      "settings.apiKeyConfigured": "Configured",
+      "settings.configured": "Configured",
+      "settings.notConfigured": "Not set",
+      "settings.setKey": "Set key",
+      "settings.secretPlaceholder": "Paste the key",
+      "settings.ollamaUrl": "Ollama base URL",
+      "settings.compatUrl": "OpenAI-compatible URL",
+      "settings.compatKey": "OpenAI-compatible key",
+      "settings.testProvider": "Test the provider",
+      "settings.store": "Vector store",
+      "settings.location": "Location",
+      "settings.qdrantUrl": "Qdrant URL",
+      "settings.qdrantKey": "Qdrant API key",
+      "settings.lancedbDir": "LanceDB directory",
+      "settings.testStore": "Test the store",
+      "settings.test": "Test",
+      "settings.testPassed": "Connection works",
+      "settings.testFailed": "Connection failed",
+      "settings.change": "Change",
+      "settings.edit": "Edit",
+      "settings.continue": "Continue",
+      "settings.cancel": "Cancel",
+      "settings.chooseProvider": "Choose the embedding provider",
+      "settings.chooseModel": "Choose the embedding model",
+      "settings.chooseStore": "Choose the vector store",
+      "settings.customModel": "Custom model…",
+      "settings.tested": "Verified against the real API",
+      "settings.notTested": "Not verified against the real API",
+      "settings.kiloImportable": "importable from Kilo",
+      "settings.lancedbHint": "Embedded, nothing to run",
+      "settings.qdrantHint": "A server you run yourself",
+      "settings.defaultModelValue": "(model default)",
+      "settings.modelDefault": "(model default)",
       "settings.enabled": "Indexing enabled",
       "settings.enabledDescription": "When off, nothing is written or refreshed.",
       "settings.importFromKilo": "Import from Kilo",
       "settings.importFromKiloDescription": "Copy a compatible Kilo index instead of re-embedding.",
       "settings.autoRefresh": "Auto refresh",
       "settings.autoRefreshDescription": "Refresh on search when a few files changed.",
+      "settings.codegraph": "Codegraph companion",
+      "settings.codegraphDescription": "Also run the codegraph CLI on build.",
       "settings.searchMaxResults": "Search results",
-      "settings.providers": "Configured providers",
+      "settings.searchMinScore": "Minimum score",
+      "settings.modelDefaultShort": "(model default)",
+      "settings.batchSize": "Embedding batch size",
+      "settings.extensions": "File extensions",
       "settings.file": "Settings file",
-      "settings.version": "Plugin version",
       "settings.loading": "Reading index status…",
       "settings.failed": "Could not read the index status.",
       "settings.saveFailed": "Could not save the setting",
@@ -545,6 +972,26 @@ export default Plugin.define({
       "settings.refresh": "Refresh",
       "settings.reload": "Reload",
       "settings.none": "none",
+      "setup.title": "Set up locally",
+      "setup.description":
+        "Use the bundled local model and embedded LanceDB: no API key, no server, and one reindex. Change it later from this page.",
+      "setup.action": "Set up locally",
+      "setup.confirm": "Set up",
+      "setup.failed": "Could not set up locally",
+      "confirm.providerTitle": "Change the embedding provider?",
+      "confirm.providerBody":
+        "The own index holds {points} points embedded with the current model. A different provider means a different vector space, so the next build re-embeds every file. With a cloud provider that is a full API run.",
+      "confirm.modelTitle": "Change the embedding model?",
+      "confirm.modelBody":
+        "The own index holds {points} points embedded with the current model. A different model re-embeds every file; with a cloud provider that costs a full API run.",
+      "confirm.storeTitle": "Change where the index lives?",
+      "confirm.storeBody":
+        "The own index will be written to the new store. The existing index stays where it is and is not migrated; build it again to search this workspace.",
+      "toast.saved": "Saved",
+      "toast.building": "Building the index…",
+      "toast.refreshing": "Refreshing the index…",
+      "toast.done": "Index updated",
+      "toast.failed": "Indexing failed",
       "state.loading": "reading…",
       "state.working": "indexing…",
       "state.paused": "paused",
@@ -556,10 +1003,6 @@ export default Plugin.define({
       "pill.title": "Index status",
       "pill.stale": "stale",
       "unit.points": "points",
-      "toast.building": "Building the index…",
-      "toast.refreshing": "Refreshing the index…",
-      "toast.done": "Index updated",
-      "toast.failed": "Indexing failed",
     },
   },
   setup(ctx) {
@@ -574,7 +1017,6 @@ export default Plugin.define({
         ])
         setLoaded({ directory, settings: config.settings, status })
       } catch {
-        // An unreachable server is not "no index": hide the pill instead.
         setLoaded(undefined)
       }
     }
@@ -626,8 +1068,6 @@ export default Plugin.define({
         id: "status",
         show: (input) => {
           const current = loaded()
-          // Only the routed session is fetched; a stale snapshot for another
-          // directory would report that workspace's points here.
           if (!current || current.directory !== input.session.directory) return undefined
           return pillView(ctx, stateOf(current.settings, current.status), current.status.ownPoints)
         },

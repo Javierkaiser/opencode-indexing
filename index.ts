@@ -12,7 +12,7 @@
  */
 import type { Plugin } from "@opencode/plugin"
 
-import { resolveSettings, type PluginOptionsInput } from "./src/config.ts"
+import { resolveSettings, VALID_PROVIDERS, type PluginOptionsInput } from "./src/config.ts"
 import { maskSecret, settingsFilePath } from "./src/settings.ts"
 import { createPluginStorage } from "./src/storage.ts"
 import { createTools, type ToolDefinition } from "./src/tools.ts"
@@ -27,13 +27,14 @@ import { pluginVersion } from "./src/plugin-version.ts"
 import { IndexingRpc } from "./src/rpc.ts"
 import {
   COMMAND_USAGE,
+  applyCredential,
   applySettingValue,
   applySettingsChange,
   describeSettingValue,
   parseIndexingCommand,
   settingReport,
 } from "./src/settings-commands.ts"
-import { getModelDimension, isKiloMirrored, isLiveTested, listModelIds } from "./src/registry.ts"
+import { getDefaultModelId, getModelDimension, isKiloMirrored, isLiveTested, listModelIds } from "./src/registry.ts"
 import type { EmbeddingProfile, IndexingSettings, KVStore, ProviderCredentials } from "./src/types.ts"
 import type { Qdrant } from "./src/qdrant.ts"
 import { describeError } from "./src/errors.ts"
@@ -133,7 +134,12 @@ function settingsView(settings: IndexingSettings, homeDir?: string): Record<stri
     importFromKilo: settings.importFromKilo,
     autoRefresh: settings.autoRefresh,
     enabled: settings.enabled,
+    codegraph: settings.codegraph !== false,
     searchMaxResults: settings.searchMaxResults,
+    searchMinScore: settings.searchMinScore ?? null,
+    embeddingBatchSize: settings.embeddingBatchSize,
+    fileExtensions: settings.fileExtensions,
+    kiloVectorStore: settings.kiloVectorStore,
     // Which providers actually have a credential, as a list rather than one
     // boolean per provider. The booleans only ever covered Mistral and OpenAI,
     // so a settings page with a Gemini key configured reported "none
@@ -736,6 +742,49 @@ class ForgetRefusedError extends Error {}
           const settings = await getSettings()
           return { settings: settingsView(settings), version: pluginVersion() }
         },
+
+        "settings.apply": async (input: unknown) => {
+          const { key, value } = input as { key?: string; value?: string }
+          const applied = applySettingsChange(String(key ?? ""), String(value ?? ""))
+          if (!applied.ok) return { ok: false, error: applied.error }
+          const { writeSettingsFile } = await import("./src/settings.ts")
+          writeSettingsFile(applied.patch as never)
+          const settings = await getSettings()
+          return {
+            ok: true,
+            display: applied.display,
+            settings: settingsView(settings),
+            version: pluginVersion(),
+          }
+        },
+
+        "settings.credential": async (input: unknown) => {
+          const { provider, value } = input as { provider?: string; value?: string }
+          const applied = applyCredential(String(provider ?? ""), String(value ?? ""))
+          if (!applied.ok) return { ok: false, error: applied.error }
+          const { writeSettingsFile } = await import("./src/settings.ts")
+          writeSettingsFile(applied.patch as never)
+          const settings = await getSettings()
+          return {
+            ok: true,
+            display: applied.display,
+            settings: settingsView(settings),
+            version: pluginVersion(),
+          }
+        },
+
+        "catalog.get": async () => ({
+          providers: VALID_PROVIDERS.map((provider) => ({
+            id: provider,
+            defaultModel: getDefaultModelId(provider),
+            liveTested: isLiveTested(provider),
+            models: listModelIds(provider).map((modelId) => ({
+              id: modelId,
+              dimension: getModelDimension(provider, modelId) ?? null,
+              kiloMirrored: isKiloMirrored(provider, modelId) === true,
+            })),
+          })),
+        }),
 
         "settings.test": async (input: unknown) => {
           return testTarget((input as { target: string }).target, rootFor(input))

@@ -45,9 +45,16 @@ const settingsShape = {
     dimension: { type: "number" },
     importFromKilo: { type: "boolean" },
     autoRefresh: { type: "boolean" },
+    enabled: { type: "boolean" },
+    codegraph: { type: "boolean" },
     searchMaxResults: { type: "number" },
+    searchMinScore: { type: ["number", "null"] },
+    embeddingBatchSize: { type: "number" },
+    fileExtensions: { type: "array", items: { type: "string" } },
+    kiloVectorStore: { type: ["string", "null"] },
     configuredProviders: { type: "array", items: { type: "string" } },
     settingsFile: { type: "string" },
+    warnings: { type: "array", items: { type: "string" } },
   },
   required: ["vectorStore", "qdrantUrl", "provider", "importFromKilo", "settingsFile"],
   additionalProperties: true,
@@ -81,6 +88,103 @@ export const IndexingRpc = {
         properties: { settings: settingsShape, version: { type: "string" } },
         required: ["settings"],
         additionalProperties: true,
+      },
+    },
+    /**
+     * One validated setting, by the same rules as `/indexing-config set`.
+     *
+     * The UI does not send raw patches: a typo would otherwise be written and
+     * only discovered when the next build failed. Credentials are refused here
+     * and have their own method.
+     */
+    "settings.apply": {
+      input: {
+        type: "object",
+        properties: { key: { type: "string" }, value: { type: "string" } },
+        required: ["key", "value"],
+        additionalProperties: false,
+      },
+      output: {
+        type: "object",
+        properties: {
+          ok: { type: "boolean" },
+          error: { type: "string" },
+          display: { type: "string" },
+          settings: settingsShape,
+          version: { type: "string" },
+        },
+        required: ["ok"],
+        additionalProperties: true,
+      },
+    },
+    /**
+     * A credential typed by the user in a settings surface.
+     *
+     * Separate from `settings.apply` on purpose: the chat tool refuses secrets,
+     * and a distinct method keeps that exception visible instead of hiding it
+     * behind a key name in a generic patch.
+     */
+    "settings.credential": {
+      input: {
+        type: "object",
+        properties: { provider: { type: "string" }, value: { type: "string" } },
+        required: ["provider", "value"],
+        additionalProperties: false,
+      },
+      output: {
+        type: "object",
+        properties: {
+          ok: { type: "boolean" },
+          error: { type: "string" },
+          display: { type: "string" },
+          settings: settingsShape,
+          version: { type: "string" },
+        },
+        required: ["ok"],
+        additionalProperties: true,
+      },
+    },
+    /**
+     * The model catalog, served instead of imported.
+     *
+     * `src/registry.ts` imports `node:crypto`, so the GUI bundle cannot import
+     * it: the renderer has no Node built-ins. The server answers with plain
+     * JSON and the UI never needs the module.
+     */
+    "catalog.get": {
+      input: empty,
+      output: {
+        type: "object",
+        properties: {
+          providers: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                defaultModel: { type: "string" },
+                liveTested: { type: "boolean" },
+                models: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      id: { type: "string" },
+                      dimension: { type: ["number", "null"] },
+                      kiloMirrored: { type: "boolean" },
+                    },
+                    required: ["id", "kiloMirrored"],
+                    additionalProperties: false,
+                  },
+                },
+              },
+              required: ["id", "defaultModel", "liveTested", "models"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["providers"],
+        additionalProperties: false,
       },
     },
     "settings.test": {

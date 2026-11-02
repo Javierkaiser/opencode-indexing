@@ -2,6 +2,7 @@ import * as assert from "node:assert/strict"
 import { describe, test } from "node:test"
 
 import {
+  applyCredential,
   applySettingValue,
   applySettingsChange,
   describeSettingValue,
@@ -292,5 +293,37 @@ describe("applySettingsChange", () => {
     const result = applySettingsChange("  VectorStore  ", "lancedb")
     assert.equal(result.ok, true)
     if (result.ok) assert.deepEqual(result.patch, { vectorStore: "lancedb" })
+  })
+})
+
+describe("applyCredential", () => {
+  test("stores a provider key in the settings shape", () => {
+    const result = applyCredential("mistral", "sk-abc")
+    assert.equal(result.ok, true)
+    if (result.ok) assert.deepEqual(result.patch, { apiKeys: { mistral: "sk-abc" } })
+  })
+
+  test("handles the two nested providers", () => {
+    const compatible = applyCredential("openai-compatible", "sk-abc")
+    assert.equal(compatible.ok, true)
+    if (compatible.ok) assert.deepEqual(compatible.patch, { apiKeys: { "openai-compatible": { apiKey: "sk-abc" } } })
+
+    const qdrant = applyCredential("qdrant", "qd-key")
+    assert.equal(qdrant.ok, true)
+    if (qdrant.ok) assert.deepEqual(qdrant.patch, { qdrant: { apiKey: "qd-key" } })
+  })
+
+  test("refuses a provider that does not take a key", () => {
+    for (const provider of ["local", "ollama"]) {
+      const result = applyCredential(provider, "x")
+      assert.equal(result.ok, false, `${provider} should not accept a key`)
+    }
+  })
+
+  test("the chat tool still refuses the same value", () => {
+    // Two paths, two policies: a settings surface may store the key the user
+    // typed, a recorded tool call may not.
+    assert.equal(applyCredential("mistral", "sk-abc").ok, true)
+    assert.equal(applySettingsChange("mistralkey", "sk-abc").ok, false)
   })
 })

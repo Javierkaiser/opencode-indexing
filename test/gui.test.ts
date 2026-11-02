@@ -100,16 +100,51 @@ describe("Desktop GUI entry", () => {
     assert.doesNotMatch(file, /<button\b/)
   })
 
-  test("the three booleans persist through settings.set and adopt the server's answer", () => {
+  test("the booleans persist through settings.apply and adopt the server's answer", () => {
     // The switch must show what the server stored, not what was asked for: a
     // clamped or rejected value would otherwise look accepted until a reload.
     const file = read("src/gui.tsx")
 
-    assert.match(file, /"settings\.set"/)
-    assert.match(file, /saveToggle\("enabled"/)
-    assert.match(file, /saveToggle\("importFromKilo"/)
-    assert.match(file, /saveToggle\("autoRefresh"/)
+    assert.match(file, /"settings\.apply"/)
+    assert.match(file, /applyKey\("enabled"/)
+    assert.match(file, /applyKey\("importfromkilo"/)
+    assert.match(file, /applyKey\("autorefresh"/)
+    assert.match(file, /applyKey\("codegraph"/)
     assert.match(file, /mutate\(/)
+  })
+
+  test("provider, model and store are chosen from the server's catalog", () => {
+    // `src/registry.ts` imports node:crypto, so the GUI cannot import the
+    // catalog: it asks for it. A hardcoded list here would drift from the
+    // server and offer models with no adapter.
+    const file = read("src/gui.tsx")
+
+    assert.match(file, /"catalog\.get"/)
+    assert.match(file, /ctx\.dialogs\.select/)
+    assert.match(file, /chooseProvider/)
+    assert.match(file, /chooseModel/)
+    assert.match(file, /chooseStore/)
+  })
+
+  test("credentials are typed in a secret prompt and written through their own method", () => {
+    // The chat tool refuses secrets; a settings surface is the user typing
+    // their own key. A distinct RPC keeps that exception visible instead of
+    // hiding it in a raw `settings.set` patch.
+    const file = read("src/gui.tsx")
+
+    assert.match(file, /"settings\.credential"/)
+    assert.match(file, /secret:\s*true/)
+    assert.doesNotMatch(file, /apiKeys/)
+  })
+
+  test("the local preset sets the model, the store and the toggles together", () => {
+    const file = read("src/gui.tsx")
+
+    assert.match(file, /provider:\s*"local"/)
+    assert.match(file, /vectorStore:\s*"lancedb"/)
+    assert.match(file, /importFromKilo:\s*true/)
+    assert.match(file, /autoRefresh:\s*true/)
+    assert.match(file, /settings\.test"\]\(\{\s*target:\s*"lancedb"/s)
   })
 
   test("no colour is hardcoded, so the page follows the app's theme", () => {

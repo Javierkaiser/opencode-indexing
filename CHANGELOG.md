@@ -5,6 +5,38 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-11-02
+
+### Added
+- **The Desktop settings page configures everything.** It was a read-only report
+  with three switches. It now edits the embedding provider and model from the
+  server's catalog, the vector store and its locations, the API keys, the search
+  limits and the indexing switches, all through the host's own controls and
+  dialogs.
+- **A one-click local setup.** “Set up locally” checks LanceDB, selects the
+  bundled local model and embedded LanceDB, turns on import-from-Kilo and
+  auto-refresh, and runs the first build. No key, no server, one reindex.
+- `catalog.get`, `settings.apply` and `settings.credential` RPC methods. The
+  catalog is served rather than imported because `src/registry.ts` imports
+  `node:crypto` and the GUI runs in the renderer, with no Node built-ins.
+- `settings.get` now reports `codegraph`, `searchMinScore`,
+  `embeddingBatchSize`, `fileExtensions`, `kiloVectorStore` and `warnings`, so
+  the page can show and edit them.
+
+### Changed
+- **Credentials are editable from the settings surfaces.** The TUI already wrote
+  keys to `indexing.json`; the Desktop page now does too, through a native
+  secret prompt and its own `settings.credential` method. The chat tool still
+  refuses them, because a tool call is recorded in the conversation.
+- The README said API keys were never written to `indexing.json` in plain text.
+  That was false: the TUI has always written them. It now states what happens,
+  and recommends the environment or plugin options for anyone who does not want
+  them in that file.
+
+### Fixed
+- The credential-refusal message repeated the same false claim. It now points to
+  the surfaces where a key can be typed.
+
 ## [0.6.3] - 2026-11-02
 
 ### Fixed
@@ -608,7 +640,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.6.3...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.7.0
 [0.6.3]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.6.3
 [0.6.2]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.6.2
 [0.6.1]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.6.1

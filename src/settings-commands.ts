@@ -434,7 +434,7 @@ export function isSecretSetting(key: string): boolean {
 
 /** Why a credential cannot be set through a chat tool call. */
 export const CREDENTIAL_REFUSAL =
-  "holds a credential and cannot be set from a tool call: the call is recorded in this conversation, and the settings file never stores keys in plain text.\n\nSet it through the environment (`KILO_INDEX_*`) or from the plugin options in `opencode.json`. Every other indexing setting can be changed here."
+  "holds a credential and cannot be set from a tool call: the call is recorded in this conversation.\n\nSet it from the TUI or the Desktop settings page, where you type it yourself and it is stored in the settings file, or through the environment (`KILO_INDEX_*`) or the plugin options in `opencode.json`. Every other indexing setting can be changed here."
 
 /**
  * Validates a settings change that arrived through a chat tool call.
@@ -449,6 +449,48 @@ export function applySettingsChange(key: string, rawValue: string): ApplyResult 
     return { ok: false, error: `\`${normalized}\` ${CREDENTIAL_REFUSAL}` }
   }
   return applySettingValue(normalized, rawValue)
+}
+
+/**
+ * Patches that store one credential.
+ *
+ * Only the key-based providers are here. Ollama and the OpenAI-compatible
+ * endpoint also take a URL, which is not secret and travels through
+ * `applySettingValue` like any other string.
+ */
+const CREDENTIAL_PATCHES: Record<string, (value: string) => SettingsFile> = {
+  mistral: (value) => ({ apiKeys: { mistral: value } }),
+  openai: (value) => ({ apiKeys: { openai: value } }),
+  gemini: (value) => ({ apiKeys: { gemini: value } }),
+  voyage: (value) => ({ apiKeys: { voyage: value } }),
+  openrouter: (value) => ({ apiKeys: { openrouter: value } }),
+  "openai-compatible": (value) => ({ apiKeys: { "openai-compatible": { apiKey: value } } }),
+  qdrant: (value) => ({ qdrant: { apiKey: value } }),
+}
+
+/**
+ * Validates a credential typed by the user in the TUI or the Desktop page.
+ *
+ * The chat tool refuses credentials because a tool call is recorded in the
+ * conversation; a settings surface is the user typing their own key. Keeping
+ * that path here means one place builds the secret patch, instead of every UI
+ * sending a raw `apiKeys` object through `settings.set`.
+ */
+export function applyCredential(provider: string, rawValue: string): ApplyResult {
+  const normalized = provider.trim().toLowerCase()
+  const build = CREDENTIAL_PATCHES[normalized]
+  if (!build) {
+    return {
+      ok: false,
+      error: `\`${normalized}\` does not take an API key. Its URL or model is a normal setting.`,
+    }
+  }
+  const value = rawValue.trim()
+  return {
+    ok: true,
+    patch: build(value),
+    display: value === "" ? "(cleared)" : (maskSecret(value) ?? "(set)"),
+  }
 }
 
 /** Suggested fix when the user typo'd a key (Levenshtein-ish prefix match). */
