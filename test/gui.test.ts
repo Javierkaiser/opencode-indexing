@@ -111,4 +111,16 @@ describe("Desktop GUI entry", () => {
     assert.match(file, /saveToggle\("autoRefresh"/)
     assert.match(file, /mutate\(/)
   })
+
+  test("the page uses the host's measurements and theme variables", () => {
+    // These are the app's own values, read from its settings CSS: a 720px
+    // column, 48px above the title, and `--v2-*` variables for every colour.
+    // A hardcoded grey is wrong in one of the two themes.
+    const file = read("src/gui.tsx")
+
+    assert.match(file, /"padding-top": "48px"/)
+    assert.match(file, /"max-width": "720px"/)
+    assert.match(file, /--v2-/)
+    assert.match(file, /"padding-block": "20px"/)
+  })
 })

@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] - 2026-11-02
+
+### Fixed
+- **The Desktop page did not match the host's measurements.** The previous
+  version invented a header inside the card and sized its rows by eye, which is
+  why it still read as a neighbouring app rather than the same one. The values
+  now come from the app's own settings CSS: a 720px column, 48px above the page
+  title, lists with a layer-01 background and a half-pixel inset border, rows
+  with 20px of vertical padding and a half-pixel separator, a 15px/640 page
+  title and 13px/530 row titles. The section title moved above its list, where
+  the host puts it, instead of living inside it.
+- **Colours come from the app's theme variables** (`--v2-*`) rather than a grey
+  mixed from `currentColor`. The variables are the ones the host itself uses, so
+  light and dark follow exactly instead of approximately.
+- The three switch rows carry the host's title-plus-description layout, which is
+  also what gives them the height the other settings rows have.
+
 ## [0.6.2] - 2026-11-02
 
 ### Changed
@@ -591,7 +608,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.6.3...HEAD
+[0.6.3]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.6.3
 [0.6.2]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.6.2
 [0.6.1]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.6.1
 [0.6.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.6.0

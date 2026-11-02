@@ -116,63 +116,125 @@ const stateIcon = (state: IndexingState): IconName => {
 }
 
 /*
- * Layout.
+ * Layout, taken from the host's own settings CSS.
  *
- * The border colour is mixed from `currentColor` rather than hardcoded: the GUI
- * SDK exposes no theme tokens, and a fixed grey is wrong in one of the two
- * themes. `color-mix` follows whatever text colour the host sets.
+ * The app exposes its theme as CSS variables (`--v2-*`), so the colours follow
+ * light and dark without a token API. The numbers are the host's:
+ * `[data-component=settings-list]` uses a layer-01 background, a half-pixel
+ * inset border and 20px inline padding; `[data-slot=settings-row]` uses 20px
+ * vertical padding and a half-pixel separator; the settings column is 720px
+ * and the tab header starts 48px down. Approximating these is what made the
+ * page read as a different application.
  */
-const BORDER = "1px solid color-mix(in srgb, currentColor 14%, transparent)"
-const ROW_BORDER = `1px solid color-mix(in srgb, currentColor 10%, transparent)`
-
-const PAGE_STYLE: JSX.CSSProperties = { display: "grid", gap: "20px", "max-width": "760px", width: "100%" }
-const HEADER_STYLE: JSX.CSSProperties = { display: "grid", gap: "4px" }
-const TITLE_STYLE: JSX.CSSProperties = { margin: "0", "font-size": "18px", "font-weight": "600" }
-const SUBTITLE_STYLE: JSX.CSSProperties = { margin: "0", "font-size": "13px", opacity: 0.6 }
-const CARD_STYLE: JSX.CSSProperties = {
-  border: BORDER,
-  "border-radius": "8px",
-  overflow: "hidden",
+const PAGE_STYLE: JSX.CSSProperties = {
+  display: "grid",
+  gap: "32px",
+  "max-width": "720px",
+  width: "100%",
+  "padding-top": "48px",
 }
-const CARD_TITLE_STYLE: JSX.CSSProperties = {
+const HEADER_STYLE: JSX.CSSProperties = { display: "grid", gap: "8px" }
+const TITLE_STYLE: JSX.CSSProperties = {
   margin: "0",
-  padding: "13px 16px",
+  "font-size": "15px",
+  "font-weight": "640",
+  "line-height": "var(--line-height-base, 1.5)",
+  color: "var(--v2-text-text-base, inherit)",
+}
+const SUBTITLE_STYLE: JSX.CSSProperties = {
+  margin: "0",
   "font-size": "13px",
-  "font-weight": "600",
-  "border-bottom": BORDER,
+  "font-weight": "440",
+  "line-height": "20px",
+  color: "var(--v2-text-text-muted, inherit)",
+}
+const SECTION_STYLE: JSX.CSSProperties = { display: "grid", gap: "16px" }
+const SECTION_TITLE_STYLE: JSX.CSSProperties = {
+  margin: "0",
+  padding: "0",
+  "font-size": "13px",
+  "font-weight": "530",
+  "line-height": "var(--line-height-compact, 1.3)",
+  color: "var(--v2-text-text-base, inherit)",
+}
+const LIST_STYLE: JSX.CSSProperties = {
+  "background-color": "var(--v2-background-bg-layer-01, transparent)",
+  "box-shadow":
+    "inset 0 0 0 0.5px var(--v2-border-border-muted, color-mix(in srgb, currentColor 14%, transparent))",
+  "border-radius": "8px",
+  "padding-inline": "20px",
 }
 const ROW_STYLE: JSX.CSSProperties = {
   display: "flex",
   gap: "16px",
   "align-items": "center",
   "justify-content": "space-between",
-  padding: "11px 16px",
+  "padding-block": "20px",
 }
-const LABEL_STYLE: JSX.CSSProperties = { "font-size": "13px", opacity: 0.7 }
-const VALUE_STYLE: JSX.CSSProperties = { "font-size": "13px", "text-align": "right", "overflow-wrap": "anywhere" }
+const ROW_BORDER =
+  "0.5px solid var(--v2-border-border-base, color-mix(in srgb, currentColor 10%, transparent))"
+const LABEL_STYLE: JSX.CSSProperties = {
+  "font-size": "13px",
+  "font-weight": "530",
+  "line-height": "var(--line-height-compact, 1.3)",
+  color: "var(--v2-text-text-base, inherit)",
+}
+const DESCRIPTION_STYLE: JSX.CSSProperties = {
+  "font-size": "13px",
+  "font-weight": "440",
+  "line-height": "20px",
+  "margin-block": "-3.5px",
+  color: "var(--v2-text-text-muted, inherit)",
+}
+const VALUE_STYLE: JSX.CSSProperties = {
+  "font-size": "13px",
+  "font-weight": "440",
+  "line-height": "20px",
+  "text-align": "right",
+  "overflow-wrap": "anywhere",
+  color: "var(--v2-text-text-muted, inherit)",
+}
 const BUTTONS_STYLE: JSX.CSSProperties = { display: "flex", gap: "8px", "align-items": "center" }
 
-/** One row of a card: label on the left, value or control on the right. */
+/** One row of a list: a bright title on the left, a muted value on the right. */
 function Row(props: {
   readonly label: string
   readonly value?: string
-  readonly first?: boolean
+  readonly last?: boolean
   readonly children?: JSX.Element
 }) {
   return (
-    <div style={props.first ? ROW_STYLE : { ...ROW_STYLE, "border-top": ROW_BORDER }}>
+    <div style={props.last ? ROW_STYLE : { ...ROW_STYLE, "border-bottom": ROW_BORDER }}>
       <span style={LABEL_STYLE}>{props.label}</span>
       {props.children ?? <span style={VALUE_STYLE}>{props.value}</span>}
     </div>
   )
 }
 
-/** A card with the host's section header and separated rows. */
-function Card(props: { readonly title: string; readonly children: JSX.Element }) {
+/** A row whose control sits on the right, with a muted explanation below. */
+function SwitchRow(props: {
+  readonly label: string
+  readonly description: string
+  readonly control: JSX.Element
+  readonly last?: boolean
+}) {
   return (
-    <section style={CARD_STYLE}>
-      <h2 style={CARD_TITLE_STYLE}>{props.title}</h2>
-      {props.children}
+    <div style={props.last ? ROW_STYLE : { ...ROW_STYLE, "border-bottom": ROW_BORDER }}>
+      <div style={{ display: "flex", "flex-direction": "column", flex: "1", gap: "8px", "min-width": "0" }}>
+        <span style={LABEL_STYLE}>{props.label}</span>
+        <span style={DESCRIPTION_STYLE}>{props.description}</span>
+      </div>
+      {props.control}
+    </div>
+  )
+}
+
+/** A section: a title above the host's list container, never a header inside it. */
+function Section(props: { readonly title: string; readonly children: JSX.Element }) {
+  return (
+    <section style={SECTION_STYLE}>
+      <h2 style={SECTION_TITLE_STYLE}>{props.title}</h2>
+      <div style={LIST_STYLE}>{props.children}</div>
     </section>
   )
 }
@@ -287,10 +349,10 @@ function IndexingSettings(props: { readonly ctx: Context }) {
           const result = loaded()
           if ("error" in result) {
             return (
-              <Card title={ctx.t("settings.status")}>
-                <div style={{ display: "grid", gap: "10px", padding: "14px 16px", "justify-items": "start" }}>
+              <Section title={ctx.t("settings.status")}>
+                <div style={{ display: "grid", gap: "10px", "padding-block": "20px", "justify-items": "start" }}>
                   <p style={{ margin: "0", "font-size": "13px" }}>{ctx.t("settings.failed")}</p>
-                  <p style={{ margin: "0", "font-size": "13px", opacity: 0.7 }}>{result.error}</p>
+                  <p style={{ ...DESCRIPTION_STYLE, margin: "0" }}>{result.error}</p>
                   <ctx.ui.Button
                     variant="neutral"
                     size="small"
@@ -300,7 +362,7 @@ function IndexingSettings(props: { readonly ctx: Context }) {
                     {ctx.t("settings.reload")}
                   </ctx.ui.Button>
                 </div>
-              </Card>
+              </Section>
             )
           }
 
@@ -310,20 +372,28 @@ function IndexingSettings(props: { readonly ctx: Context }) {
 
           return (
             <>
-              <Card title={ctx.t("settings.status")}>
-                <Row label={ctx.t("settings.state")} first>
-                  <span style={{ display: "inline-flex", gap: "6px", "align-items": "center", "font-size": "13px" }}>
+              <Section title={ctx.t("settings.status")}>
+                <Row label={ctx.t("settings.state")}>
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      gap: "6px",
+                      "align-items": "center",
+                      "font-size": "13px",
+                      color: "var(--v2-text-text-muted, inherit)",
+                    }}
+                  >
                     <ctx.ui.Icon name={stateIcon(state())} size="small" />
                     {ctx.t(`state.${state()}`)}
                   </span>
                 </Row>
                 <Row label={ctx.t("settings.points")} value={pointsText(index().ownPoints)} />
                 <Row label={ctx.t("settings.workspace")} value={text(index().workspace)} />
-                <Row label={ctx.t("settings.recommendation")} value={index().recommendation} />
-              </Card>
+                <Row label={ctx.t("settings.recommendation")} value={index().recommendation} last />
+              </Section>
 
-              <Card title={ctx.t("settings.configuration")}>
-                <Row label={ctx.t("settings.store")} value={settings().vectorStore} first />
+              <Section title={ctx.t("settings.configuration")}>
+                <Row label={ctx.t("settings.store")} value={settings().vectorStore} />
                 <Row
                   label={ctx.t("settings.location")}
                   value={settings().vectorStore === "qdrant" ? settings().qdrantUrl : settings().lancedbDirectory}
@@ -332,33 +402,45 @@ function IndexingSettings(props: { readonly ctx: Context }) {
                 <Row label={ctx.t("settings.model")} value={settings().model} />
                 <Row label={ctx.t("settings.dimension")} value={String(settings().dimension)} />
 
-                <Row label={ctx.t("settings.enabled")}>
-                  <ctx.ui.Switch
-                    label={ctx.t("settings.enabled")}
-                    hideLabel
-                    checked={settings().enabled !== false}
-                    disabled={saving() === "enabled"}
-                    onChange={(checked) => void saveToggle("enabled", checked)}
-                  />
-                </Row>
-                <Row label={ctx.t("settings.importFromKilo")}>
-                  <ctx.ui.Switch
-                    label={ctx.t("settings.importFromKilo")}
-                    hideLabel
-                    checked={settings().importFromKilo}
-                    disabled={saving() === "importFromKilo"}
-                    onChange={(checked) => void saveToggle("importFromKilo", checked)}
-                  />
-                </Row>
-                <Row label={ctx.t("settings.autoRefresh")}>
-                  <ctx.ui.Switch
-                    label={ctx.t("settings.autoRefresh")}
-                    hideLabel
-                    checked={settings().autoRefresh}
-                    disabled={saving() === "autoRefresh"}
-                    onChange={(checked) => void saveToggle("autoRefresh", checked)}
-                  />
-                </Row>
+                <SwitchRow
+                  label={ctx.t("settings.enabled")}
+                  description={ctx.t("settings.enabledDescription")}
+                  control={
+                    <ctx.ui.Switch
+                      label={ctx.t("settings.enabled")}
+                      hideLabel
+                      checked={settings().enabled !== false}
+                      disabled={saving() === "enabled"}
+                      onChange={(checked) => void saveToggle("enabled", checked)}
+                    />
+                  }
+                />
+                <SwitchRow
+                  label={ctx.t("settings.importFromKilo")}
+                  description={ctx.t("settings.importFromKiloDescription")}
+                  control={
+                    <ctx.ui.Switch
+                      label={ctx.t("settings.importFromKilo")}
+                      hideLabel
+                      checked={settings().importFromKilo}
+                      disabled={saving() === "importFromKilo"}
+                      onChange={(checked) => void saveToggle("importFromKilo", checked)}
+                    />
+                  }
+                />
+                <SwitchRow
+                  label={ctx.t("settings.autoRefresh")}
+                  description={ctx.t("settings.autoRefreshDescription")}
+                  control={
+                    <ctx.ui.Switch
+                      label={ctx.t("settings.autoRefresh")}
+                      hideLabel
+                      checked={settings().autoRefresh}
+                      disabled={saving() === "autoRefresh"}
+                      onChange={(checked) => void saveToggle("autoRefresh", checked)}
+                    />
+                  }
+                />
 
                 <Row label={ctx.t("settings.searchMaxResults")} value={String(settings().searchMaxResults)} />
                 <Row
@@ -366,8 +448,8 @@ function IndexingSettings(props: { readonly ctx: Context }) {
                   value={settings().configuredProviders.join(", ") || ctx.t("settings.none")}
                 />
                 <Row label={ctx.t("settings.file")} value={settings().settingsFile} />
-                <Row label={ctx.t("settings.version")} value={text(result.config.version)} />
-              </Card>
+                <Row label={ctx.t("settings.version")} value={text(result.config.version)} last />
+              </Section>
 
               <div style={BUTTONS_STYLE}>
                 <ctx.ui.Button
@@ -447,8 +529,11 @@ export default Plugin.define({
       "settings.model": "Embedding model",
       "settings.dimension": "Dimensions",
       "settings.enabled": "Indexing enabled",
+      "settings.enabledDescription": "When off, nothing is written or refreshed.",
       "settings.importFromKilo": "Import from Kilo",
+      "settings.importFromKiloDescription": "Copy a compatible Kilo index instead of re-embedding.",
       "settings.autoRefresh": "Auto refresh",
+      "settings.autoRefreshDescription": "Refresh on search when a few files changed.",
       "settings.searchMaxResults": "Search results",
       "settings.providers": "Configured providers",
       "settings.file": "Settings file",
