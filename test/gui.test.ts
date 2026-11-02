@@ -112,6 +112,19 @@ describe("Desktop GUI entry", () => {
     assert.match(file, /mutate\(/)
   })
 
+  test("no colour is hardcoded, so the page follows the app's theme", () => {
+    // The app defines its theme as CSS variables: `:root` for light,
+    // `@media (prefers-color-scheme: dark)` for the system scheme, and
+    // `[data-color-scheme=dark]` for the Settings > Appearance override. A
+    // plugin page inside the document inherits all three, so a hex value is
+    // the one thing that would stop following them.
+    const file = read("src/gui.tsx")
+
+    assert.match(file, /var\(--v2-/)
+    assert.doesNotMatch(file, /#[0-9a-f]{3,8}\b/i)
+    assert.doesNotMatch(file, /\brgba?\(/i)
+  })
+
   test("the page uses the host's measurements and theme variables", () => {
     // These are the app's own values, read from its settings CSS: a 720px
     // column, 48px above the title, and `--v2-*` variables for every colour.
