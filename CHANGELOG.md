@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.3] - 2026-11-03
+
+### Fixed
+- **The Desktop settings page was missing the `searchKilo` switch** added in
+  0.7.2. The TUI page and the dialog editor had it; the GUI — which is where a
+  Desktop user looks — still offered only "Import from Kilo", so the setting was
+  unreachable from there.
+
 ## [0.7.2] - 2026-11-03
 
 ### Added
@@ -671,7 +679,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.7.3
 [0.7.2]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.7.2
 [0.7.1]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.7.1
 [0.7.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.7.0

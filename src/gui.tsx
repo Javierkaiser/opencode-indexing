@@ -36,6 +36,7 @@ interface SettingsView {
   readonly model: string
   readonly dimension: number
   readonly importFromKilo: boolean
+  readonly searchKilo: boolean
   readonly autoRefresh: boolean
   readonly enabled: boolean
   readonly codegraph: boolean
@@ -524,6 +525,7 @@ function IndexingSettings(props: { readonly ctx: Context }) {
                   provider: "local",
                   model: "",
                   importFromKilo: true,
+                  searchKilo: true,
                   autoRefresh: true,
                 },
               })
@@ -731,6 +733,19 @@ function IndexingSettings(props: { readonly ctx: Context }) {
                       checked={settings().importFromKilo}
                       disabled={saving() === "importfromkilo"}
                       onChange={(checked) => void applyKey("importfromkilo", String(checked))}
+                    />
+                  }
+                />
+                <SwitchRow
+                  label={ctx.t("settings.searchKilo")}
+                  description={ctx.t("settings.searchKiloDescription")}
+                  control={
+                    <ctx.ui.Switch
+                      label={ctx.t("settings.searchKilo")}
+                      hideLabel
+                      checked={settings().searchKilo !== false}
+                      disabled={saving() === "searchkilo"}
+                      onChange={(checked) => void applyKey("searchkilo", String(checked))}
                     />
                   }
                 />
@@ -955,6 +970,8 @@ export default Plugin.define({
       "settings.enabledDescription": "When off, nothing is written or refreshed.",
       "settings.importFromKilo": "Import from Kilo",
       "settings.importFromKiloDescription": "Copy a compatible Kilo index instead of re-embedding.",
+      "settings.searchKilo": "Search Kilo's index",
+      "settings.searchKiloDescription": "Also search Kilo's index. Turn it off when that index was built with a model this machine cannot embed.",
       "settings.autoRefresh": "Auto refresh",
       "settings.autoRefreshDescription": "Refresh on search when a few files changed.",
       "settings.codegraph": "Codegraph companion",

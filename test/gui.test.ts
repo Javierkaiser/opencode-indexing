@@ -147,6 +147,17 @@ describe("Desktop GUI entry", () => {
     assert.match(file, /settings\.test"\]\(\{\s*target:\s*"lancedb"/s)
   })
 
+  test("the searchKilo switch is offered on the page, not only in the TUI", () => {
+    // 0.7.2 added the setting to the TUI page and the dialog editor; the Desktop
+    // page — where a GUI user looks — kept offering only "Import from Kilo", so
+    // the switch was unreachable from there.
+    const file = read("src/gui.tsx")
+
+    assert.match(file, /settings\.searchKilo/)
+    assert.match(file, /settings\.searchKiloDescription/)
+    assert.match(file, /applyKey\("searchkilo"/)
+  })
+
   test("no colour is hardcoded, so the page follows the app's theme", () => {
     // The app defines its theme as CSS variables: `:root` for light,
     // `@media (prefers-color-scheme: dark)` for the system scheme, and
