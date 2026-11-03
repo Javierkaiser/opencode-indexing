@@ -44,6 +44,7 @@ const settingsShape = {
     model: { type: "string" },
     dimension: { type: "number" },
     importFromKilo: { type: "boolean" },
+    searchKilo: { type: "boolean" },
     autoRefresh: { type: "boolean" },
     enabled: { type: "boolean" },
     codegraph: { type: "boolean" },

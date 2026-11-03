@@ -19,6 +19,8 @@ export interface SettingsView {
   model: string
   dimension: number
   importFromKilo: boolean
+  /** Search Kilo's index alongside the own one. */
+  searchKilo: boolean
   autoRefresh: boolean
   /** Master switch for writing the own index. */
   enabled: boolean
@@ -120,6 +122,7 @@ export const UNKNOWN_SETTINGS: SettingsView = {
   model: "",
   dimension: 0,
   importFromKilo: false,
+  searchKilo: true,
   enabled: false,
   autoRefresh: false,
   searchMaxResults: 0,
@@ -217,6 +220,10 @@ export function configRows(settings: SettingsView, version = "unknown"): ConfigR
     {
       label: "Import from Kilo",
       value: settings.importFromKilo ? "ON · imports without embedding cost" : "OFF · always index from scratch",
+    },
+    {
+      label: "Search Kilo",
+      value: settings.searchKilo ? "ON · both indexes" : "OFF · own index only",
     },
     { label: "Auto-refresh", value: settings.autoRefresh ? "ON" : "OFF" },
     { label: "Max results", value: String(settings.searchMaxResults) },

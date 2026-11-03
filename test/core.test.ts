@@ -119,6 +119,21 @@ describe("config", () => {
     }
   })
 
+  test("searchKilo defaults to on and the option or the environment can turn it off", () => {
+    assert.equal(resolveSettings({ ignoreKiloConfig: true }).searchKilo, true)
+    assert.equal(resolveSettings({ ignoreKiloConfig: true, searchKilo: false }).searchKilo, false)
+    assert.equal(resolveSettings({ ignoreKiloConfig: true, searchKilo: true }).searchKilo, true)
+
+    const previous = process.env.KILO_INDEX_SEARCH_KILO
+    process.env.KILO_INDEX_SEARCH_KILO = "off"
+    try {
+      assert.equal(resolveSettings({ ignoreKiloConfig: true }).searchKilo, false)
+    } finally {
+      if (previous === undefined) delete process.env.KILO_INDEX_SEARCH_KILO
+      else process.env.KILO_INDEX_SEARCH_KILO = previous
+    }
+  })
+
   test("options override kilo config and env", () => {
     const settings = resolveSettings({
       ignoreKiloConfig: true,

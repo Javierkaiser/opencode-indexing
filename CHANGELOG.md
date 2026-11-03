@@ -5,6 +5,24 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-11-03
+
+### Added
+- **`searchKilo`, so a local index stays searchable next to an unusable Kilo
+  one.** Search reads both indexes and refuses to answer when one of them holds
+  points built with a profile this machine cannot embed — an expired cloud key or
+  an exhausted budget. That refusal is right (a half answer looks complete), but
+  it left the own index unreachable too. With `searchKilo: false`
+  (`KILO_INDEX_SEARCH_KILO=false`, or the new switch in the settings page and the
+  dialog menu) the search uses the own index only, without querying Qdrant for
+  Kilo's collection at all.
+
+  Wired through the whole surface: settings file, plugin options, environment,
+  `indexing_config`, the TUI page, the dialog editor and the RPC view.
+
+### Documentation
+- The README explains when turning Kilo's index off is the right move.
+
 ## [0.7.1] - 2026-11-02
 
 ### Fixed
@@ -653,7 +671,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.7.2
 [0.7.1]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.7.1
 [0.7.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.7.0
 [0.6.3]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.6.3

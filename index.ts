@@ -133,6 +133,7 @@ function settingsView(settings: IndexingSettings, homeDir?: string): Record<stri
     model: settings.modelId,
     dimension: settings.dimension,
     importFromKilo: settings.importFromKilo,
+    searchKilo: settings.searchKilo !== false,
     autoRefresh: settings.autoRefresh,
     enabled: settings.enabled,
     codegraph: settings.codegraph !== false,

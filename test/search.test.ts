@@ -140,6 +140,42 @@ test("an index with no points needs no query vector and is not an error", async 
   assert.deepEqual(outcome.hits, [])
 })
 
+test("searchKilo: false leaves Kilo's index out instead of failing on its profile", async () => {
+  // A workspace whose Kilo collection was built by a cloud profile this machine
+  // can no longer embed (an expired key, an exhausted budget) used to fail the
+  // whole search, because answering from half the corpus would look complete.
+  // With the switch off, the own index stays searchable — which is the point.
+  const exploding = new Proxy(
+    {},
+    {
+      get: () => () => {
+        throw new Error("Kilo's store must not be queried when searchKilo is false")
+      },
+    },
+  ) as unknown as Qdrant
+
+  const hit: QueryHit = {
+    id: "p1",
+    score: 0.8,
+    payload: { filePath: "src/b.ts", fileHash: "h", codeChunk: "code", startLine: 5, endLine: 9 },
+  }
+  const outcome = await searchCode(
+    {
+      qdrant: exploding,
+      kv: memoryKv(),
+      root: "D:\\Projects\\demo",
+      settings: settings({ vectorStore: "qdrant", searchKilo: false, credentials: { mistralApiKey: "k" } }),
+      ownStore: fakeOwnStore({ provider: "mistral", modelId: "codestral-embed-2505", dimension: 1536 }, 10, [hit]),
+    },
+    "where is the auth check",
+  )
+
+  assert.equal(outcome.hits.length, 1)
+  assert.equal(outcome.hits[0]!.filePath, "src/b.ts")
+  assert.equal(outcome.meta.kilo.collection, null, "Kilo must not appear in the metadata")
+  assert.deepEqual(outcome.errors, [], "skipping Kilo on purpose is not an error")
+})
+
 test("a healthy profile returns its hits", async () => {
   const hit: QueryHit = {
     id: "p1",

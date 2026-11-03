@@ -25,6 +25,7 @@ const SETTINGS: SettingsView = {
   model: "codestral-embed-2505",
   dimension: 1536,
   importFromKilo: true,
+  searchKilo: true,
   enabled: true,
   autoRefresh: false,
   searchMaxResults: 50,

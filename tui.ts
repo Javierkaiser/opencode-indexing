@@ -76,6 +76,8 @@ interface SettingsView {
   model: string
   dimension: number
   importFromKilo: boolean
+  /** Search Kilo's index alongside the own one. */
+  searchKilo: boolean
   autoRefresh: boolean
   /** Master switch for writing the own index. */
   enabled: boolean
@@ -238,6 +240,12 @@ const plugin = {
             category: "Configuration",
           },
           {
+            title: `Search Kilo's index: ${settings.searchKilo ? "ON (both indexes)" : "OFF (own index only)"}`,
+            value: "searchKilo",
+            description: "Turn off when Kilo's index was built with a model you cannot embed here",
+            category: "Configuration",
+          },
+          {
             title: `Auto-refresh on search: ${settings.autoRefresh ? "ON" : "OFF"}`,
             value: "autoRefresh",
             description: "Refresh the index inline when few files changed",
@@ -295,6 +303,10 @@ const plugin = {
         case "importToggle":
           await patchSettings({ importFromKilo: !settings.importFromKilo })
           toast(`Import from Kilo: ${!settings.importFromKilo ? "ON" : "OFF"}`, "success")
+          break
+        case "searchKilo":
+          await patchSettings({ searchKilo: !settings.searchKilo })
+          toast(`Search Kilo's index: ${!settings.searchKilo ? "ON" : "OFF"}`, "success")
           break
         case "autoRefresh":
           await patchSettings({ autoRefresh: !settings.autoRefresh })

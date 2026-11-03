@@ -95,6 +95,17 @@ export interface IndexingSettings extends EmbeddingProfile {
   autoRefresh: boolean
   /** Import vectors from Kilo Code's existing index instead of re-embedding. */
   importFromKilo: boolean
+  /**
+   * Search Kilo's index alongside the own one.
+   *
+   * Optional like `codegraph`: absent means on, which is what the resolver
+   * writes and what every hand-built fixture gets without threading a new field
+   * through ten files. Off is the escape hatch for a workspace whose Kilo
+   * collection was built with a profile this machine cannot embed any more (an
+   * expired cloud key, an exhausted budget): the own index stays searchable
+   * without paying for the other half.
+   */
+  searchKilo?: boolean
   /** Master switch: when false nothing is written to nor refreshed in the own index. */
   enabled: boolean
   /**

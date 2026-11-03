@@ -38,6 +38,8 @@ export interface PluginOptionsInput {
   /** Master switch: when false the own index is neither written nor refreshed. */
   enabled?: boolean
   importFromKilo?: boolean
+  /** Search Kilo's index alongside the own one. Defaults to on. */
+  searchKilo?: boolean
   /** Also launch the codegraph CLI on build. Absent means on; see IndexingSettings. */
   codegraph?: boolean
   /** Disable reading Kilo's config file entirely. */
@@ -107,6 +109,15 @@ function pickProvider(value: string | undefined): EmbedderProvider | undefined {
   if (!value) return undefined
   const normalized = value.trim().toLowerCase() as EmbedderProvider
   return VALID_PROVIDERS.includes(normalized) ? normalized : undefined
+}
+
+/** Boolean environment flag; anything that is not a recognized word is ignored. */
+function envFlag(name: string): boolean | undefined {
+  const raw = process.env[name]?.trim().toLowerCase()
+  if (!raw) return undefined
+  if (["1", "true", "yes", "on"].includes(raw)) return true
+  if (["0", "false", "no", "off"].includes(raw)) return false
+  return undefined
 }
 
 function nonEmpty(value: unknown): string | undefined {
@@ -301,6 +312,11 @@ export function resolveSettings(options: PluginOptionsInput): IndexingSettings {
 
   const autoRefresh = options.autoRefresh ?? file?.autoRefresh === true
   const importFromKilo = options.importFromKilo ?? file?.importFromKilo !== false
+  // Search Kilo's index too. Off keeps the own index searchable in a workspace
+  // whose Kilo collection was built with a profile this machine can no longer
+  // embed — otherwise the whole search fails rather than answering from the half
+  // that works.
+  const searchKilo = options.searchKilo ?? file?.searchKilo ?? envFlag("KILO_INDEX_SEARCH_KILO") ?? true
   // Master switch for the own index. Off means: search still reads Kilo's index,
   // but nothing is written and nothing is auto-refreshed. Toggled from the TUI
   // footer indicator or `/indexing-config set enabled false`.
@@ -332,6 +348,7 @@ export function resolveSettings(options: PluginOptionsInput): IndexingSettings {
     fileExtensions,
     autoRefresh,
     importFromKilo,
+    searchKilo,
     enabled,
     codegraph,
     credentials,

@@ -252,6 +252,13 @@ const KEY_SPECS: Record<string, KeySpec> = {
     toPatch: (value) => ({ importFromKilo: Boolean(value) }),
     display: (settings) => (settings.importFromKilo ? "true" : "false"),
   },
+  searchkilo: {
+    group: "behavior",
+    kind: "boolean",
+    description: "Search Kilo's index too; turn it off when its profile cannot be embedded here",
+    toPatch: (value) => ({ searchKilo: Boolean(value) }),
+    display: (settings) => (settings.searchKilo !== false ? "true" : "false"),
+  },
   autorefresh: {
     group: "behavior",
     kind: "boolean",

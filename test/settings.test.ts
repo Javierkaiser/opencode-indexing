@@ -162,4 +162,15 @@ describe("resolveSettings with indexing.json", () => {
     assert.equal(settings.provider, "local")
     assert.ok(settings.warnings.some((warning) => warning.includes("nope")))
   })
+
+  test("searchKilo can be turned off from indexing.json", () => {
+    // The switch exists for a Kilo collection whose profile this machine can no
+    // longer embed; the settings page writes it to the same file.
+    const home = makeHome()
+    writeFileSync(
+      path.join(home, ".config", "opencode", "indexing.json"),
+      JSON.stringify({ searchKilo: false }),
+    )
+    assert.equal(resolveSettings({ homeDir: home }).searchKilo, false)
+  })
 })

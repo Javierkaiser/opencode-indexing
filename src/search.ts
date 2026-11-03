@@ -90,14 +90,20 @@ export async function searchCode(deps: SearchDeps, query: string, pathPrefix?: s
 
   const ownStore = deps.ownStore ?? createOwnStore(settings, root)
   const qdrantClient = settings.vectorStore === "qdrant" ? qdrant : createSettingsQdrant(settings)
+  // `searchKilo: false` is the escape hatch for a Kilo collection built with a
+  // profile this machine cannot embed any more. Without it the search would have
+  // to answer from half the corpus, and it deliberately refuses to do that.
+  const searchKilo = settings.searchKilo !== false
   const [ownInfo, kiloCollection] = await Promise.all([
     ownStore.info().catch(() => null),
-    resolveKiloCached(qdrantClient, kv, root).catch((error) => {
-      errors.push(`kilo resolve: ${describeError(error)}`)
-      return null
-    }),
+    searchKilo
+      ? resolveKiloCached(qdrantClient, kv, root).catch((error) => {
+          errors.push(`kilo resolve: ${describeError(error)}`)
+          return null
+        })
+      : Promise.resolve(null),
   ])
-  const kiloInfo = kiloCollection ? await getKiloStoreInfo(qdrantClient, kiloCollection).catch(() => null) : null
+  const kiloInfo = searchKilo && kiloCollection ? await getKiloStoreInfo(qdrantClient, kiloCollection).catch(() => null) : null
 
   const profiles = new Map<string, ProfileRef>()
   if (ownInfo?.profile) profiles.set(profileKey(ownInfo.profile), { ...ownInfo.profile })
@@ -142,7 +148,7 @@ export async function searchCode(deps: SearchDeps, query: string, pathPrefix?: s
     )
   }
   unreachable("the own index", ownInfo?.profile, ownInfo?.pointsCount)
-  unreachable("Kilo's index", kiloInfo?.profile, kiloInfo?.pointsCount)
+  if (searchKilo) unreachable("Kilo's index", kiloInfo?.profile, kiloInfo?.pointsCount)
 
   const minScore = settings.searchMinScore
 

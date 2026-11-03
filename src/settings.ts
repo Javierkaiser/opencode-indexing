@@ -35,6 +35,8 @@ export interface SettingsFile {
   }
   /** Import vectors from Kilo Code's existing index instead of re-embedding. */
   importFromKilo?: boolean
+  /** Search Kilo's index alongside the own one. Defaults to on. */
+  searchKilo?: boolean
   /** Refresh the index inline on search when few files changed. */
   autoRefresh?: boolean
   /** Master switch: when false the own index is neither written nor refreshed. */
