@@ -69,7 +69,7 @@
     "mini-semantic-search": "^0.1.0"
   },
   "optionalDependencies": {
-    "@lancedb/lancedb": "0.40.0",
+    "@lancedb/lancedb": "0.41.0",
     "apache-arrow": "18.1.0",
     "tree-sitter-wasms": "0.1.13",
     "web-tree-sitter": "0.25.10"
