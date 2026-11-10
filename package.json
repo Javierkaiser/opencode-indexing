@@ -1,6 +1,6 @@
 {
   "name": "@javierkaiser/opencode-indexing",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "OpenCode plugin: semantic code search that reuses Kilo Code indexes (Qdrant/LanceDB) and maintains its own independent index",
   "license": "MIT",
   "author": "Carlos Javier Lust <javierkaiser@gmail.com>",
@@ -51,7 +51,7 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit && tsc -p tsconfig.gui.json --noEmit",
-    "test:unit": "node --test \"test/*.test.ts\"",
+    "test:unit": "node --test \"test/*.test.ts\" \"test/*.test.mjs\"",
     "test:integration": "node --test \"test/integration/*.test.ts\"",
     "test": "npm run typecheck && npm run test:unit",
     "build:gui": "vite build",

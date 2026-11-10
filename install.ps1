@@ -4,11 +4,14 @@
 #
 # The preferred form from npm is:
 #   npx @javierkaiser/opencode-indexing --with-codegraph
+# and, for a machine that never ran Kilo, everything at once:
+#   npx @javierkaiser/opencode-indexing --aio
 # This wrapper forwards to the same install.mjs, so it accepts the same flags.
 #
 # Usage:
-#   powershell -ExecutionPolicy Bypass -File install.ps1 [-Local|-Package] [-Spec <spec>] [-SkipDeps] [-NoRestart] [-WithCodegraph]
+#   powershell -ExecutionPolicy Bypass -File install.ps1 [-Aio] [-Local|-Package] [-Spec <spec>] [-SkipDeps] [-NoRestart] [-WithCodegraph]
 param(
+  [switch]$Aio,
   [switch]$Local,
   [switch]$Package,
   [string]$Spec,
@@ -20,6 +23,7 @@ param(
 $ErrorActionPreference = "Stop"
 $script = Join-Path $PSScriptRoot "install.mjs"
 $forward = @()
+if ($Aio) { $forward += "--aio" }
 if ($Local) { $forward += "--local" }
 if ($Package) { $forward += "--package" }
 if ($Spec) { $forward += $Spec }

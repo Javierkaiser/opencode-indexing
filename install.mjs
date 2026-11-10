@@ -4,7 +4,7 @@
  *
  * Works on Windows, Linux and macOS (Node >= 22.6; Node 26 recommended).
  *
- *   node install.mjs [--local|--package] [spec] [--skip-deps] [--no-restart] [--with-codegraph]
+ *   node install.mjs [--local|--package] [spec] [--skip-deps] [--no-restart] [--with-codegraph] [--aio]
  *   npx @javierkaiser/opencode-indexing
  *
  * There are two ways to install, because there are two audiences.
@@ -25,20 +25,21 @@
  * an unpacked tarball — gets `--package`. Pass either flag to override, and the
  * installer says which one it chose and why.
  *
+ *  --aio      Installs the published package, the codegraph companion and an
+ *             all-in-one profile in `indexing.json`: LanceDB, the local
+ *             multilingual model, no Kilo index and no auto-refresh. It also
+ *             prefetches the embedding model through the running service.
+ *             `--all-in-one` is the same flag. Implies `--package` and
+ *             `--with-codegraph`; it cannot be combined with `--local`.
+ *
  * Both modes write the tool permission rules and restart the service, so either
  * one leaves a working install.
  */
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { spawnSync } from "node:child_process"
-
-const argv = process.argv.slice(2)
-const has = (name) => argv.some((arg) => arg.toLowerCase() === name)
-const skipDeps = has("--skip-deps")
-const noRestart = has("--no-restart")
-const withCodegraph = has("--with-codegraph")
 
 const source = dirname(fileURLToPath(import.meta.url))
 const sourcePkg = JSON.parse(readFileSync(join(source, "package.json"), "utf8"))
@@ -53,6 +54,70 @@ const log = (message) => console.log(message)
 const warn = (message) => console.warn(message)
 
 /**
+ * The all-in-one profile written to `indexing.json`.
+ *
+ * LanceDB and the local multilingual model make a working install with no
+ * external service, no API key and no dependency on a Kilo index. Kilo is
+ * switched off on both sides: it is neither imported nor searched.
+ */
+export const AIO_SETTINGS = Object.freeze({
+  vectorStore: "lancedb",
+  provider: "local",
+  model: "potion-multilingual-128M",
+  dimension: 256,
+  autoRefresh: false,
+  searchKilo: false,
+  importFromKilo: false,
+})
+
+/**
+ * Turn the command line into the flags the installer works with.
+ *
+ * `--aio` implies the published package and the codegraph companion, so
+ * `withCodegraph` is derived here instead of being spelled out at every use.
+ * Matching is case-insensitive, like the rest of this file.
+ */
+export function parseFlags(args) {
+  const has = (name) => args.some((arg) => arg.toLowerCase() === name)
+  const aio = has("--aio") || has("--all-in-one")
+  return {
+    aio,
+    withCodegraph: has("--with-codegraph") || aio,
+    local: has("--local"),
+    package: has("--package"),
+    skipDeps: has("--skip-deps"),
+    noRestart: has("--no-restart"),
+  }
+}
+
+export function validateFlags(flags) {
+  if (flags.aio && flags.local) return "--aio installs the published package; it cannot be combined with --local."
+  return undefined
+}
+
+export function pickMode(flags, isCheckout) {
+  if (flags.local) return "local"
+  if (flags.aio || flags.package) return "package"
+  return isCheckout ? "local" : "package"
+}
+
+export function mergeAioSettings(current) {
+  const base = current !== null && typeof current === "object" && !Array.isArray(current) ? current : {}
+  return { ...base, ...AIO_SETTINGS }
+}
+
+export function writeAioSettings(file, current) {
+  const next = mergeAioSettings(current)
+  mkdirSync(dirname(file), { recursive: true })
+  // Same write-then-rename as the plugin's own settings writer, so a crash
+  // mid-write cannot leave a truncated settings file behind.
+  const tmp = `${file}.${process.pid}.tmp`
+  writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n", "utf8")
+  renameSync(tmp, file)
+  return next
+}
+
+/**
  * Whether this looks like the repository rather than an installed copy.
  *
  * `.git` and `test/` are both absent from the published tarball, so their
@@ -62,21 +127,6 @@ const warn = (message) => console.warn(message)
 function looksLikeCheckout() {
   return existsSync(join(source, ".git")) || existsSync(join(source, "test"))
 }
-
-const mode = has("--local") ? "local" : has("--package") ? "package" : looksLikeCheckout() ? "local" : "package"
-const reason = has("--local") || has("--package") ? "requested" : looksLikeCheckout() ? "a checkout" : "an installed copy"
-
-// A positional argument is the package spec for --package. `@latest` rather than
-// the version this file was published as, because an exact version is skipped by
-// `opencode plugin check` and `plugin update`: pinning would silently opt the
-// install out of the update path OpenCode provides.
-const positional = argv.filter((arg) => !arg.startsWith("-"))
-const spec = positional[0] ?? `${sourcePkg.name}@latest`
-
-log(`Installing ${sourcePkg.name} ${sourcePkg.version}`)
-log(`  from: ${source}`)
-log(`  mode: ${mode} (${reason})`)
-if (withCodegraph) log("  + codegraph (via --with-codegraph, package mode)")
 
 // ---------------------------------------------------------------------------
 // Tool permissions (both modes)
@@ -188,8 +238,8 @@ function writePermissions() {
 // ---------------------------------------------------------------------------
 // Service restart (both modes)
 // ---------------------------------------------------------------------------
-function restartService() {
-  if (noRestart) return
+function restartService(skipRestart) {
+  if (skipRestart) return
   log("  restarting OpenCode service...")
   const result = spawnSync(opencodeBin, ["service", "restart"], { stdio: "inherit", shell: isWindows })
   if (result.error || result.status !== 0) {
@@ -213,6 +263,7 @@ const COPY_ENTRIES = [
   "tui.ts",
   "tui",
   "src",
+  "skills",
   "package.json",
   "tsconfig.json",
   "README.md",
@@ -220,7 +271,7 @@ const COPY_ENTRIES = [
   "THIRD_PARTY_NOTICES.md",
 ]
 
-function installLocal() {
+function installLocal(skipDependencyInstall) {
   log(`  to:   ${dest}`)
   mkdirSync(dest, { recursive: true })
   for (const entry of readdirSync(dest)) {
@@ -253,7 +304,7 @@ function installLocal() {
   }
   writeFileSync(join(dest, "package.json"), JSON.stringify(installedPkg, null, 2) + "\n", "utf8")
 
-  if (skipDeps) {
+  if (skipDependencyInstall) {
     log("  skipping dependency install (--skip-deps)")
     return
   }
@@ -289,10 +340,10 @@ function registeredCount() {
     .filter((id) => id === "javierkaiser.indexing").length
 }
 
-function installPackage() {
-  log(`  spec: ${spec}`)
+function installPackage(packageSpec) {
+  log(`  spec: ${packageSpec}`)
 
-  const added = spawnSync(opencodeBin, ["plugin", "add", spec], { stdio: "inherit", shell: isWindows })
+  const added = spawnSync(opencodeBin, ["plugin", "add", packageSpec], { stdio: "inherit", shell: isWindows })
   if (added.error || added.status !== 0) {
     // Nothing has been removed at this point, so a failure here leaves the
     // previous install exactly as it was.
@@ -381,37 +432,223 @@ function installCodegraph() {
 }
 
 // ---------------------------------------------------------------------------
+// All-in-one profile (--aio)
+// ---------------------------------------------------------------------------
+/** The plugin's own settings file, resolved the same way `src/settings.ts` does. */
+const settingsFile = join(configDir, "indexing.json")
+
+const RPC_PATH = "/api/rpc/javierkaiser.indexing/settings.test"
+const RPC_ATTEMPTS = 10
+const RPC_DELAY_MS = 3000
+
+/** Synchronous sleep: the RPC below uses `spawnSync`, so no timer can run. */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/**
+ * Call the plugin's `settings.test` RPC through the OpenCode CLI.
+ *
+ * A command line rather than an HTTP request: the API port and auth token are
+ * the service's business, and `opencode api` already knows both. On Windows the
+ * body has to travel as one escaped string inside a shell command, which is
+ * what the quote replacement is for; elsewhere the arguments go through as-is.
+ *
+ * Retries cover a service still coming back from the restart, not a test that
+ * answered: a parsed `ok: false` is a result and is returned immediately.
+ */
+function callSettingsTest(input) {
+  const body = JSON.stringify({ input })
+  const command = `${opencodeBin} api post ${RPC_PATH} --data "${body.replace(/"/g, '\\"')}"`
+  let problem = "no response"
+  for (let attempt = 1; attempt <= RPC_ATTEMPTS; attempt++) {
+    const result = isWindows
+      ? spawnSync(command, { encoding: "utf8", shell: true })
+      : spawnSync(opencodeBin, ["api", "post", RPC_PATH, "--data", body], { encoding: "utf8" })
+    if (result.error) {
+      problem = result.error.message
+    } else if (typeof result.stdout !== "string" || result.stdout.trim() === "") {
+      problem = `exit ${result.status} with no output`
+    } else {
+      try {
+        const parsed = JSON.parse(result.stdout)
+        const payload =
+          parsed && typeof parsed === "object" && parsed.output && typeof parsed.output === "object" ? parsed.output : parsed
+        if (payload && typeof payload === "object" && typeof payload.ok === "boolean") return payload
+        problem = "unexpected response shape"
+      } catch {
+        problem = "response was not JSON"
+      }
+    }
+    if (attempt < RPC_ATTEMPTS) sleepSync(RPC_DELAY_MS)
+  }
+  warn(`  settings.test ${input.target}: ${problem} after ${RPC_ATTEMPTS} attempts; skipping`)
+  return undefined
+}
+
+function reportTest(target, result) {
+  if (!result) return
+  const message = typeof result.message === "string" ? result.message.trim() : ""
+  const line = `  settings.test ${target}: ${result.ok ? "OK" : "FAILED"}${message ? ` — ${message}` : ""}`
+  if (result.ok) log(line)
+  else warn(line)
+}
+
+/**
+ * Merge the all-in-one profile into `indexing.json`.
+ *
+ * An existing file is parsed first so unrelated keys (credentials, Qdrant
+ * settings) survive. A file that exists but does not parse is left untouched:
+ * it is the user's, and overwriting it would discard whatever they meant to
+ * put there. `writeAioSettings` does the atomic write.
+ */
+function applyAioSettings() {
+  let current = {}
+  let readable = true
+  if (existsSync(settingsFile)) {
+    try {
+      const parsed = JSON.parse(stripJsonc(readFileSync(settingsFile, "utf8")))
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) current = parsed
+    } catch (error) {
+      readable = false
+      warn(`  could not parse ${settingsFile} (${error instanceof Error ? error.message : String(error)}); leaving it untouched`)
+    }
+  }
+
+  if (readable) {
+    try {
+      const next = writeAioSettings(settingsFile, current)
+      log(`  settings written to ${settingsFile}`)
+      log(
+        `  profile: ${next.vectorStore} · ${next.provider}/${next.model} (${next.dimension}d) · autoRefresh ${next.autoRefresh ? "on" : "off"} · kilo ${next.searchKilo ? "on" : "off"}`,
+      )
+    } catch (error) {
+      warn(`  could not write ${settingsFile}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  warnAioOptionsOverride()
+}
+
+/**
+ * Warn when `opencode.json` overrides the profile through plugin options.
+ *
+ * Plugin options take precedence over `indexing.json`, so an install can look
+ * correct and still run with different settings. Best-effort: a config this
+ * installer cannot read is not a reason to fail the install.
+ */
+function warnAioOptionsOverride() {
+  try {
+    if (!existsSync(configFile)) return
+    const cfg = JSON.parse(stripJsonc(readFileSync(configFile, "utf8")))
+    if (!cfg || !Array.isArray(cfg.plugins)) return
+    const keys = Object.keys(AIO_SETTINGS)
+    const override = cfg.plugins.find((entry) => {
+      if (!entry || typeof entry !== "object") return false
+      if (typeof entry.package !== "string" || !entry.package.startsWith(sourcePkg.name)) return false
+      const options = entry.options
+      return typeof options === "object" && options !== null && !Array.isArray(options) && keys.some((key) => key in options)
+    })
+    if (override) {
+      warn(`  ${configFile} sets plugin options for ${override.package}; those win over the AIO profile in ${settingsFile}`)
+    }
+  } catch {
+    // Advisory only, and the install is already done.
+  }
+}
+
+/**
+ * Run the profile checks through the just-restarted service.
+ *
+ * The provider test is the model prefetch: it downloads and quantizes the
+ * multilingual model (~512 MB) and answers `OK (256 dimensions)`. Nothing is
+ * indexed here — an install must not touch any workspace.
+ */
+function checkAioProfile(skipRestart) {
+  if (skipRestart) {
+    log("  skipped the model download (--no-restart)")
+    log(`  after restarting, fetch it with: opencode api post ${RPC_PATH} --data '{"input":{"target":"provider"}}'`)
+    return
+  }
+
+  log("  checking the vector store through the running service...")
+  reportTest("lancedb", callSettingsTest({ target: "lancedb" }))
+
+  log("  prefetching the embedding model (~512 MB download; this can take several minutes)...")
+  reportTest("provider", callSettingsTest({ target: "provider" }))
+}
+
+// ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
-if (mode === "local") {
-  installLocal()
-  if (withCodegraph) warn("  --with-codegraph is ignored in --local mode; codegraph is not installed there")
-} else {
-  if (!installPackage()) {
-  warn("  not writing permissions or restarting: the install did not complete")
-  process.exit(1)
+function main() {
+  const argv = process.argv.slice(2)
+  const flags = parseFlags(argv)
+  const invalid = validateFlags(flags)
+  if (invalid) {
+    warn(invalid)
+    process.exit(1)
   }
-  if (withCodegraph) installCodegraph()
 
-}
+  const isCheckout = looksLikeCheckout()
+  const mode = pickMode(flags, isCheckout)
+  const reason = flags.aio
+    ? "requested (--aio)"
+    : flags.local || flags.package
+      ? "requested"
+      : isCheckout
+        ? "a checkout"
+        : "an installed copy"
 
-writePermissions()
-// Before the count below, not after: `plugin list` asks the running service,
-// which still holds the configuration from before this install.
-restartService()
+  // A positional argument is the package spec for --package. `@latest` rather than
+  // the version this file was published as, because an exact version is skipped by
+  // `opencode plugin check` and `plugin update`: pinning would silently opt the
+  // install out of the update path OpenCode provides.
+  const positional = argv.filter((arg) => !arg.startsWith("-"))
+  const spec = positional[0] ?? `${sourcePkg.name}@latest`
 
-if (mode === "package") {
-  const count = registeredCount()
-  if (count !== undefined && count > 1) {
-    warn(`  ${count} entries report id javierkaiser.indexing; only one should. Check \`opencode plugin list\`.`)
+  log(`Installing ${sourcePkg.name} ${sourcePkg.version}`)
+  log(`  from: ${source}`)
+  log(`  mode: ${mode} (${reason})`)
+  if (flags.aio) log("  + all-in-one: lancedb + local multilingual model, no Kilo")
+  if (flags.withCodegraph) {
+    log(flags.aio ? "  + codegraph (via --aio)" : "  + codegraph (via --with-codegraph, package mode)")
+  }
+
+  if (mode === "local") {
+    installLocal(flags.skipDeps)
+    if (flags.withCodegraph) warn("  --with-codegraph is ignored in --local mode; codegraph is not installed there")
+  } else {
+    if (!installPackage(spec)) {
+      warn("  not writing permissions or restarting: the install did not complete")
+      process.exit(1)
+    }
+    if (flags.aio) applyAioSettings()
+    if (flags.withCodegraph) installCodegraph()
+  }
+
+  writePermissions()
+  // Before the count below, not after: `plugin list` asks the running service,
+  // which still holds the configuration from before this install.
+  restartService(flags.noRestart)
+
+  if (mode === "package") {
+    const count = registeredCount()
+    if (count !== undefined && count > 1) {
+      warn(`  ${count} entries report id javierkaiser.indexing; only one should. Check \`opencode plugin list\`.`)
+    }
+    if (flags.aio) checkAioProfile(flags.noRestart)
+  }
+
+  log("Done.")
+  if (mode === "package") {
+    log("Update with: opencode plugin update")
+    log("Remove with: opencode plugin remove " + spec)
+  } else {
+    log("Verify with: opencode api get /api/info")
+    log("Then run in a session: indexing_status  (or /indexing-config in any client)")
   }
 }
 
-log("Done.")
-if (mode === "package") {
-  log("Update with: opencode plugin update")
-  log("Remove with: opencode plugin remove " + spec)
-} else {
-  log("Verify with: opencode api get /api/info")
-  log("Then run in a session: indexing_status  (or /indexing-config in any client)")
-}
+const isMain = process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+if (isMain) main()

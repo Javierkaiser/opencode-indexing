@@ -4,10 +4,12 @@
 #
 # The preferred form from npm is:
 #   npx @javierkaiser/opencode-indexing --with-codegraph
+# and, for a machine that never ran Kilo, everything at once:
+#   npx @javierkaiser/opencode-indexing --aio
 # This wrapper forwards to the same install.mjs, so it accepts the same flags.
 #
 # Usage:
-#   sh install.sh [--local|--package] [spec] [--skip-deps] [--no-restart] [--with-codegraph]
+#   sh install.sh [--aio] [--local|--package] [spec] [--skip-deps] [--no-restart] [--with-codegraph]
 set -eu
 
 dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

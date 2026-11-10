@@ -30,6 +30,10 @@ TypeScript in the same process. No network, no account, no service — and about
 0.2 ms per chunk, so a full index of this repository takes seconds instead of
 minutes. It is English-only; a configured cloud key still wins.
 
+**If you never used Kilo.** `npx @javierkaiser/opencode-indexing --aio` is the
+whole install: the published plugin, the codegraph companion, and a local-only
+profile to match. It does not build the index — you start that when you want one.
+
 ## Install
 
 ### With npx (recommended)
@@ -55,11 +59,58 @@ npx @javierkaiser/opencode-indexing --with-codegraph
 
 | Flag | Effect |
 | --- | --- |
+| `--aio`, `--all-in-one` | All-in-one install for a machine without Kilo: implies `--package` and `--with-codegraph`, then writes a local profile (see below) |
 | `--package [spec]` | Install the published package (default spec `@latest`) |
 | `--local` | Copy this directory into the config dir (development) |
 | `--skip-deps` | `--local` only: copy the files, install no dependencies |
 | `--no-restart` | Do not restart the service |
 | `--with-codegraph` | Install and register codegraph as a companion MCP (opt-in, `--package` only) |
+
+### All-in-one (AIO)
+
+If Kilo was never installed, `--aio` is the install with no decisions left in it:
+
+```bash
+npx @javierkaiser/opencode-indexing --aio
+```
+
+It implies `--package` and `--with-codegraph`: it installs the published plugin,
+installs and registers codegraph, and writes a local profile to
+`~/.config/opencode/indexing.json`:
+
+```json
+{
+  "vectorStore": "lancedb",
+  "provider": "local",
+  "model": "potion-multilingual-128M",
+  "dimension": 256,
+  "autoRefresh": false,
+  "searchKilo": false,
+  "importFromKilo": false
+}
+```
+
+`searchKilo` and `importFromKilo` are off because there is no Kilo index to read
+from or copy. `dimension: 256` is written out rather than inferred: `kilo.jsonc`
+is consulted before the model registry, so a dimension left behind by Kilo would
+override the multilingual model's 256. `autoRefresh: false` is the other
+deliberate one — the installer does not build the index, and this keeps search
+from starting one on its own. The first build is yours to start: **Settings →
+Indexing → Build**, `/indexing`, or `indexing_build`.
+
+What the install does fetch is the model. After the restart it runs the plugin's
+`settings.test` for `lancedb` and `provider`; the provider test downloads the
+multilingual weights (~512 MB fp32, ~123 MB int8 on first use) and confirms they
+produce 256 dimensions, so the first search is not the one that discovers a
+missing or broken model. `--no-restart` skips that and leaves the download to
+first use.
+
+Existing keys and credentials in `indexing.json` are preserved: the profile is
+merged into the file, not written over it, and a file that is not valid JSON is
+left untouched with a warning. Plugin `options` in `opencode.json` still win over
+the file, so an option that sets one of these keys takes precedence and the
+installer says so. `--aio` is the published-package install and cannot be
+combined with `--local`.
 
 ### The codegraph companion
 
@@ -120,7 +171,8 @@ The other six tools only read. OpenCode's base policy already allows everything
 write them out only if you want to tighten the set.
 
 `install.sh` and `install.ps1` are thin wrappers over it; PowerShell also accepts
-`-Local`, `-Package`, `-Spec`, `-SkipDeps`, `-NoRestart` and `-WithCodegraph`.
+`-Aio`, `-Local`, `-Package`, `-Spec`, `-SkipDeps`, `-NoRestart` and
+`-WithCodegraph`.
 
 `--package` deletes any copied plugin it finds: both sources define the same
 plugin id (`javierkaiser.indexing`) and the config directory is scanned

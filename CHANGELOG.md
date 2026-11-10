@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-11-10
+
+### Added
+- **`--aio` / `--all-in-one` is the install for a machine that never ran Kilo.**
+  It implies `--package` and `--with-codegraph`, so one command installs the
+  published plugin and the codegraph companion, and then writes a local-only
+  profile to `~/.config/opencode/indexing.json`: embedded LanceDB, the
+  multilingual static model at 256 dimensions, no Kilo search, no import from
+  Kilo and no auto-refresh. `dimension` is written out because `kilo.jsonc` is
+  consulted before the model registry, so a dimension left behind by Kilo would
+  otherwise override the model's 256; `autoRefresh: false` because the installer
+  does not build the index - that stays a decision the user makes from Settings,
+  `/indexing` or `indexing_build`. The model is downloaded and validated at
+  install time (~512 MB fp32, ~123 MB after quantization) by running the
+  plugin's own `settings.test` for `lancedb` and `provider`, which also confirms
+  the 256 dimensions; `--no-restart` skips that. Existing keys and credentials in
+  `indexing.json` are preserved, a file that is not valid JSON is left untouched
+  with a warning, and a plugin option that sets one of the profile keys still
+  wins over the file. `--aio` cannot be combined with `--local`, and both
+  wrappers forward it (`-Aio` in PowerShell).
+
 ## [0.9.0] - 2026-11-10
 
 ### Changed
@@ -747,7 +768,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.10.0
 [0.9.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.9.0
 [0.8.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.8.0
 [0.7.3]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.7.3
