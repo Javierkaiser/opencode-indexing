@@ -33,6 +33,18 @@ describe("indexStatusLine", () => {
     assert.equal(line, `Index: ✕ no index · ${root}`)
   })
 
+  test("says 'not indexed' when Kilo was not consulted, never 'no index'", () => {
+    // `searchKilo: false` leaves no knowledge of Kilo's index, so claiming the
+    // workspace has none would be a statement the search cannot support.
+    const line = indexStatusLine({ enabled: true, hasKilo: false, kiloSearched: false, root })
+    assert.equal(line, `Index: ○ not indexed · ${root}`)
+  })
+
+  test("does not quote Kilo's point count when Kilo was not searched", () => {
+    const line = indexStatusLine({ enabled: true, hasKilo: false, kiloSearched: false, kiloPoints: 31_261, root })
+    assert.doesNotMatch(line, /kilo 31\.3k/, "a count nobody read must not be presented as this search's corpus")
+  })
+
   test("omits the root when the caller does not know it", () => {
     const line = indexStatusLine({ enabled: true, ownPoints: 42, ownComplete: true, hasKilo: false })
     assert.equal(line, "Index: ● indexed · own 42 pts")
@@ -59,6 +71,17 @@ describe("indexState", () => {
 
   test("a reachable store with nothing in it still reports empty", () => {
     assert.equal(indexState({ enabled: true, ownPoints: null, hasKilo: false, ownStoreReachable: true }), "unavailable")
+  })
+
+  test("Kilo not searched is not evidence that Kilo is absent", () => {
+    assert.equal(
+      indexState({ enabled: true, ownPoints: null, hasKilo: false, kiloSearched: false }),
+      "empty",
+      "without reading Kilo the state cannot claim there is no index at all",
+    )
+    // Undefined must keep the old reading, or every caller that does not know
+    // about the new field would silently change meaning.
+    assert.equal(indexState({ enabled: true, ownPoints: null, hasKilo: false }), "unavailable")
   })
 
   test("an unreachable store wins over a paused setting", () => {

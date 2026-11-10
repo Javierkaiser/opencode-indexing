@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 
 import { getStatus } from "../src/status.ts"
+import { kiloCollectionCandidates } from "../src/kilo-store.ts"
 import type { Qdrant } from "../src/qdrant.ts"
 import type { VectorStoreAdapter, VectorStoreInfo } from "../src/vector-store.ts"
 import type { EmbeddingProfile, IndexingSettings, KVStore } from "../src/types.ts"
@@ -138,4 +139,73 @@ test("configuration warnings reach the status report", async () => {
     status.warnings.some((entry) => /no native binary/.test(entry)),
     "a warning raised while resolving configuration has to be visible here",
   )
+})
+
+/** A Qdrant that holds one readable Kilo collection for the demo workspace. */
+function qdrantWithKilo(root: string): Qdrant {
+  const collection = kiloCollectionCandidates(root)[0]!
+  return {
+    async listCollections(): Promise<string[]> {
+      return [collection]
+    },
+    async getCollection(): Promise<Record<string, unknown>> {
+      return { points_count: 4242 }
+    },
+    async retrieve(): Promise<unknown[]> {
+      return []
+    },
+    async collectionExists(): Promise<boolean> {
+      return true
+    },
+  } as unknown as Qdrant
+}
+
+test("with searchKilo off the recommendation does not send the user to Kilo", async () => {
+  // "Kilo index available. Search works now" is false when the search never
+  // reads Kilo: the recommendation has to describe the own index instead.
+  const root = "D:\\Projects\\demo"
+  const status = await getStatus({
+    qdrant: qdrantWithKilo(root),
+    kv: memoryKv(),
+    root,
+    settings: settings({ searchKilo: false }),
+    ownStore: ownStore(undefined, 0),
+  })
+
+  assert.ok(status.kilo.collection, "the Kilo index is still discovered, just not searched")
+  assert.doesNotMatch(
+    status.recommendation,
+    /kilo index available|search works now|switch to the matching model|import it/i,
+    `the advice must not send the user to a source the search never reads: ${status.recommendation}`,
+  )
+  assert.match(status.recommendation, /own index/i, "it has to name where results will come from")
+  assert.match(status.recommendation, /indexing_build/, "the own index is what has to be built")
+})
+
+test("with searchKilo off a healthy own index is recommended as-is", async () => {
+  const status = await getStatus({
+    qdrant: qdrantWithKilo("D:\\Projects\\demo"),
+    kv: memoryKv(),
+    root: "D:\\Projects\\demo",
+    settings: settings({ searchKilo: false }),
+    ownStore: ownStore({ provider: "mistral", modelId: "codestral-embed-2505", dimension: 1536 }, 2233),
+  })
+
+  assert.match(status.recommendation, /own index/i)
+  assert.doesNotMatch(status.recommendation, /kilo/i, "a healthy own index is the whole story with Kilo excluded")
+})
+
+test("with searchKilo on the Kilo-only advice is unchanged", async () => {
+  // With the switch on, Kilo is part of the corpus, so the recommendation may
+  // point at it; only the off case had to stop doing that.
+  const root = "D:\\Projects\\demo"
+  const status = await getStatus({
+    qdrant: qdrantWithKilo(root),
+    kv: memoryKv(),
+    root,
+    settings: settings({ searchKilo: true }),
+    ownStore: ownStore(undefined, 0),
+  })
+
+  assert.match(status.recommendation, /kilo/i)
 })

@@ -186,6 +186,16 @@ describe("configRows", () => {
     assert.ok(!get("Credentials").includes("openai"))
   })
 
+  test("the Search Kilo row states which corpus the search reads", () => {
+    // The fixture carried `searchKilo: true` without anyone asserting what it
+    // renders, so the row could have said anything.
+    const on = configRows(SETTINGS).find((row) => row.label === "Search Kilo")?.value
+    assert.equal(on, "ON · both indexes")
+
+    const off = configRows({ ...SETTINGS, searchKilo: false }).find((row) => row.label === "Search Kilo")?.value
+    assert.equal(off, "OFF · own index only")
+  })
+
   test("credentials row lists every configured provider, not just two", () => {
     // The row used to be built from two hardcoded booleans, so a Gemini key
     // showed as "none configured" while the provider was fully usable.

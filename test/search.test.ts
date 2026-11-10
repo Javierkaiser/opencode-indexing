@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
-import { after, before, beforeEach, test } from "node:test"
+import { after, before, beforeEach, describe, test } from "node:test"
 
 import { searchCode } from "../src/search.ts"
+import { createTools } from "../src/tools.ts"
 import type { Qdrant } from "../src/qdrant.ts"
 import type { VectorStoreAdapter, VectorStoreInfo } from "../src/vector-store.ts"
 import type { EmbeddingProfile, IndexingSettings, KVStore, QueryHit } from "../src/types.ts"
@@ -173,6 +174,7 @@ test("searchKilo: false leaves Kilo's index out instead of failing on its profil
   assert.equal(outcome.hits.length, 1)
   assert.equal(outcome.hits[0]!.filePath, "src/b.ts")
   assert.equal(outcome.meta.kilo.collection, null, "Kilo must not appear in the metadata")
+  assert.equal(outcome.meta.kilo.searched, false, "not searched is not the same as absent")
   assert.deepEqual(outcome.errors, [], "skipping Kilo on purpose is not an error")
 })
 
@@ -194,4 +196,39 @@ test("a healthy profile returns its hits", async () => {
   )
   assert.equal(outcome.hits.length, 1)
   assert.equal(outcome.hits[0]!.filePath, "src/a.ts")
+  assert.equal(outcome.meta.kilo.searched, true, "the default looks for Kilo, even when there is none")
+  assert.equal(outcome.meta.kilo.collection, null, "searched and absent still means no collection")
+})
+
+describe("search tool: why Kilo contributed nothing", () => {
+  const root = "D:\\Projects\\demo"
+
+  /** Runs the `search` tool against an unreachable backend, which answers empty. */
+  async function searchOutput(overrides: Partial<IndexingSettings>): Promise<string> {
+    const tools = createTools({
+      kv: memoryKv(),
+      root,
+      getSettings: async () => settings({ vectorStore: "qdrant", qdrantUrl: "http://127.0.0.1:1", ...overrides }),
+    })
+    const tool = tools.find((entry) => entry.name === "search")
+    assert.ok(tool, "the search tool must exist")
+    const result = await tool.execute({ query: "anything" }, { directory: root })
+    return result.output
+  }
+
+  test("with searchKilo off it says the search is disabled, not that Kilo is missing", async () => {
+    // Both cases leave `meta.kilo.collection` null. Reporting the second when
+    // the first is true tells the user Kilo has no index when it was never read.
+    const output = await searchOutput({ searchKilo: false })
+
+    assert.match(output, /Kilo index: search disabled/i)
+    assert.doesNotMatch(output, /Kilo index: not found/i)
+  })
+
+  test("with searchKilo on an absent Kilo index is still reported as not found", async () => {
+    const output = await searchOutput({ searchKilo: true })
+
+    assert.match(output, /Kilo index: not found/i)
+    assert.doesNotMatch(output, /search disabled/i)
+  })
 })

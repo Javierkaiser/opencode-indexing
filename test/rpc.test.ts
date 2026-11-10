@@ -122,6 +122,30 @@ describe("IndexingRpc contract", () => {
     assert.deepEqual(output.required, ["sources"], "an empty list with problems is still a valid answer")
   })
 
+  test("status.get declares the reachability flag both UIs read", () => {
+    // The server returns it and the footer/page read it to tell "nothing
+    // indexed" from "could not look", but it was missing from the contract.
+    const output = IndexingRpc.methods["status.get"].output as unknown as {
+      properties: Record<string, { type?: string }>
+    }
+    assert.equal(output.properties.ownStoreReachable?.type, "boolean")
+  })
+
+  test("index.import does not declare a rebuild the handler ignores", () => {
+    // The handler reuses the own index as-is; declaring `rebuild` promised a
+    // drop that never happened.
+    const input = IndexingRpc.methods["index.import"].input as unknown as {
+      properties: Record<string, unknown>
+    }
+    assert.equal(input.properties.rebuild, undefined)
+
+    // `index.build` does honour `rebuild`, so it keeps it.
+    const build = IndexingRpc.methods["index.build"].input as unknown as {
+      properties: Record<string, unknown>
+    }
+    assert.ok(build.properties.rebuild, "the build method still drops the index when asked")
+  })
+
   test("the global methods are not given a directory", () => {
     // These span every workspace, so naming one would be a lie about the scope.
     for (const method of ["settings.get", "settings.set", "workspaces.list", "workspace.forget"] as const) {

@@ -19,7 +19,7 @@ export type IndexingState =
   | "stale"
   /** Nothing indexed for this workspace. */
   | "empty"
-  /** No Kilo index either, so searches would find nothing. */
+  /** Neither index was found, Kilo included, so searches would find nothing. */
   | "unavailable"
   /** The status call failed. */
   | "error"
@@ -33,6 +33,14 @@ export interface StatusInput {
   ownComplete?: boolean | null
   /** Whether a readable Kilo index exists. */
   hasKilo: boolean
+  /**
+   * Whether Kilo's index was consulted at all (`searchKilo` may be off).
+   *
+   * Undefined keeps the old behaviour, where `hasKilo` is taken to be the whole
+   * answer. With `false`, Kilo was not looked at, so "no index at all" would be
+   * an unsupported claim about a corpus nobody read.
+   */
+  kiloSearched?: boolean
   /** Points in the Kilo index, when known; only used by the chat-side line. */
   kiloPoints?: number | null
   /** Workspace the status is about; only used by the chat-side line. */
@@ -98,6 +106,9 @@ export function indexState(input: StatusInput): IndexingState {
   if (input.ownPoints !== undefined && input.ownPoints !== null) {
     return input.ownComplete === true ? "ready" : "stale"
   }
+  // "No index" means neither corpus has anything, which cannot be said when one
+  // of them was deliberately left out of the search.
+  if (input.kiloSearched === false) return "empty"
   return input.hasKilo ? "empty" : "unavailable"
 }
 
@@ -119,7 +130,7 @@ export function indexStatusLine(input: StatusInput): string {
   const parts = [`Index: ${GLYPHS[state]} ${LABELS[state]}`]
   if (input.ownPoints !== undefined && input.ownPoints !== null) {
     parts.push(`own ${formatPoints(input.ownPoints)} pts`)
-  } else if (input.kiloPoints !== undefined && input.kiloPoints !== null) {
+  } else if (input.kiloSearched !== false && input.kiloPoints !== undefined && input.kiloPoints !== null) {
     parts.push(`kilo ${formatPoints(input.kiloPoints)} pts`)
   }
   if (input.root) parts.push(input.root)

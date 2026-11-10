@@ -18,7 +18,6 @@
  */
 import type { Plugin } from "@opencode/plugin/tui"
 import type { Route } from "@opencode/plugin/tui/context"
-import type { JSX } from "@opentui/solid"
 
 import { IndexingRpc } from "./src/rpc.ts"
 import { SETTINGS_PAGE_NAME, mountSettingsPage, type RouterLike } from "./tui/page-mount.ts"
@@ -33,6 +32,7 @@ import { pagePalette } from "./tui/page-style.ts"
 import type { FooterHandle, FooterState } from "./tui/footer-view.ts"
 import { describeError } from "./src/errors.ts"
 import { getDefaultModelId, isLiveTested, listModelIds } from "./src/registry.ts"
+import { LANCEDB_VERSION } from "./src/lancedb-support.ts"
 import type { EmbedderProvider } from "./src/types.ts"
 
 /**
@@ -64,7 +64,7 @@ type RpcClient = {
   "status.get": (input: { checkFreshness?: boolean; directory?: string }) => Promise<{ summary: string; recommendation: string; ownKind: string; ownStore: string; ownPoints?: number | null; ownComplete?: boolean | null; kiloCollection?: string | null; directory?: string; ownStoreReachable?: boolean }>
   "index.build": (input: { rebuild?: boolean; skipImport?: boolean; directory?: string }) => Promise<{ summary: string; error?: string }>
   "index.refresh": (input: { maxFiles?: number; directory?: string }) => Promise<{ summary: string; error?: string }>
-  "index.import": (input: { source?: string; rebuild?: boolean; directory?: string }) => Promise<{ summary: string; error?: string }>
+  "index.import": (input: { source?: string; directory?: string }) => Promise<{ summary: string; error?: string }>
 }
 
 interface SettingsView {
@@ -348,7 +348,7 @@ const plugin = {
           {
             title: "LanceDB",
             value: "lancedb",
-            description: "Embedded native database (no server). Requires @lancedb/lancedb@0.26.2",
+            description: `Embedded native database (no server). Requires @lancedb/lancedb@${LANCEDB_VERSION}`,
           },
         ],
       })

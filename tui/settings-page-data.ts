@@ -60,7 +60,7 @@ export interface SettingsPageRpc {
   "status.get": (input: { checkFreshness?: boolean; directory?: string }) => Promise<StatusView>
   "index.build": (input: { rebuild?: boolean; skipImport?: boolean; directory?: string }) => Promise<{ summary: string; error?: string }>
   "index.refresh": (input: { maxFiles?: number; directory?: string }) => Promise<{ summary: string; error?: string }>
-  "index.import": (input: { source?: string; rebuild?: boolean; directory?: string }) => Promise<{ summary: string; error?: string }>
+  "index.import": (input: { source?: string; directory?: string }) => Promise<{ summary: string; error?: string }>
   "workspaces.list": (input: Record<string, never>) => Promise<{ workspaces: WorkspaceRow[] }>
   "workspace.forget": (input: { store: string }) => Promise<{ ok: boolean; reason?: "refused" | "failed"; summary: string; pointsDeleted: number | null }>
 }

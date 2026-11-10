@@ -120,17 +120,47 @@ describe("config", () => {
   })
 
   test("searchKilo defaults to on and the option or the environment can turn it off", () => {
-    assert.equal(resolveSettings({ ignoreKiloConfig: true }).searchKilo, true)
-    assert.equal(resolveSettings({ ignoreKiloConfig: true, searchKilo: false }).searchKilo, false)
-    assert.equal(resolveSettings({ ignoreKiloConfig: true, searchKilo: true }).searchKilo, true)
-
+    // The environment is neutralized around the default assertion: a CI or shell
+    // that exports the flag would otherwise make the default untestable, and a
+    // default that can be inverted by the runner is not a default.
     const previous = process.env.KILO_INDEX_SEARCH_KILO
-    process.env.KILO_INDEX_SEARCH_KILO = "off"
+    delete process.env.KILO_INDEX_SEARCH_KILO
     try {
+      assert.equal(resolveSettings({ ignoreKiloConfig: true }).searchKilo, true)
+      assert.equal(resolveSettings({ ignoreKiloConfig: true, searchKilo: false }).searchKilo, false)
+      assert.equal(resolveSettings({ ignoreKiloConfig: true, searchKilo: true }).searchKilo, true)
+
+      process.env.KILO_INDEX_SEARCH_KILO = "off"
       assert.equal(resolveSettings({ ignoreKiloConfig: true }).searchKilo, false)
     } finally {
       if (previous === undefined) delete process.env.KILO_INDEX_SEARCH_KILO
       else process.env.KILO_INDEX_SEARCH_KILO = previous
+    }
+  })
+
+  test("searchKilo precedence is options, then file, then environment, then default", () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), "oi-search-kilo-"))
+    const previous = process.env.KILO_INDEX_SEARCH_KILO
+    try {
+      mkdirSync(path.join(home, ".config", "opencode"), { recursive: true })
+      const file = path.join(home, ".config", "opencode", "indexing.json")
+      process.env.KILO_INDEX_SEARCH_KILO = "true"
+
+      writeFileSync(file, "{}")
+      assert.equal(resolveSettings({ homeDir: home }).searchKilo, true, "the environment is read when the file is silent")
+      assert.equal(resolveSettings({ homeDir: home, searchKilo: false }).searchKilo, false, "options win over the environment")
+
+      writeFileSync(file, JSON.stringify({ searchKilo: false }))
+      assert.equal(resolveSettings({ homeDir: home }).searchKilo, false, "the settings file wins over the environment")
+      assert.equal(resolveSettings({ homeDir: home, searchKilo: true }).searchKilo, true, "options win over the file")
+
+      process.env.KILO_INDEX_SEARCH_KILO = "false"
+      writeFileSync(file, JSON.stringify({ searchKilo: true }))
+      assert.equal(resolveSettings({ homeDir: home }).searchKilo, true, "the file wins even when the environment disagrees")
+    } finally {
+      if (previous === undefined) delete process.env.KILO_INDEX_SEARCH_KILO
+      else process.env.KILO_INDEX_SEARCH_KILO = previous
+      rmSync(home, { recursive: true, force: true })
     }
   })
 

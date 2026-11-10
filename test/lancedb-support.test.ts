@@ -1,7 +1,12 @@
 import * as assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { describe, test } from "node:test"
 
-import { lanceDbSupport, lanceDbUnavailableMessage, platformId } from "../src/lancedb-support.ts"
+import { LANCEDB_VERSION, lanceDbSupport, lanceDbUnavailableMessage, platformId } from "../src/lancedb-support.ts"
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..")
 
 describe("lanceDbSupport", () => {
   test("the platforms the binding ships a binary for", () => {
@@ -63,5 +68,27 @@ describe("lanceDbUnavailableMessage", () => {
     assert.doesNotMatch(message, /Require stack/)
     assert.doesNotMatch(message, /dist\/native\.js/)
     assert.match(message, /Cannot find module/)
+  })
+
+  test("the install advice quotes the version the package actually pins", () => {
+    // The constant drifted from package.json once already, and the message sent
+    // users to a release the plugin was never built against.
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+      optionalDependencies?: Record<string, string>
+    }
+    assert.equal(LANCEDB_VERSION, pkg.optionalDependencies?.["@lancedb/lancedb"], "LANCEDB_VERSION must track package.json")
+
+    const message = lanceDbUnavailableMessage(new Error("boom"))
+    assert.ok(message.includes(`@lancedb/lancedb@${LANCEDB_VERSION}`), message)
+  })
+
+  test("the user-facing messages do not hardcode the version again", () => {
+    // Importing the constant is the point: a literal here would silently
+    // survive the next bump, which is exactly how it drifted before.
+    for (const file of ["index.ts", "tui.ts"]) {
+      const source = readFileSync(join(root, file), "utf8")
+      assert.doesNotMatch(source, /@lancedb\/lancedb@\d/, `${file} must interpolate LANCEDB_VERSION`)
+      assert.match(source, /LANCEDB_VERSION/, `${file} must import the constant`)
+    }
   })
 })

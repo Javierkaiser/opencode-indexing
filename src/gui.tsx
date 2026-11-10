@@ -5,10 +5,9 @@
  * only reads and writes through the server part's RPC contract. The index itself
  * is never touched from this process.
  *
- * The page is built from the host's own components (`ctx.ui`) and its native
- * dialogs (`ctx.dialogs`): a settings page that draws its own controls reads as
- * a different app. The layout numbers come from the host's settings CSS; the
- * colours from its `--v2-*` theme variables.
+ * The page is built from the host's own settings components (`ctx.ui`) and its
+ * native dialogs (`ctx.dialogs`): a settings page that draws its own layout and
+ * controls reads as a different app.
  */
 
 import {
@@ -20,7 +19,7 @@ import {
   type Context,
   type IconName,
 } from "@opencode/plugin/gui"
-import { Show, createResource, createSignal, type JSX } from "solid-js"
+import { Show, createResource, createSignal } from "solid-js"
 
 import { describeError } from "./errors.ts"
 import { formatPoints, indexState, type IndexingState } from "./index-state.ts"
@@ -108,6 +107,9 @@ const client = (ctx: Context): IndexingClient => ctx.client.rpc(IndexingRpc) as 
 
 const NO_VALUE = "—"
 
+/** Value of the model select's "Custom…" choice; never a real model id. */
+const CUSTOM_MODEL = "\u0000custom"
+
 const text = (value: string | number | null | undefined): string =>
   value === null || value === undefined || value === "" ? NO_VALUE : String(value)
 
@@ -120,6 +122,9 @@ const stateOf = (settings: SettingsView, status: StatusView): IndexingState =>
     ownPoints: status.ownPoints ?? null,
     ownComplete: status.ownComplete ?? null,
     hasKilo: status.kiloCollection != null,
+    // With searchKilo off, Kilo was never consulted; `collection: null` then
+    // means "not looked at", not "absent".
+    kiloSearched: settings.searchKilo !== false,
     ownStoreReachable: status.ownStoreReachable,
   })
 
@@ -139,117 +144,6 @@ const stateIcon = (state: IndexingState): IconName => {
     case "error":
       return "circle-x"
   }
-}
-
-/* Layout, taken from the host's settings CSS and its theme variables. */
-const PAGE_STYLE: JSX.CSSProperties = {
-  display: "grid",
-  gap: "32px",
-  "max-width": "720px",
-  width: "100%",
-  "padding-top": "48px",
-}
-const HEADER_STYLE: JSX.CSSProperties = { display: "grid", gap: "8px" }
-const TITLE_STYLE: JSX.CSSProperties = {
-  margin: "0",
-  "font-size": "15px",
-  "font-weight": "640",
-  "line-height": "var(--line-height-base, 1.5)",
-  color: "var(--v2-text-text-base, inherit)",
-}
-const SUBTITLE_STYLE: JSX.CSSProperties = {
-  margin: "0",
-  "font-size": "13px",
-  "font-weight": "440",
-  "line-height": "20px",
-  color: "var(--v2-text-text-muted, inherit)",
-}
-const SECTION_STYLE: JSX.CSSProperties = { display: "grid", gap: "16px" }
-const SECTION_TITLE_STYLE: JSX.CSSProperties = {
-  margin: "0",
-  padding: "0",
-  "font-size": "13px",
-  "font-weight": "530",
-  "line-height": "var(--line-height-compact, 1.3)",
-  color: "var(--v2-text-text-base, inherit)",
-}
-const LIST_STYLE: JSX.CSSProperties = {
-  "background-color": "var(--v2-background-bg-layer-01, transparent)",
-  "box-shadow":
-    "inset 0 0 0 0.5px var(--v2-border-border-muted, color-mix(in srgb, currentColor 14%, transparent))",
-  "border-radius": "8px",
-  "padding-inline": "20px",
-}
-const ROW_STYLE: JSX.CSSProperties = {
-  display: "flex",
-  gap: "16px",
-  "align-items": "center",
-  "justify-content": "space-between",
-  "padding-block": "20px",
-}
-const ROW_BORDER =
-  "0.5px solid var(--v2-border-border-base, color-mix(in srgb, currentColor 10%, transparent))"
-const LABEL_STYLE: JSX.CSSProperties = {
-  "font-size": "13px",
-  "font-weight": "530",
-  "line-height": "var(--line-height-compact, 1.3)",
-  color: "var(--v2-text-text-base, inherit)",
-}
-const DESCRIPTION_STYLE: JSX.CSSProperties = {
-  "font-size": "13px",
-  "font-weight": "440",
-  "line-height": "20px",
-  "margin-block": "-3.5px",
-  color: "var(--v2-text-text-muted, inherit)",
-}
-const VALUE_STYLE: JSX.CSSProperties = {
-  "font-size": "13px",
-  "font-weight": "440",
-  "line-height": "20px",
-  "text-align": "right",
-  "overflow-wrap": "anywhere",
-  color: "var(--v2-text-text-muted, inherit)",
-}
-const BUTTONS_STYLE: JSX.CSSProperties = { display: "flex", gap: "8px", "align-items": "center" }
-
-function Row(props: {
-  readonly label: string
-  readonly value?: string
-  readonly last?: boolean
-  readonly children?: JSX.Element
-}) {
-  return (
-    <div style={props.last ? ROW_STYLE : { ...ROW_STYLE, "border-bottom": ROW_BORDER }}>
-      <span style={LABEL_STYLE}>{props.label}</span>
-      {props.children ?? <span style={VALUE_STYLE}>{props.value}</span>}
-    </div>
-  )
-}
-
-function SwitchRow(props: {
-  readonly label: string
-  readonly description: string
-  readonly control: JSX.Element
-  readonly last?: boolean
-}) {
-  return (
-    <div style={props.last ? ROW_STYLE : { ...ROW_STYLE, "border-bottom": ROW_BORDER }}>
-      <div style={{ display: "flex", "flex-direction": "column", flex: "1", gap: "8px", "min-width": "0" }}>
-        <span style={LABEL_STYLE}>{props.label}</span>
-        <span style={DESCRIPTION_STYLE}>{props.description}</span>
-      </div>
-      {props.control}
-    </div>
-  )
-}
-
-function Section(props: { readonly title: string; readonly children: JSX.Element }) {
-  return (
-    <section style={SECTION_STYLE}>
-      <h2 style={SECTION_TITLE_STYLE}>{props.title}</h2>
-      <div style={LIST_STYLE}>{props.children}</div>
-    </section>
-  )
 }
 
 type SettingsPageResult =
@@ -371,29 +265,53 @@ function IndexingSettings(props: { readonly ctx: Context }) {
   }
 
   return (
-    <div style={PAGE_STYLE}>
-      <header style={HEADER_STYLE}>
-        <h1 style={TITLE_STYLE}>{ctx.t("settings.title")}</h1>
-        <p style={SUBTITLE_STYLE}>{ctx.t("settings.subtitle")}</p>
-      </header>
-
+    <ctx.ui.SettingsLayout
+      title={ctx.t("settings.title")}
+      description={ctx.t("settings.subtitle")}
+      actions={
+        <>
+          <ctx.ui.Button
+            variant="contrast"
+            icon="check"
+            busy={running() === "build"}
+            onClick={() => void runFromPage("index.build", "build")}
+          >
+            {ctx.t("settings.build")}
+          </ctx.ui.Button>
+          <ctx.ui.Button
+            variant="neutral"
+            icon="refresh"
+            busy={running() === "refresh"}
+            onClick={() => void runFromPage("index.refresh", "refresh")}
+          >
+            {ctx.t("settings.refresh")}
+          </ctx.ui.Button>
+          <ctx.ui.Tooltip value={ctx.t("settings.reload")}>
+            <ctx.ui.IconButton
+              icon="outline-rotate-clockwise"
+              label={ctx.t("settings.reload")}
+              onClick={() => void refetch()}
+            />
+          </ctx.ui.Tooltip>
+        </>
+      }
+    >
       <Show
         when={data()}
         fallback={
-          <div style={{ display: "flex", gap: "8px", "align-items": "center", "font-size": "13px", opacity: 0.7 }}>
-            <ctx.ui.Loader size="small" />
-            <span>{ctx.t("settings.loading")}</span>
-          </div>
+          <ctx.ui.SettingsSection title={ctx.t("settings.status")}>
+            <ctx.ui.SettingsRow title={ctx.t("settings.loading")}>
+              <ctx.ui.Loader size="small" />
+            </ctx.ui.SettingsRow>
+          </ctx.ui.SettingsSection>
         }
       >
         {(loaded) => {
           const result = loaded()
           if ("error" in result) {
             return (
-              <Section title={ctx.t("settings.status")}>
-                <div style={{ display: "grid", gap: "10px", "padding-block": "20px", "justify-items": "start" }}>
-                  <p style={{ margin: "0", "font-size": "13px" }}>{ctx.t("settings.failed")}</p>
-                  <p style={{ ...DESCRIPTION_STYLE, margin: "0" }}>{result.error}</p>
+              <ctx.ui.SettingsSection title={ctx.t("settings.status")}>
+                <ctx.ui.SettingsRow title={ctx.t("settings.failed")} description={result.error}>
                   <ctx.ui.Button
                     variant="neutral"
                     size="small"
@@ -402,8 +320,8 @@ function IndexingSettings(props: { readonly ctx: Context }) {
                   >
                     {ctx.t("settings.reload")}
                   </ctx.ui.Button>
-                </div>
-              </Section>
+                </ctx.ui.SettingsRow>
+              </ctx.ui.SettingsSection>
             )
           }
 
@@ -413,7 +331,21 @@ function IndexingSettings(props: { readonly ctx: Context }) {
           const state = () => stateOf(settings(), index())
           const points = () => pointsText(index().ownPoints)
           const providerView = () => catalog().providers.find((provider) => provider.id === settings().provider)
-          const modelLabel = () => settings().model || providerView()?.defaultModel || ctx.t("settings.defaultModel")
+          const providerNote = () => {
+            const provider = providerView()
+            if (!provider) return undefined
+            return provider.liveTested ? ctx.t("settings.tested") : ctx.t("settings.notTested")
+          }
+          const modelOptions = () => [
+            ...(providerView()?.models ?? []).map((model) => ({
+              value: model.id,
+              label: model.dimension
+                ? ctx.t("settings.modelOption", { model: model.id, dimension: model.dimension })
+                : model.id,
+            })),
+            { value: CUSTOM_MODEL, label: ctx.t("settings.customModel") },
+          ]
+          const modelPlaceholder = () => settings().model || ctx.t("settings.defaultModel")
           const isConfigured = (provider: string) => settings().configuredProviders.includes(provider)
 
           const confirmReindex = async (title: string, body: string): Promise<boolean> =>
@@ -425,46 +357,15 @@ function IndexingSettings(props: { readonly ctx: Context }) {
               danger: true,
             })
 
-          const chooseProvider = async (): Promise<void> => {
-            const picked = await ctx.dialogs.select<string>({
-              title: ctx.t("settings.chooseProvider"),
-              current: settings().provider,
-              options: catalog().providers.map((provider) => ({
-                title: provider.id,
-                value: provider.id,
-                description: provider.liveTested ? ctx.t("settings.tested") : ctx.t("settings.notTested"),
-              })),
-            })
+          const chooseProvider = async (picked: string): Promise<void> => {
             if (!picked || picked === settings().provider) return
             if (!(await confirmReindex(ctx.t("confirm.providerTitle"), ctx.t("confirm.providerBody")))) return
             await applyKey("provider", picked)
           }
 
-          const chooseModel = async (): Promise<void> => {
-            const provider = providerView()
-            const options = (provider?.models ?? []).map((model) => ({
-              title: model.id,
-              value: model.id,
-              description: [
-                model.dimension ? `${model.dimension}d` : undefined,
-                model.kiloMirrored ? ctx.t("settings.kiloImportable") : undefined,
-              ]
-                .filter(Boolean)
-                .join(" · "),
-            }))
-            if (options.length === 0) {
-              await editValue("model", ctx.t("settings.chooseModel"), settings().model)
-              return
-            }
-            const custom = "\u0000custom"
-            const picked = await ctx.dialogs.select<string>({
-              title: ctx.t("settings.chooseModel"),
-              current: settings().model,
-              options: [...options, { title: ctx.t("settings.customModel"), value: custom }],
-            })
-            if (picked === undefined) return
+          const chooseModel = async (picked: string): Promise<void> => {
             let model = picked
-            if (picked === custom) {
+            if (picked === CUSTOM_MODEL) {
               const typed = await ctx.dialogs.prompt({ title: ctx.t("settings.customModel"), value: settings().model })
               if (!typed) return
               model = typed.trim()
@@ -474,15 +375,7 @@ function IndexingSettings(props: { readonly ctx: Context }) {
             await applyKey("model", model)
           }
 
-          const chooseStore = async (): Promise<void> => {
-            const picked = await ctx.dialogs.select<"lancedb" | "qdrant">({
-              title: ctx.t("settings.chooseStore"),
-              current: settings().vectorStore,
-              options: [
-                { title: "lancedb", value: "lancedb", description: ctx.t("settings.lancedbHint") },
-                { title: "qdrant", value: "qdrant", description: ctx.t("settings.qdrantHint") },
-              ],
-            })
+          const chooseStore = async (picked: string): Promise<void> => {
             if (!picked || picked === settings().vectorStore) return
             const ok = await ctx.dialogs.confirm({
               title: ctx.t("confirm.storeTitle"),
@@ -525,7 +418,6 @@ function IndexingSettings(props: { readonly ctx: Context }) {
                   provider: "local",
                   model: "",
                   importFromKilo: true,
-                  searchKilo: true,
                   autoRefresh: true,
                 },
               })
@@ -541,9 +433,8 @@ function IndexingSettings(props: { readonly ctx: Context }) {
 
           return (
             <>
-              <Section title={ctx.t("settings.quickStart")}>
-                <div style={{ display: "grid", gap: "12px", "padding-block": "20px", "justify-items": "start" }}>
-                  <p style={{ ...DESCRIPTION_STYLE, margin: "0" }}>{ctx.t("setup.description")}</p>
+              <ctx.ui.SettingsSection title={ctx.t("settings.quickStart")}>
+                <ctx.ui.SettingsRow title={ctx.t("setup.title")} description={ctx.t("setup.description")}>
                   <ctx.ui.Button
                     variant="contrast"
                     icon="cube"
@@ -552,67 +443,60 @@ function IndexingSettings(props: { readonly ctx: Context }) {
                   >
                     {ctx.t("setup.action")}
                   </ctx.ui.Button>
-                </div>
-              </Section>
+                </ctx.ui.SettingsRow>
+              </ctx.ui.SettingsSection>
 
-              <Section title={ctx.t("settings.status")}>
-                <Row label={ctx.t("settings.state")}>
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      gap: "6px",
-                      "align-items": "center",
-                      "font-size": "13px",
-                      color: "var(--v2-text-text-muted, inherit)",
-                    }}
-                  >
-                    <ctx.ui.Icon name={stateIcon(state())} size="small" />
-                    {ctx.t(`state.${state()}`)}
-                  </span>
-                </Row>
-                <Row label={ctx.t("settings.points")} value={points()} />
-                <Row label={ctx.t("settings.workspace")} value={text(index().workspace)} />
-                <Row label={ctx.t("settings.recommendation")} value={index().recommendation} last />
-              </Section>
+              <ctx.ui.SettingsSection title={ctx.t("settings.status")}>
+                <ctx.ui.SettingsRow title={ctx.t("settings.state")}>
+                  <ctx.ui.Icon name={stateIcon(state())} size="small" /> {ctx.t(`state.${state()}`)}
+                </ctx.ui.SettingsRow>
+                <ctx.ui.SettingsRow title={ctx.t("settings.points")} description={points()} />
+                <ctx.ui.SettingsRow title={ctx.t("settings.workspace")} description={text(index().workspace)} />
+                <ctx.ui.SettingsRow title={ctx.t("settings.recommendation")} description={index().recommendation} />
+              </ctx.ui.SettingsSection>
 
-              <Section title={ctx.t("settings.embedding")}>
-                <Row label={ctx.t("settings.provider")}>
-                  <span style={{ display: "inline-flex", gap: "8px", "align-items": "center" }}>
-                    <span style={VALUE_STYLE}>{settings().provider}</span>
-                    <ctx.ui.Button variant="ghost" size="small" onClick={() => void chooseProvider()}>
-                      {ctx.t("settings.change")}
-                    </ctx.ui.Button>
-                  </span>
-                </Row>
-                <Row label={ctx.t("settings.model")}>
-                  <span style={{ display: "inline-flex", gap: "8px", "align-items": "center" }}>
-                    <span style={VALUE_STYLE}>{modelLabel()}</span>
-                    <ctx.ui.Button variant="ghost" size="small" onClick={() => void chooseModel()}>
-                      {ctx.t("settings.change")}
-                    </ctx.ui.Button>
-                  </span>
-                </Row>
-                <Row label={ctx.t("settings.dimension")} value={String(settings().dimension)} />
+              <ctx.ui.SettingsSection title={ctx.t("settings.embedding")}>
+                <ctx.ui.SettingsRow title={ctx.t("settings.provider")} description={providerNote()}>
+                  <ctx.ui.Select
+                    label={ctx.t("settings.provider")}
+                    options={catalog().providers.map((provider) => ({ value: provider.id, label: provider.id }))}
+                    value={settings().provider}
+                    placeholder={settings().provider}
+                    disabled={saving() === "provider"}
+                    onChange={(picked) => void chooseProvider(picked)}
+                  />
+                </ctx.ui.SettingsRow>
+                <ctx.ui.SettingsRow title={ctx.t("settings.model")}>
+                  <ctx.ui.Select
+                    label={ctx.t("settings.model")}
+                    options={modelOptions()}
+                    value={settings().model}
+                    placeholder={modelPlaceholder()}
+                    disabled={saving() === "model"}
+                    onChange={(picked) => void chooseModel(picked)}
+                  />
+                </ctx.ui.SettingsRow>
+                <ctx.ui.SettingsRow title={ctx.t("settings.dimension")} description={String(settings().dimension)} />
                 <Show when={["mistral", "openai", "gemini", "voyage", "openrouter"].includes(settings().provider)}>
-                  <Row label={ctx.t("settings.apiKey")}>
-                    <span style={{ display: "inline-flex", gap: "8px", "align-items": "center" }}>
-                      <span style={VALUE_STYLE}>
-                        {isConfigured(settings().provider) ? ctx.t("settings.configured") : ctx.t("settings.notConfigured")}
-                      </span>
-                      <ctx.ui.Button
-                        variant="ghost"
-                        size="small"
-                        busy={saving() === `credential:${settings().provider}`}
-                        onClick={() =>
-                          void setCredential(settings().provider, `${settings().provider} ${ctx.t("settings.apiKey")}`)
-                        }
-                      >
-                        {ctx.t("settings.setKey")}
-                      </ctx.ui.Button>
-                    </span>
-                  </Row>
+                  <ctx.ui.SettingsRow
+                    title={`${settings().provider} ${ctx.t("settings.apiKey")}`}
+                    description={
+                      isConfigured(settings().provider) ? ctx.t("settings.configured") : ctx.t("settings.notConfigured")
+                    }
+                  >
+                    <ctx.ui.Button
+                      variant="ghost"
+                      size="small"
+                      busy={saving() === `credential:${settings().provider}`}
+                      onClick={() =>
+                        void setCredential(settings().provider, `${settings().provider} ${ctx.t("settings.apiKey")}`)
+                      }
+                    >
+                      {ctx.t("settings.setKey")}
+                    </ctx.ui.Button>
+                  </ctx.ui.SettingsRow>
                 </Show>
-                <Row label={ctx.t("settings.ollamaUrl")}>
+                <ctx.ui.SettingsRow title={ctx.t("settings.ollamaUrl")}>
                   <ctx.ui.Button
                     variant="ghost"
                     size="small"
@@ -620,8 +504,8 @@ function IndexingSettings(props: { readonly ctx: Context }) {
                   >
                     {ctx.t("settings.edit")}
                   </ctx.ui.Button>
-                </Row>
-                <Row label={ctx.t("settings.compatUrl")}>
+                </ctx.ui.SettingsRow>
+                <ctx.ui.SettingsRow title={ctx.t("settings.compatUrl")}>
                   <ctx.ui.Button
                     variant="ghost"
                     size="small"
@@ -629,42 +513,53 @@ function IndexingSettings(props: { readonly ctx: Context }) {
                   >
                     {ctx.t("settings.edit")}
                   </ctx.ui.Button>
-                </Row>
-                <Row label={ctx.t("settings.compatKey")}>
-                  <span style={{ display: "inline-flex", gap: "8px", "align-items": "center" }}>
-                    <span style={VALUE_STYLE}>
-                      {isConfigured("openai-compatible") ? ctx.t("settings.configured") : ctx.t("settings.notConfigured")}
-                    </span>
-                    <ctx.ui.Button
-                      variant="ghost"
-                      size="small"
-                      onClick={() => void setCredential("openai-compatible", ctx.t("settings.compatKey"))}
-                    >
-                      {ctx.t("settings.setKey")}
-                    </ctx.ui.Button>
-                  </span>
-                </Row>
-                <Row label={ctx.t("settings.testProvider")} last>
+                </ctx.ui.SettingsRow>
+                <ctx.ui.SettingsRow
+                  title={ctx.t("settings.compatKey")}
+                  description={
+                    isConfigured("openai-compatible") ? ctx.t("settings.configured") : ctx.t("settings.notConfigured")
+                  }
+                >
+                  <ctx.ui.Button
+                    variant="ghost"
+                    size="small"
+                    onClick={() => void setCredential("openai-compatible", ctx.t("settings.compatKey"))}
+                  >
+                    {ctx.t("settings.setKey")}
+                  </ctx.ui.Button>
+                </ctx.ui.SettingsRow>
+                <ctx.ui.SettingsRow title={ctx.t("settings.testProvider")}>
                   <ctx.ui.Button variant="ghost" size="small" onClick={() => void testBackend("provider")}>
                     {ctx.t("settings.test")}
                   </ctx.ui.Button>
-                </Row>
-              </Section>
+                </ctx.ui.SettingsRow>
+              </ctx.ui.SettingsSection>
 
-              <Section title={ctx.t("settings.storage")}>
-                <Row label={ctx.t("settings.store")}>
-                  <span style={{ display: "inline-flex", gap: "8px", "align-items": "center" }}>
-                    <span style={VALUE_STYLE}>{settings().vectorStore}</span>
-                    <ctx.ui.Button variant="ghost" size="small" onClick={() => void chooseStore()}>
-                      {ctx.t("settings.change")}
-                    </ctx.ui.Button>
-                  </span>
-                </Row>
-                <Row
-                  label={ctx.t("settings.location")}
-                  value={settings().vectorStore === "qdrant" ? settings().qdrantUrl : settings().lancedbDirectory}
+              <ctx.ui.SettingsSection title={ctx.t("settings.storage")}>
+                <ctx.ui.SettingsRow
+                  title={ctx.t("settings.store")}
+                  description={
+                    settings().vectorStore === "qdrant" ? ctx.t("settings.qdrantHint") : ctx.t("settings.lancedbHint")
+                  }
+                >
+                  <ctx.ui.Select
+                    label={ctx.t("settings.store")}
+                    options={[
+                      { value: "lancedb", label: "lancedb" },
+                      { value: "qdrant", label: "qdrant" },
+                    ]}
+                    value={settings().vectorStore}
+                    disabled={saving() === "vectorstore"}
+                    onChange={(picked) => void chooseStore(picked)}
+                  />
+                </ctx.ui.SettingsRow>
+                <ctx.ui.SettingsRow
+                  title={ctx.t("settings.location")}
+                  description={
+                    settings().vectorStore === "qdrant" ? settings().qdrantUrl : settings().lancedbDirectory
+                  }
                 />
-                <Row label={ctx.t("settings.qdrantUrl")}>
+                <ctx.ui.SettingsRow title={ctx.t("settings.qdrantUrl")}>
                   <ctx.ui.Button
                     variant="ghost"
                     size="small"
@@ -672,22 +567,20 @@ function IndexingSettings(props: { readonly ctx: Context }) {
                   >
                     {ctx.t("settings.edit")}
                   </ctx.ui.Button>
-                </Row>
-                <Row label={ctx.t("settings.qdrantKey")}>
-                  <span style={{ display: "inline-flex", gap: "8px", "align-items": "center" }}>
-                    <span style={VALUE_STYLE}>
-                      {settings().qdrantApiKey ? settings().qdrantApiKey : ctx.t("settings.notConfigured")}
-                    </span>
-                    <ctx.ui.Button
-                      variant="ghost"
-                      size="small"
-                      onClick={() => void setCredential("qdrant", ctx.t("settings.qdrantKey"))}
-                    >
-                      {ctx.t("settings.setKey")}
-                    </ctx.ui.Button>
-                  </span>
-                </Row>
-                <Row label={ctx.t("settings.lancedbDir")}>
+                </ctx.ui.SettingsRow>
+                <ctx.ui.SettingsRow
+                  title={ctx.t("settings.qdrantKey")}
+                  description={settings().qdrantApiKey ? settings().qdrantApiKey : ctx.t("settings.notConfigured")}
+                >
+                  <ctx.ui.Button
+                    variant="ghost"
+                    size="small"
+                    onClick={() => void setCredential("qdrant", ctx.t("settings.qdrantKey"))}
+                  >
+                    {ctx.t("settings.setKey")}
+                  </ctx.ui.Button>
+                </ctx.ui.SettingsRow>
+                <ctx.ui.SettingsRow title={ctx.t("settings.lancedbDir")}>
                   <ctx.ui.Button
                     variant="ghost"
                     size="small"
@@ -697,8 +590,8 @@ function IndexingSettings(props: { readonly ctx: Context }) {
                   >
                     {ctx.t("settings.edit")}
                   </ctx.ui.Button>
-                </Row>
-                <Row label={ctx.t("settings.testStore")} last>
+                </ctx.ui.SettingsRow>
+                <ctx.ui.SettingsRow title={ctx.t("settings.testStore")}>
                   <ctx.ui.Button
                     variant="ghost"
                     size="small"
@@ -706,182 +599,146 @@ function IndexingSettings(props: { readonly ctx: Context }) {
                   >
                     {ctx.t("settings.test")}
                   </ctx.ui.Button>
-                </Row>
-              </Section>
+                </ctx.ui.SettingsRow>
+              </ctx.ui.SettingsSection>
 
-              <Section title={ctx.t("settings.indexing")}>
-                <SwitchRow
-                  label={ctx.t("settings.enabled")}
-                  description={ctx.t("settings.enabledDescription")}
-                  control={
-                    <ctx.ui.Switch
-                      label={ctx.t("settings.enabled")}
-                      hideLabel
-                      checked={settings().enabled !== false}
-                      disabled={saving() === "enabled"}
-                      onChange={(checked) => void applyKey("enabled", String(checked))}
-                    />
-                  }
-                />
-                <SwitchRow
-                  label={ctx.t("settings.importFromKilo")}
-                  description={ctx.t("settings.importFromKiloDescription")}
-                  control={
-                    <ctx.ui.Switch
-                      label={ctx.t("settings.importFromKilo")}
-                      hideLabel
-                      checked={settings().importFromKilo}
-                      disabled={saving() === "importfromkilo"}
-                      onChange={(checked) => void applyKey("importfromkilo", String(checked))}
-                    />
-                  }
-                />
-                <SwitchRow
-                  label={ctx.t("settings.searchKilo")}
-                  description={ctx.t("settings.searchKiloDescription")}
-                  control={
-                    <ctx.ui.Switch
-                      label={ctx.t("settings.searchKilo")}
-                      hideLabel
-                      checked={settings().searchKilo !== false}
-                      disabled={saving() === "searchkilo"}
-                      onChange={(checked) => void applyKey("searchkilo", String(checked))}
-                    />
-                  }
-                />
-                <SwitchRow
-                  label={ctx.t("settings.autoRefresh")}
-                  description={ctx.t("settings.autoRefreshDescription")}
-                  control={
-                    <ctx.ui.Switch
-                      label={ctx.t("settings.autoRefresh")}
-                      hideLabel
-                      checked={settings().autoRefresh}
-                      disabled={saving() === "autorefresh"}
-                      onChange={(checked) => void applyKey("autorefresh", String(checked))}
-                    />
-                  }
-                />
-                <SwitchRow
-                  label={ctx.t("settings.codegraph")}
-                  description={ctx.t("settings.codegraphDescription")}
-                  last
-                  control={
-                    <ctx.ui.Switch
-                      label={ctx.t("settings.codegraph")}
-                      hideLabel
-                      checked={settings().codegraph !== false}
-                      disabled={saving() === "codegraph"}
-                      onChange={(checked) => void applyKey("codegraph", String(checked))}
-                    />
-                  }
-                />
-              </Section>
-
-              <Section title={ctx.t("settings.search")}>
-                <Row label={ctx.t("settings.searchMaxResults")}>
-                  <span style={{ display: "inline-flex", gap: "8px", "align-items": "center" }}>
-                    <span style={VALUE_STYLE}>{String(settings().searchMaxResults)}</span>
-                    <ctx.ui.Button
-                      variant="ghost"
-                      size="small"
-                      onClick={() =>
-                        void editValue("searchmaxresults", ctx.t("settings.searchMaxResults"), String(settings().searchMaxResults))
-                      }
-                    >
-                      {ctx.t("settings.edit")}
-                    </ctx.ui.Button>
-                  </span>
-                </Row>
-                <Row label={ctx.t("settings.searchMinScore")}>
-                  <span style={{ display: "inline-flex", gap: "8px", "align-items": "center" }}>
-                    <span style={VALUE_STYLE}>
-                      {settings().searchMinScore === null ? ctx.t("settings.modelDefault") : String(settings().searchMinScore)}
-                    </span>
-                    <ctx.ui.Button
-                      variant="ghost"
-                      size="small"
-                      onClick={() =>
-                        void editValue(
-                          "searchminscore",
-                          ctx.t("settings.searchMinScore"),
-                          settings().searchMinScore === null ? "default" : String(settings().searchMinScore),
-                        )
-                      }
-                    >
-                      {ctx.t("settings.edit")}
-                    </ctx.ui.Button>
-                  </span>
-                </Row>
-                <Row label={ctx.t("settings.batchSize")}>
-                  <span style={{ display: "inline-flex", gap: "8px", "align-items": "center" }}>
-                    <span style={VALUE_STYLE}>{String(settings().embeddingBatchSize)}</span>
-                    <ctx.ui.Button
-                      variant="ghost"
-                      size="small"
-                      onClick={() =>
-                        void editValue(
-                          "embeddingbatchsize",
-                          ctx.t("settings.batchSize"),
-                          String(settings().embeddingBatchSize),
-                        )
-                      }
-                    >
-                      {ctx.t("settings.edit")}
-                    </ctx.ui.Button>
-                  </span>
-                </Row>
-                <Row label={ctx.t("settings.extensions")}>
-                  <span style={{ display: "inline-flex", gap: "8px", "align-items": "center" }}>
-                    <span style={VALUE_STYLE}>{settings().fileExtensions.length}</span>
-                    <ctx.ui.Button
-                      variant="ghost"
-                      size="small"
-                      onClick={() =>
-                        void editValue(
-                          "fileextensions",
-                          ctx.t("settings.extensions"),
-                          settings().fileExtensions.join(","),
-                        )
-                      }
-                    >
-                      {ctx.t("settings.edit")}
-                    </ctx.ui.Button>
-                  </span>
-                </Row>
-                <Row label={ctx.t("settings.file")} value={settings().settingsFile} last />
-              </Section>
-
-              <div style={BUTTONS_STYLE}>
-                <ctx.ui.Button
-                  variant="contrast"
-                  icon="check"
-                  busy={running() === "build"}
-                  onClick={() => void runFromPage("index.build", "build")}
-                >
-                  {ctx.t("settings.build")}
-                </ctx.ui.Button>
-                <ctx.ui.Button
-                  variant="neutral"
-                  icon="refresh"
-                  busy={running() === "refresh"}
-                  onClick={() => void runFromPage("index.refresh", "refresh")}
-                >
-                  {ctx.t("settings.refresh")}
-                </ctx.ui.Button>
-                <ctx.ui.Tooltip value={ctx.t("settings.reload")}>
-                  <ctx.ui.IconButton
-                    icon="outline-rotate-clockwise"
-                    label={ctx.t("settings.reload")}
-                    onClick={() => void refetch()}
+              <ctx.ui.SettingsSection title={ctx.t("settings.indexing")}>
+                <ctx.ui.SettingsRow title={ctx.t("settings.enabled")} description={ctx.t("settings.enabledDescription")}>
+                  <ctx.ui.Switch
+                    label={ctx.t("settings.enabled")}
+                    hideLabel
+                    checked={settings().enabled !== false}
+                    disabled={saving() === "enabled"}
+                    onChange={(checked) => void applyKey("enabled", String(checked))}
                   />
-                </ctx.ui.Tooltip>
-              </div>
+                </ctx.ui.SettingsRow>
+                <ctx.ui.SettingsRow
+                  title={ctx.t("settings.importFromKilo")}
+                  description={ctx.t("settings.importFromKiloDescription")}
+                >
+                  <ctx.ui.Switch
+                    label={ctx.t("settings.importFromKilo")}
+                    hideLabel
+                    checked={settings().importFromKilo}
+                    disabled={saving() === "importfromkilo"}
+                    onChange={(checked) => void applyKey("importfromkilo", String(checked))}
+                  />
+                </ctx.ui.SettingsRow>
+                <ctx.ui.SettingsRow
+                  title={ctx.t("settings.searchKilo")}
+                  description={ctx.t("settings.searchKiloDescription")}
+                >
+                  <ctx.ui.Switch
+                    label={ctx.t("settings.searchKilo")}
+                    hideLabel
+                    checked={settings().searchKilo !== false}
+                    disabled={saving() === "searchkilo"}
+                    onChange={(checked) => void applyKey("searchkilo", String(checked))}
+                  />
+                </ctx.ui.SettingsRow>
+                <ctx.ui.SettingsRow
+                  title={ctx.t("settings.autoRefresh")}
+                  description={ctx.t("settings.autoRefreshDescription")}
+                >
+                  <ctx.ui.Switch
+                    label={ctx.t("settings.autoRefresh")}
+                    hideLabel
+                    checked={settings().autoRefresh}
+                    disabled={saving() === "autorefresh"}
+                    onChange={(checked) => void applyKey("autorefresh", String(checked))}
+                  />
+                </ctx.ui.SettingsRow>
+                <ctx.ui.SettingsRow
+                  title={ctx.t("settings.codegraph")}
+                  description={ctx.t("settings.codegraphDescription")}
+                >
+                  <ctx.ui.Switch
+                    label={ctx.t("settings.codegraph")}
+                    hideLabel
+                    checked={settings().codegraph !== false}
+                    disabled={saving() === "codegraph"}
+                    onChange={(checked) => void applyKey("codegraph", String(checked))}
+                  />
+                </ctx.ui.SettingsRow>
+              </ctx.ui.SettingsSection>
+
+              <ctx.ui.SettingsSection title={ctx.t("settings.search")}>
+                <ctx.ui.SettingsRow
+                  title={ctx.t("settings.searchMaxResults")}
+                  description={String(settings().searchMaxResults)}
+                >
+                  <ctx.ui.Button
+                    variant="ghost"
+                    size="small"
+                    onClick={() =>
+                      void editValue("searchmaxresults", ctx.t("settings.searchMaxResults"), String(settings().searchMaxResults))
+                    }
+                  >
+                    {ctx.t("settings.edit")}
+                  </ctx.ui.Button>
+                </ctx.ui.SettingsRow>
+                <ctx.ui.SettingsRow
+                  title={ctx.t("settings.searchMinScore")}
+                  description={
+                    settings().searchMinScore === null
+                      ? ctx.t("settings.modelDefault")
+                      : String(settings().searchMinScore)
+                  }
+                >
+                  <ctx.ui.Button
+                    variant="ghost"
+                    size="small"
+                    onClick={() =>
+                      void editValue(
+                        "searchminscore",
+                        ctx.t("settings.searchMinScore"),
+                        settings().searchMinScore === null ? "default" : String(settings().searchMinScore),
+                      )
+                    }
+                  >
+                    {ctx.t("settings.edit")}
+                  </ctx.ui.Button>
+                </ctx.ui.SettingsRow>
+                <ctx.ui.SettingsRow title={ctx.t("settings.batchSize")} description={String(settings().embeddingBatchSize)}>
+                  <ctx.ui.Button
+                    variant="ghost"
+                    size="small"
+                    onClick={() =>
+                      void editValue(
+                        "embeddingbatchsize",
+                        ctx.t("settings.batchSize"),
+                        String(settings().embeddingBatchSize),
+                      )
+                    }
+                  >
+                    {ctx.t("settings.edit")}
+                  </ctx.ui.Button>
+                </ctx.ui.SettingsRow>
+                <ctx.ui.SettingsRow
+                  title={ctx.t("settings.extensions")}
+                  description={settings().fileExtensions.join(", ")}
+                >
+                  <ctx.ui.Button
+                    variant="ghost"
+                    size="small"
+                    onClick={() =>
+                      void editValue(
+                        "fileextensions",
+                        ctx.t("settings.extensions"),
+                        settings().fileExtensions.join(","),
+                      )
+                    }
+                  >
+                    {ctx.t("settings.edit")}
+                  </ctx.ui.Button>
+                </ctx.ui.SettingsRow>
+                <ctx.ui.SettingsRow title={ctx.t("settings.file")} description={settings().settingsFile} />
+              </ctx.ui.SettingsSection>
             </>
           )
         }}
       </Show>
-    </div>
+    </ctx.ui.SettingsLayout>
   )
 }
 
@@ -951,17 +808,13 @@ export default Plugin.define({
       "settings.test": "Test",
       "settings.testPassed": "Connection works",
       "settings.testFailed": "Connection failed",
-      "settings.change": "Change",
       "settings.edit": "Edit",
       "settings.continue": "Continue",
       "settings.cancel": "Cancel",
-      "settings.chooseProvider": "Choose the embedding provider",
-      "settings.chooseModel": "Choose the embedding model",
-      "settings.chooseStore": "Choose the vector store",
       "settings.customModel": "Custom model…",
+      "settings.modelOption": "{{model}} ({{dimension}}d)",
       "settings.tested": "Verified against the real API",
       "settings.notTested": "Not verified against the real API",
-      "settings.kiloImportable": "importable from Kilo",
       "settings.lancedbHint": "Embedded, nothing to run",
       "settings.qdrantHint": "A server you run yourself",
       "settings.defaultModelValue": "(model default)",

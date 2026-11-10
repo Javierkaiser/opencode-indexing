@@ -24,6 +24,7 @@ import { createEmbedder } from "./src/embedder.ts"
 import { getOwnStoreInfo, OWN_COLLECTION_PREFIX, type OwnStoreInfo } from "./src/own-store.ts"
 import { forgetWorkspace, readWorkspaces } from "./src/workspaces.ts"
 import { pluginVersion } from "./src/plugin-version.ts"
+import { LANCEDB_VERSION } from "./src/lancedb-support.ts"
 import { IndexingRpc } from "./src/rpc.ts"
 import {
   COMMAND_USAGE,
@@ -265,7 +266,7 @@ const plugin = {
     const initial = await getSettings()
     for (const warning of initial.warnings) console.warn(`[opencode-indexing] ${warning}`)
     console.log(
-      `[opencode-indexing] ready for ${root} (${initial.vectorStore} backend, ${initial.provider}/${initial.modelId}${initial.dimension ? `, ${initial.dimension}d` : ""}, importFromKilo=${initial.importFromKilo})`,
+      `[opencode-indexing] ready for ${root} (${initial.vectorStore} backend, ${initial.provider}/${initial.modelId}${initial.dimension ? `, ${initial.dimension}d` : ""}, importFromKilo=${initial.importFromKilo}, searchKilo=${initial.searchKilo !== false})`,
     )
 
     // ---- Tools ----
@@ -300,7 +301,7 @@ Use this whenever the user asks to see, review or check the indexing configurati
      */
     const CONFIG_SET_TOOL_DESCRIPTION = `Change one semantic indexing setting and persist it to the settings file.
 
-Use this when the user asks to change a setting: switching the vector store, changing the embedding provider or model, adjusting search limits, toggling import-from-Kilo or auto-refresh, or pausing/resuming indexing. Run \`indexing_config\` first to see the current values and the exact key names.
+Use this when the user asks to change a setting: switching the vector store, changing the embedding provider or model, adjusting search limits, toggling import-from-Kilo, search-from-Kilo or auto-refresh, or pausing/resuming indexing. Run \`indexing_config\` first to see the current values and the exact key names.
 
 Behavior:
 - Validated with the same rules as \`/indexing-config set <key>=<value>\`, and persisted immediately.
@@ -407,7 +408,7 @@ Behavior:
         }
         if (target === "lancedb") {
           const mod = await import("@lancedb/lancedb").catch(() => null)
-          if (!mod) return { ok: false, message: "LanceDB module is not installed (npm install @lancedb/lancedb@0.26.2)" }
+          if (!mod) return { ok: false, message: `LanceDB module is not installed (npm install @lancedb/lancedb@${LANCEDB_VERSION})` }
           const fs = await import("node:fs")
           fs.mkdirSync(settings.lancedbDirectory, { recursive: true })
           await mod.connect(settings.lancedbDirectory)
@@ -594,7 +595,7 @@ class ForgetRefusedError extends Error {}
         ...describeAvailableModels(settings),
         `- **Import from Kilo:** ${settings.importFromKilo ? "ON (build imports existing Kilo indexes without embedding cost)" : "OFF (always index from scratch)"}`,
         `- **Auto-refresh on search:** ${settings.autoRefresh ? "ON" : "OFF"}`,
-        `- **Indexing:** ${settings.enabled === false ? "PAUSED (nothing is written or refreshed; search still reads Kilo's index)" : "ON"}`,
+        `- **Indexing:** ${settings.enabled === false ? `PAUSED (nothing is written or refreshed; search reads ${settings.searchKilo !== false ? "Kilo's index and the own one" : "the own index only"})` : "ON"}`,
         `- **Settings file:** \`${settingsFilePath()}\``,
       ]
 

@@ -256,6 +256,15 @@ export const IndexingRpc = {
           ownPoints: { type: ["number", "null"] },
           ownComplete: { type: ["boolean", "null"] },
           kiloCollection: { type: ["string", "null"] },
+          /**
+           * Whether the store holding the own index could be read at all.
+           *
+           * A stopped Qdrant and a workspace that was never indexed both yield
+           * null points; the footer reads this to tell "empty" from "could not
+           * look", so the contract has to declare it rather than leave it as an
+           * undeclared extra field.
+           */
+          ownStoreReachable: { type: "boolean" },
           recommendation: { type: "string" },
           workspace: { type: "string" },
         },
@@ -276,9 +285,12 @@ export const IndexingRpc = {
       output: { type: "object", properties: { summary: { type: "string" }, error: { type: "string" } }, required: ["summary"], additionalProperties: true },
     },
     "index.import": {
+      // No `rebuild`: the handler reuses whatever own index exists and only
+      // copies vectors into it. Declaring the flag invited callers to send it
+      // and expect the own index to be dropped first, which never happened.
       input: {
         type: "object",
-        properties: { source: { type: "string" }, rebuild: { type: "boolean" }, ...directoryShape },
+        properties: { source: { type: "string" }, ...directoryShape },
         additionalProperties: false,
       },
       output: { type: "object", properties: { summary: { type: "string" }, error: { type: "string" } }, required: ["summary"], additionalProperties: true },

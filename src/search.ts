@@ -27,7 +27,14 @@ export interface SearchDeps {
 
 export interface SearchMeta {
   root: string
-  kilo: { collection: string | null; complete: boolean | null; points: number | null }
+  /**
+   * Kilo's index as far as this search is concerned.
+   *
+   * `searched` separates "not consulted" (`searchKilo: false`) from "consulted
+   * and absent": both leave `collection` null, and reporting the second when the
+   * first is true tells a user Kilo has no index when it was never looked at.
+   */
+  kilo: { searched: boolean; collection: string | null; complete: boolean | null; points: number | null }
   own: { store: string; kind: "qdrant" | "lancedb"; complete: boolean | null; points: number | null }
   /** Distinct profiles used to embed the query. */
   profiles: string[]
@@ -214,7 +221,7 @@ export async function searchCode(deps: SearchDeps, query: string, pathPrefix?: s
     hits,
     meta: {
       root,
-      kilo: { collection: kiloCollection, complete: kiloInfo?.complete ?? null, points: kiloInfo?.pointsCount ?? null },
+      kilo: { searched: searchKilo, collection: kiloCollection, complete: kiloInfo?.complete ?? null, points: kiloInfo?.pointsCount ?? null },
       own: {
         store: ownStore.name,
         kind: ownStore.kind,

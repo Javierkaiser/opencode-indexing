@@ -215,18 +215,11 @@ describe("published dependencies", () => {
   })
 
   test("the manifest does not install the host runtime", () => {
-    // They were dependencies once. That failed twice: as optional peers npm
-    // never installed them (the plugin's own import() then failed and the catch
-    // swallowed it, so the footer rendered nothing), and as dependencies
-    // @opentui's `engines.node >= 26.4.0` made npm skip them in silence on
-    // Node 22 - the version this package claims to support.
-    //
-    // The TUI is JSX-free now and takes its runtime from the host, so there is
-    // nothing left to install: devDependencies carry the types for `tsc`, and
-    // optional peers document the host versions the virtual modules resolve
-    // against without npm putting a second Solid on disk. A required peer would
-    // make npm 7+ auto-install its own copy - the same two-Solid bug through
-    // another door - so every peer must stay optional.
+    // The GUI bundle keeps `solid-js` external and the app supplies the
+    // instance; the TUI imports OpenTUI only through type declarations. None of
+    // them may be installable: a second Solid on disk means two reactive
+    // graphs, and signals created by the plugin never reach the host renderer
+    // (upstream anomalyco/opencode#33884).
     for (const name of HOST_RUNTIME_PACKAGES) {
       assert.equal(pkg.dependencies?.[name], undefined, `${name} must not be a dependency: npm would install a second copy`)
       assert.equal(
@@ -238,26 +231,68 @@ describe("published dependencies", () => {
         pkg.devDependencies?.[name],
         `${name} must stay in devDependencies: the typecheck needs the host's types, and they are erased at runtime`,
       )
-      assert.ok(
-        pkg.peerDependencies?.[name],
-        `${name} must be declared as an optional peerDependency: it documents the host version the runtime expects`,
-      )
-      assert.equal(
-        pkg.peerDependenciesMeta?.[name]?.optional,
-        true,
-        `${name} must be an OPTIONAL peer: a required peer makes npm install its own copy under the plugin`,
-      )
     }
 
-    // @opencode/plugin and @opencode/theme are imported as types only
-    // (`import type { Plugin }`), so nothing is resolved at runtime and no
-    // entry is needed on disk. They stay optional peers for the same reason.
-    for (const name of ["@opencode/plugin", "@opencode/theme"]) {
-      assert.ok(pkg.peerDependencies?.[name], `${name} must stay a peerDependency: the host supplies it at compile time`)
-      assert.equal(
-        pkg.peerDependenciesMeta?.[name]?.optional,
-        true,
-        `${name} must stay optional: the plugin runs without the TUI halves`,
+    // `solid-js` is the one with a runtime contract: the GUI's bundle keeps it
+    // external, so an optional peer documents the version the app provides.
+    assert.equal(pkg.peerDependencies?.["solid-js"], ">=1.9.0")
+    assert.equal(pkg.peerDependenciesMeta?.["solid-js"]?.optional, true)
+
+    // OpenTUI is type-only now: the TUI carries no JSX, so a consumer does not
+    // need to satisfy an OpenTUI peer. The devDependency is for `tsc` alone.
+    for (const name of ["@opentui/core", "@opentui/solid"]) {
+      assert.equal(pkg.peerDependencies?.[name], undefined, `${name} is type-only; a peer would claim a runtime contract`)
+    }
+
+    // @opencode/plugin is imported as types only, but its version is the host
+    // contract the TUI relies on, so it stays an optional peer.
+    assert.ok(pkg.peerDependencies?.["@opencode/plugin"], "@opencode/plugin must stay a peerDependency")
+    assert.equal(pkg.peerDependenciesMeta?.["@opencode/plugin"]?.optional, true)
+
+    // @opencode/theme is never imported by this package. The SDK pins it
+    // exactly, so the devDependency tracks the SDK; consumers get it from the
+    // host and should not be forced to satisfy an exact peer.
+    assert.equal(pkg.peerDependencies?.["@opencode/theme"], undefined)
+    assert.ok(pkg.devDependencies?.["@opencode/theme"], "@opencode/theme must stay a devDependency for the TUI types")
+  })
+
+  test("devDependencies satisfy the installed SDK's own peers", () => {
+    // The check that would have caught the `>=2.0.0` and `>=0.5.17` floors:
+    // the manifest looked self-consistent while advertising host versions the
+    // SDK itself rejects.
+    const installed = JSON.parse(
+      readFileSync(join(root, "node_modules", "@opencode", "plugin", "package.json"), "utf8"),
+    ) as { version: string; peerDependencies?: Record<string, string> }
+    const floor = (range: string): string => {
+      const match = range.match(/(\d+)\.(\d+)\.(\d+)/)
+      return match ? `${match[1]}.${match[2]}.${match[3]}` : "0.0.0"
+    }
+    const atLeast = (value: string, minimum: string): boolean => {
+      const left = value.split(".").map(Number)
+      const right = minimum.split(".").map(Number)
+      for (let index = 0; index < 3; index++) {
+        if ((left[index] ?? 0) !== (right[index] ?? 0)) return (left[index] ?? 0) > (right[index] ?? 0)
+      }
+      return true
+    }
+
+    assert.equal(
+      pkg.devDependencies?.["@opencode/plugin"],
+      installed.version,
+      "the SDK must be pinned exactly so the typecheck runs against the same version as the host",
+    )
+    const themePeer = installed.peerDependencies?.["@opencode/theme"]
+    if (themePeer) {
+      assert.equal(pkg.devDependencies?.["@opencode/theme"], themePeer, "the theme peer is exact and must match the SDK")
+    }
+    for (const name of ["@opentui/core", "@opentui/solid", "solid-js"]) {
+      const peer = installed.peerDependencies?.[name]
+      if (!peer) continue
+      const declared = pkg.devDependencies?.[name]
+      assert.ok(declared, `${name} must be a devDependency for the typecheck`)
+      assert.ok(
+        atLeast(floor(declared), floor(peer)),
+        `${name} devDependency ${declared} is below the SDK peer ${peer}`,
       )
     }
   })

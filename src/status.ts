@@ -163,12 +163,32 @@ export async function getStatus(deps: StatusDeps, options?: { checkFreshness?: b
   }
 
   let recommendation: string
+  /**
+   * Advice when Kilo is excluded from the search.
+   *
+   * `searchKilo: false` makes the own index the whole corpus, so anything that
+   * points at Kilo — "search works now", "switch to the matching model" — sends
+   * the user to a source the search will never read.
+   */
+  const ownIndexRecommendation = (): string => {
+    if (!ownInfo?.exists) {
+      return "Kilo search is disabled (searchKilo = false), so results come from the own index only. Run indexing_build to create it."
+    }
+    if (ownInfo.complete === false) return "Own index reported a previous incomplete run. Run indexing_refresh to finish it."
+    if (freshness.checked && freshness.added + freshness.maybeStale + freshness.deleted > 0) {
+      return `Workspace has ${freshness.added} new, ${freshness.maybeStale} possibly changed and ${freshness.deleted} deleted files vs own index. Run indexing_refresh.`
+    }
+    return "The own index looks healthy. Use indexing_search for semantic queries."
+  }
+  const kiloInSearch = settings.searchKilo !== false
   if (profileChanged) {
     recommendation =
       `The embedding model changed since the own index was built (${profileKey(storedProfile!)} -> ` +
       `${profileKey(configuredProfile)}). Run indexing_build to rebuild it, which re-embeds every file.`
   } else if (!reachable && settings.vectorStore === "qdrant") {
     recommendation = "Start Qdrant (e.g. `docker run -p 6333:6333 qdrant/qdrant` or Podman equivalent), then re-run indexing_status."
+  } else if (!kiloInSearch) {
+    recommendation = ownIndexRecommendation()
   } else if (!kiloCollection && !ownInfo?.exists && kiloSources.length === 0) {
     recommendation = "No index found. Run indexing_build to create an independent index (works without Kilo Code)."
   } else if (kiloSources.length > 0 && !ownInfo?.exists && compatibleSource) {

@@ -180,9 +180,13 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
         const { hits, meta, errors } = outcome
         if (hits.length === 0) {
           const lines: string[] = [`No results for "${query}" in ${meta.root}.`]
-          const kiloState = meta.kilo.collection
-            ? `Kilo index: ${meta.kilo.points ?? "?"} points, ${meta.kilo.complete === true ? "complete" : "INCOMPLETE"}.`
-            : "Kilo index: not found."
+          // "Not searched" and "searched, not found" read the same in `collection`
+          // (both null) but call for different actions, so they are said apart.
+          const kiloState = !meta.kilo.searched
+            ? "Kilo index: search disabled (searchKilo is off); only the own index was searched."
+            : meta.kilo.collection
+              ? `Kilo index: ${meta.kilo.points ?? "?"} points, ${meta.kilo.complete === true ? "complete" : "INCOMPLETE"}.`
+              : "Kilo index: not found."
           const ownState = meta.own.complete === null
             ? `Own index (${meta.own.kind}): not built (run indexing_build).`
             : `Own index (${meta.own.kind}): ${meta.own.points ?? "?"} points, ${meta.own.complete ? "complete" : "INCOMPLETE"}.`
@@ -209,6 +213,9 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
             ownComplete: meta.own.complete,
             hasKilo: meta.kilo.collection !== null,
             kiloPoints: meta.kilo.points,
+            // Without this the line reports "no index" for a search that never
+            // consulted Kilo, which is a claim it cannot support.
+            kiloSearched: meta.kilo.searched,
             root: meta.root,
           }),
         )
@@ -428,8 +435,8 @@ function makeProgress(context: { progress?: (m: unknown) => Promise<void> }): (u
 /**
  * Refuses any tool that would write the own index while `enabled` is false.
  *
- * Search is deliberately allowed to keep working: it still reads Kilo's index, it
- * just stops refreshing or writing the plugin's own.
+ * Search is deliberately allowed to keep working: it only reads, so a paused
+ * workspace still answers from whichever indexes the search setting consults.
  */
 function assertIndexingEnabled(settings: { enabled?: boolean }): void {
   if (settings.enabled === false) {

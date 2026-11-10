@@ -5,6 +5,56 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-11-10
+
+### Added
+- **`ownStoreReachable` is part of the `status.get` output contract.** The
+  server has computed it since the footer needed to tell an unreachable store
+  from an index that simply does not exist yet, and the TUI and the GUI already
+  read it, but the declared schema never listed it: it survived only because the
+  schema allows additional properties, so a consumer validating against the
+  definition could not see it. It is declared now.
+
+### Changed
+- **The dev toolchain moves to OpenCode 2.2.7.** `@opencode/plugin` and
+  `@opencode/theme` are pinned to exactly 2.2.7 in devDependencies, and the
+  consumer peers are `@opencode/plugin >=2.2.7` and `solid-js >=1.9.0`, both
+  still optional. The floor comes from the Desktop page: it is built from the
+  settings components OpenCode 2.2.6 added, so an older host cannot render it.
+  The pins are exact because the SDK the typecheck sees has to be the one the
+  page's components come from.
+- **`@opencode/theme` and `@opentui/*` are no longer consumer peers.** The TUI
+  is JSX-free and imports the host runtime through virtual module ids, so
+  OpenTUI is needed only to typecheck those declarations — a devDependency, not
+  something a consumer installs. The theme is provided by the host and pinned by
+  the SDK. Peers that the package never loads itself only ask users to resolve
+  dependencies it does not use.
+- **The Desktop settings page is rebuilt on the host's own components.**
+  `SettingsLayout`, `SettingsSection`, `SettingsRow` and `Select` replace the
+  hand-rolled layout that copied the host's measurements and coloured itself
+  from `--v2-*`. A copied number is a snapshot of one release and drifts
+  silently; the components cannot drift from the host they come from, so the
+  page follows its theme and layout by construction.
+
+### Fixed
+- **`searchKilo: false` is no longer reported as a missing Kilo index.**
+  `indexing_status` now says that Kilo search is disabled instead of reusing the
+  "no Kilo index" text, `indexing_search` says only the own index was searched
+  when it finds nothing, and the paused line in `indexing_config` says search
+  reads the own index only. The two states need different actions — a switch
+  versus a build — and the old wording sent readers to the wrong one. The "Set
+  up locally" preset also stopped writing `searchKilo: true`, so it no longer
+  overrides a choice the user made.
+- **The LanceDB install hint no longer names 0.26.2.** The package has shipped
+  `@lancedb/lancedb` 0.40.0 since 0.3.2, but the message shown when the module
+  is missing still told people to install 0.26.2 — a downgrade of the native
+  binary the code is written against. It names 0.40.0 now.
+- **The `index.import` RPC no longer declares a `rebuild` input that nothing
+  reads.** The schema offered it and the handler ignored it, so a caller who
+  passed it believed the index had been dropped and rebuilt. It is gone. The
+  `indexing_build` and `indexing_import` tools keep their own `rebuild`, which
+  is honored.
+
 ## [0.7.3] - 2026-11-03
 
 ### Fixed
@@ -679,7 +729,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.8.0
 [0.7.3]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.7.3
 [0.7.2]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.7.2
 [0.7.1]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.7.1

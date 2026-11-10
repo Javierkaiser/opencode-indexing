@@ -29,6 +29,8 @@ interface SettingsView {
   model: string
   dimension: number
   importFromKilo: boolean
+  /** Search Kilo's index alongside the own one. */
+  searchKilo: boolean
   autoRefresh: boolean
   enabled: boolean
   searchMaxResults: number
@@ -128,6 +130,7 @@ const DEFAULT_SETTINGS: SettingsView = {
   model: "codestral-embed-2505",
   dimension: 1536,
   importFromKilo: false,
+  searchKilo: true,
   autoRefresh: true,
   enabled: true,
   searchMaxResults: 10,
@@ -949,6 +952,42 @@ describe("tui plugin", () => {
     assert.ok(
       harness.toasts.some((toast) => toast.variant === "success" && toast.message === "Import from Kilo: ON"),
       "a success toast must announce the toggle",
+    )
+  })
+
+  test("the dialog editor offers the searchKilo switch and flips it", async () => {
+    // `searchKilo` was in the fixture without any assertion on the row, so the
+    // switch could disappear from the dialog and every test still passed.
+    const harness = await setupPlugin({ settings: { searchKilo: true }, selects: ["searchKilo"] })
+    await runCommand(harness)
+
+    const select = harness.dialogs.find((dialog) => dialog.method === "select")
+    assert.ok(select, "the main menu is a select dialog")
+    const options = (select.options as { options: Array<{ value?: string; title?: string }> }).options
+    const row = options.find((option) => option.value === "searchKilo")
+    assert.ok(row, `the editor must offer the searchKilo row: ${JSON.stringify(options)}`)
+    assert.equal(row.title, "Search Kilo's index: ON (both indexes)")
+
+    assertCalledWith(harness, "settings.set", { patch: { searchKilo: false } })
+    assert.ok(
+      harness.toasts.some((toast) => toast.variant === "success" && toast.message === "Search Kilo's index: OFF"),
+      "a success toast must announce the toggle",
+    )
+  })
+
+  test("the searchKilo row reads OFF and turns it back on", async () => {
+    const harness = await setupPlugin({ settings: { searchKilo: false }, selects: ["searchKilo"] })
+    await runCommand(harness)
+
+    const select = harness.dialogs.find((dialog) => dialog.method === "select")
+    assert.ok(select)
+    const options = (select.options as { options: Array<{ value?: string; title?: string }> }).options
+    assert.equal(options.find((option) => option.value === "searchKilo")?.title, "Search Kilo's index: OFF (own index only)")
+
+    assertCalledWith(harness, "settings.set", { patch: { searchKilo: true } })
+    assert.ok(
+      harness.toasts.some((toast) => toast.variant === "success" && toast.message === "Search Kilo's index: ON"),
+      "the toast must say the reverse of what the row showed",
     )
   })
 

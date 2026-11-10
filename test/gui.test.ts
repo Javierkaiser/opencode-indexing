@@ -88,7 +88,7 @@ describe("Desktop GUI entry", () => {
   test("the page is built from the host's components, not raw controls", () => {
     // A settings page that draws its own buttons reads as a different app. The
     // SDK exposes the host's controls through ctx.ui and no theme tokens, so
-    // the layout is ours but every interactive piece must be the host's.
+    // every interactive piece must be the host's.
     const file = read("src/gui.tsx")
 
     assert.match(file, /ctx\.ui\.Button/)
@@ -97,7 +97,21 @@ describe("Desktop GUI entry", () => {
     assert.match(file, /ctx\.ui\.Loader/)
     assert.match(file, /ctx\.ui\.Icon/)
     assert.match(file, /ctx\.ui\.Tooltip/)
+    assert.match(file, /ctx\.ui\.Select/)
     assert.doesNotMatch(file, /<button\b/)
+  })
+
+  test("the page is framed and sectioned by the native settings components", () => {
+    // The host owns the page header, the 720px column, the bordered lists and
+    // the rows. A hand-rolled page, section, row or header drifts from the
+    // app's measurements and theme on the next release.
+    const file = read("src/gui.tsx")
+
+    assert.match(file, /ctx\.ui\.SettingsLayout/)
+    assert.match(file, /ctx\.ui\.SettingsSection/)
+    assert.match(file, /ctx\.ui\.SettingsRow/)
+    assert.doesNotMatch(file, /<section\b|<h1\b|<h2\b/)
+    assert.doesNotMatch(file, /\bstyle=/)
   })
 
   test("the booleans persist through settings.apply and adopt the server's answer", () => {
@@ -116,14 +130,18 @@ describe("Desktop GUI entry", () => {
   test("provider, model and store are chosen from the server's catalog", () => {
     // `src/registry.ts` imports node:crypto, so the GUI cannot import the
     // catalog: it asks for it. A hardcoded list here would drift from the
-    // server and offer models with no adapter.
+    // server and offer models with no adapter. The model select shows the
+    // dimension and keeps a way to type a model the catalog does not list.
     const file = read("src/gui.tsx")
 
     assert.match(file, /"catalog\.get"/)
-    assert.match(file, /ctx\.dialogs\.select/)
-    assert.match(file, /chooseProvider/)
-    assert.match(file, /chooseModel/)
-    assert.match(file, /chooseStore/)
+    assert.match(file, /ctx\.ui\.Select/)
+    assert.match(file, /onChange=\{\(picked\) => void chooseProvider\(picked\)\}/)
+    assert.match(file, /onChange=\{\(picked\) => void chooseModel\(picked\)\}/)
+    assert.match(file, /onChange=\{\(picked\) => void chooseStore\(picked\)\}/)
+    assert.match(file, /settings\.modelOption/)
+    assert.match(file, /CUSTOM_MODEL/)
+    assert.match(file, /ctx\.dialogs\.prompt/)
   })
 
   test("credentials are typed in a secret prompt and written through their own method", () => {
@@ -147,6 +165,18 @@ describe("Desktop GUI entry", () => {
     assert.match(file, /settings\.test"\]\(\{\s*target:\s*"lancedb"/s)
   })
 
+  test("the local preset leaves searchKilo to the user", () => {
+    // The quick start used to write `searchKilo: true`, overriding a user's
+    // explicit "off". Whether Kilo's index is searched is their choice, and the
+    // preset is not the place to decide it.
+    const file = read("src/gui.tsx")
+    const start = file.indexOf('["settings.set"]')
+    const preset = file.slice(start, file.indexOf("await runIndexAction", start))
+
+    assert.match(preset, /vectorStore:\s*"lancedb"/)
+    assert.doesNotMatch(preset, /searchKilo/)
+  })
+
   test("the searchKilo switch is offered on the page, not only in the TUI", () => {
     // 0.7.2 added the setting to the TUI page and the dialog editor; the Desktop
     // page — where a GUI user looks — kept offering only "Import from Kilo", so
@@ -158,28 +188,17 @@ describe("Desktop GUI entry", () => {
     assert.match(file, /applyKey\("searchkilo"/)
   })
 
-  test("no colour is hardcoded, so the page follows the app's theme", () => {
-    // The app defines its theme as CSS variables: `:root` for light,
-    // `@media (prefers-color-scheme: dark)` for the system scheme, and
-    // `[data-color-scheme=dark]` for the Settings > Appearance override. A
-    // plugin page inside the document inherits all three, so a hex value is
-    // the one thing that would stop following them.
+  test("no colour or measurement is hardcoded, so the page follows the app's theme", () => {
+    // The app defines its theme as CSS variables and draws its settings pages
+    // from its own components. A hex value, a `--v2-*` reference or a magic
+    // spacing number is the app's business, not the plugin's: one that copies
+    // them stops following a theme change or a different window size.
     const file = read("src/gui.tsx")
 
-    assert.match(file, /var\(--v2-/)
     assert.doesNotMatch(file, /#[0-9a-f]{3,8}\b/i)
     assert.doesNotMatch(file, /\brgba?\(/i)
-  })
-
-  test("the page uses the host's measurements and theme variables", () => {
-    // These are the app's own values, read from its settings CSS: a 720px
-    // column, 48px above the title, and `--v2-*` variables for every colour.
-    // A hardcoded grey is wrong in one of the two themes.
-    const file = read("src/gui.tsx")
-
-    assert.match(file, /"padding-top": "48px"/)
-    assert.match(file, /"max-width": "720px"/)
-    assert.match(file, /--v2-/)
-    assert.match(file, /"padding-block": "20px"/)
+    assert.doesNotMatch(file, /--v2-/)
+    assert.doesNotMatch(file, /color-mix/)
+    assert.doesNotMatch(file, /"max-width"|"padding-top"|"padding-block"/)
   })
 })

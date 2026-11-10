@@ -1,6 +1,20 @@
 import { settingsFilePath } from "./settings.ts"
 
 /**
+ * Version of `@lancedb/lancedb` this release is built against.
+ *
+ * It has to match `optionalDependencies` in package.json: the user-facing
+ * "install X" messages quote it, and a stale value sends people to a version
+ * the plugin was never tested with.
+ */
+export const LANCEDB_VERSION = "0.40.0"
+
+/** `platform-arch`, the way a native package would be named. */
+export function platformId(platform: string = process.platform, arch: string = process.arch): string {
+  return `${platform}-${arch}`
+}
+
+/**
  * Which platforms the LanceDB binding can actually run on.
  *
  * `@lancedb/lancedb` is a JavaScript wrapper that `require()`s one of seven
@@ -13,14 +27,6 @@ import { settingsFilePath } from "./settings.ts"
  * so plainly instead of surfacing a module-resolution stack trace; the import
  * itself stays the authority on whether the binary loaded.
  */
-
-export const LANCEDB_VERSION = "0.26.2"
-
-/** `platform-arch`, the way a native package would be named. */
-export function platformId(platform: string = process.platform, arch: string = process.arch): string {
-  return `${platform}-${arch}`
-}
-
 const SUPPORTED = new Set([
   "win32-x64",
   "win32-arm64",
