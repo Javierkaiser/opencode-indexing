@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url"
 export const SKILL_ID = "opencode-indexing"
 export const SKILL_NAME = "Semantic code search (indexing)"
 export const SKILL_DESCRIPTION =
-  "Use indexing_search to find code by intent; check indexing_status and run indexing_refresh when the index may be stale. Explains when Grep, Glob or Read are the better tool."
+  "Use indexing_search to find code by intent; check indexing_status and run indexing_refresh when the index may be stale. Explains when Grep, Glob or Read is the better choice."
 export const SKILL_FILE = fileURLToPath(new URL("../skills/opencode-indexing/SKILL.md", import.meta.url))
 
 export const readSkill = (): string => readFileSync(SKILL_FILE, "utf8")
