@@ -742,16 +742,22 @@ function IndexingSettings(props: { readonly ctx: Context }) {
   )
 }
 
-/** The composer pill for one state, or `undefined` to show nothing. */
-const pillView = (ctx: Context, state: IndexingState, points: number | null | undefined) => {
+/**
+ * The composer pill for one state, or `undefined` to show nothing.
+ *
+ * It shows the state, not the point count: the pill is a glanceable indicator,
+ * and the number is one click away in Settings. The vocabulary is the same one
+ * the footer and the chat line use, so the three never describe the same state
+ * with different words.
+ */
+const pillView = (ctx: Context, state: IndexingState) => {
   const title = ctx.t("pill.title")
-  const count = `${pointsText(points)} ${ctx.t("unit.points")}`
 
   switch (state) {
     case "ready":
-      return { icon: "circle-check", tone: "success", label: count, title } as const
+      return { icon: "circle-check", tone: "success", label: ctx.t("state.ready"), title } as const
     case "stale":
-      return { icon: "refresh", tone: "warning", label: `${count} · ${ctx.t("pill.stale")}`, title } as const
+      return { icon: "refresh", tone: "warning", label: ctx.t("state.stale"), title } as const
     case "paused":
       return { icon: "dash", label: ctx.t("state.paused"), title } as const
     case "empty":
@@ -867,12 +873,10 @@ export default Plugin.define({
       "state.paused": "paused",
       "state.ready": "indexed",
       "state.stale": "index stale",
-      "state.empty": "not built",
+      "state.empty": "not indexed",
       "state.unavailable": "no index",
       "state.error": "index error",
       "pill.title": "Index status",
-      "pill.stale": "stale",
-      "unit.points": "points",
     },
   },
   setup(ctx) {
@@ -939,7 +943,7 @@ export default Plugin.define({
         show: (input) => {
           const current = loaded()
           if (!current || current.directory !== input.session.directory) return undefined
-          return pillView(ctx, stateOf(current.settings, current.status), current.status.ownPoints)
+          return pillView(ctx, stateOf(current.settings, current.status))
         },
       }),
     )

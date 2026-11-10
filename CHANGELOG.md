@@ -5,6 +5,24 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **The Desktop composer pill shows the index state, not the point count.**
+  "2.2k points" answered how big the index was, not whether it could be used,
+  and the number is one click away in Settings. The pill now reads `indexed`,
+  `index stale`, `not indexed`, `paused`, `indexing…`, `reading…`, `no index`
+  or `index error` - the same vocabulary as the terminal footer and the chat
+  line, so the same state never reads differently in two places.
+- **The bundled skill moved to `skills/opencode-indexing/SKILL.md`.** It used
+  to be a string inside `index.ts`, registered with an
+  `opencode-indexing://skill/indexing` path that is not a file: the host could
+  not give it a real base directory or list supporting files. The server
+  registers the real file now, and `files` ships it. The content also documents
+  the `path` argument, that the limit comes from `searchMaxResults`, that
+  search keeps working while indexing is paused, what `searchKilo: false`
+  changes, and that `.ps1` is outside the default extension allowlist.
+
 ## [0.8.0] - 2026-11-10
 
 ### Added

@@ -183,6 +183,15 @@ OpenCode ──► codegraph_*  ───────► codegraph's graph (its 
 | `indexing_build` | Build the own index: imports from Kilo when compatible, otherwise embeds from scratch. `{ rebuild?, skipImport? }` |
 | `indexing_import` | Import a specific Kilo source without re-embedding. `{ source?, rebuild? }`; `rebuild` drops the own index first |
 
+### Bundled skill
+
+The plugin registers a skill, `opencode-indexing` ("Semantic code search
+(indexing)"), that tells the model when `indexing_search` is the right tool,
+when Grep, Glob or Read are the better ones, how to read empty results, and how
+to keep the index fresh. It ships as `skills/opencode-indexing/SKILL.md` and is
+registered from that file, so there is nothing to install. Mention it as
+`@opencode-indexing`, or let the model load it when the description matches.
+
 ## Settings
 
 The terminal page and its dialog editor write the same file through the server

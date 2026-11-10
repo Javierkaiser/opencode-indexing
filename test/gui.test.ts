@@ -201,4 +201,25 @@ describe("Desktop GUI entry", () => {
     assert.doesNotMatch(file, /color-mix/)
     assert.doesNotMatch(file, /"max-width"|"padding-top"|"padding-block"/)
   })
+
+  test("the composer pill shows the index state, not the point count", () => {
+    // The pill is a glanceable indicator: "2.2k points" says how big the index
+    // is, not whether it can be used. The count stays in Settings and in
+    // indexing_status. All eight states read the vocabulary the footer and the
+    // chat line share, so one state never gets two different words.
+    const file = read("src/gui.tsx")
+    const start = file.indexOf("const pillView")
+    const end = file.indexOf("export default Plugin.define", start)
+    const pill = file.slice(start, end)
+
+    for (const state of ["ready", "stale", "paused", "empty", "working", "loading", "unavailable", "error"]) {
+      assert.match(
+        pill,
+        new RegExp(`case "${state}":\\s*\\n\\s*return \\{[^\\n]*label: ctx\\.t\\("state\\.${state}"\\)`),
+        `the ${state} pill must use its state label`,
+      )
+    }
+    assert.doesNotMatch(pill, /pointsText|unit\.points|pill\.stale/)
+    assert.match(file, /"state\.empty": "not indexed"/)
+  })
 })

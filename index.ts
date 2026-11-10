@@ -24,6 +24,7 @@ import { createEmbedder } from "./src/embedder.ts"
 import { getOwnStoreInfo, OWN_COLLECTION_PREFIX, type OwnStoreInfo } from "./src/own-store.ts"
 import { forgetWorkspace, readWorkspaces } from "./src/workspaces.ts"
 import { pluginVersion } from "./src/plugin-version.ts"
+import { SKILL_DESCRIPTION, SKILL_FILE, SKILL_ID, SKILL_NAME, readSkill } from "./src/skill.ts"
 import { LANCEDB_VERSION } from "./src/lancedb-support.ts"
 import { IndexingRpc } from "./src/rpc.ts"
 import {
@@ -60,69 +61,6 @@ async function readOwnCollectionInfo(client: Qdrant, store: string): Promise<Own
     return null
   }
 }
-
-const SKILL_CONTENT = `# Semantic code search (opencode-indexing)
-
-The \`indexing_search\` tool searches the project's semantic code index: chunks of
-code embedded by meaning, combining a Kilo Code index (when present) with this
-plugin's own incremental index (Qdrant or LanceDB backend).
-
-## When to use indexing_search
-
-- Open-ended exploration when you know the intent but not the identifiers:
-  "user login and password hashing", "database connection pooling", "retry logic".
-- Finding conceptually similar implementations across the codebase.
-- Locating code whose names you do not know.
-
-## When NOT to use it (use other tools instead)
-
-- Exact symbol or string: use Grep.
-- Filenames or extensions: use Glob.
-- Reading a known file: use Read.
-- Verifying whether code exists that must be fresh: the index may lag behind
-  recent edits; check \`indexing_status\` (freshness) or use Grep for certainty.
-
-## If codegraph is also installed
-
-When the codegraph MCP server is present, its tools are available alongside this
-one, and together they answer more than either can alone:
-
-- \`codegraph_explore\` — the area around a finding, with the verbatim source of
-  the relevant symbols, the call paths between them, and what depends on them.
-- \`codegraph_callers\` / \`codegraph_impact\` — "who calls this" and "what breaks
-  if I change it". Exact, structural answers that a similarity search cannot
-  give.
-- \`indexing_search\` still goes first when the intent is known and the
-  identifier is not: it finds the entry node by meaning, and the graph then
-  explains it.
-
-The two indexes are kept current together, so neither is stale relative to the
-other. If those tools are not available, everything above still applies and
-Grep remains the right fallback.
-
-## Configuration
-
-\`indexing_config\` reports the effective settings (backend, model, credentials —
-masked, search and behaviour). \`indexing_config_set { key, value }\` changes one
-and persists it. Use them when the user asks what the indexing configuration is,
-or asks to change it. Credentials are refused by design: a tool call is recorded
-in the conversation. Set an API key from the terminal \`/indexing\` page or the
-Desktop settings page, or through the environment or plugin options.
-
-## Freshness
-
-If \`indexing_status\` reports new/changed/deleted files, run \`indexing_refresh\`
-before trusting results for recently edited code. Empty search results are not
-proof the code does not exist.
-
-## Setup (only when explicitly asked)
-
-- \`indexing_build\` creates the index; when a Kilo Code index exists it can be
-  imported without embedding costs (controlled by the "import from Kilo" toggle
-  in \`/indexing\`).
-- The \`/indexing\` command opens the settings menu (backend, Qdrant URL, API
-  keys, import toggle).
-`
 
 function settingsView(settings: IndexingSettings, homeDir?: string): Record<string, unknown> {
   return {
@@ -376,13 +314,14 @@ Behavior:
     // ---- Skill ----
     try {
       await ctx.skill.transform((editor) => {
+        // The SDK brands these strings, but the host only checks that they are
+        // strings at runtime. The cast stays at this one boundary.
         editor.add({
-          id: "opencode-indexing",
-          name: "Semantic code search (indexing)",
-          description:
-            "Use the indexing_search tool for intent-based code search; run indexing_refresh when the index is stale. Explains when not to use it (exact terms, filenames).",
-          path: "opencode-indexing://skill/indexing",
-          content: SKILL_CONTENT,
+          id: SKILL_ID,
+          name: SKILL_NAME,
+          description: SKILL_DESCRIPTION,
+          path: SKILL_FILE,
+          content: readSkill(),
           autoinvoke: true,
         } as never)
       })

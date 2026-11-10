@@ -38,6 +38,7 @@
     "tui.ts",
     "tui",
     "src",
+    "skills",
     "dist",
     "tsconfig.json",
     "install.mjs",
