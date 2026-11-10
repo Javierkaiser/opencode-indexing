@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-11-10
+
+### Changed
+- **Re-running `--aio` no longer replaces an existing provider, model or store.**
+  It re-applied the all-in-one profile and re-ran the model prefetch on every
+  run, so a machine already set up with another provider, model or vector store
+  was moved back to the local profile by a command that reads as an update. When
+  the plugin is already installed — a `plugins` entry in `opencode.json`, the
+  copy at `<config>/opencode/plugins/opencode-indexing`, the package in
+  `opencode plugin list` — or `indexing.json` already exists, the installer now
+  reports what it found, leaves the file untouched, and skips the model
+  prefetch. The idempotent steps still run: plugin add/update, codegraph
+  registration, the permission rules and the service restart. To apply the
+  profile deliberately, back up and remove `indexing.json` and run `--aio`
+  again.
+
 ## [0.10.0] - 2026-11-10
 
 ### Added
@@ -768,7 +784,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.10.1
 [0.10.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.10.0
 [0.9.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.9.0
 [0.8.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.8.0

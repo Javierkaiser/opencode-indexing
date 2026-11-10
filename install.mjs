@@ -29,6 +29,8 @@
  *             all-in-one profile in `indexing.json`: LanceDB, the local
  *             multilingual model, no Kilo index and no auto-refresh. It also
  *             prefetches the embedding model through the running service.
+ *             An existing install or settings file is never overwritten: the
+ *             profile step is skipped and the file left as it was.
  *             `--all-in-one` is the same flag. Implies `--package` and
  *             `--with-codegraph`; it cannot be combined with `--local`.
  *
@@ -340,6 +342,38 @@ function registeredCount() {
     .filter((id) => id === "javierkaiser.indexing").length
 }
 
+/**
+ * Whether this plugin is already installed, measured before `installPackage`.
+ *
+ * Three independent signals, cheapest first: a copied plugin in the config
+ * directory, an entry in `opencode.json`, and the running service's own list.
+ * A service that is down makes `registeredCount()` undefined, and no answer is
+ * not evidence of an install, so that case falls through to false.
+ */
+function hasExistingInstall() {
+  if (existsSync(dest)) return true
+
+  if (existsSync(configFile)) {
+    try {
+      const cfg = JSON.parse(stripJsonc(readFileSync(configFile, "utf8")))
+      const plugins = cfg && Array.isArray(cfg.plugins) ? cfg.plugins : []
+      // Both spellings OpenCode accepts: a bare spec string, or an object with
+      // `package`. `@latest`, `@0.10.0` and no suffix all mean this plugin.
+      const isThisPackage = (value) =>
+        typeof value === "string" && (value === sourcePkg.name || value.startsWith(`${sourcePkg.name}@`))
+      const found = plugins.some(
+        (entry) => isThisPackage(entry) || (entry !== null && typeof entry === "object" && isThisPackage(entry.package)),
+      )
+      if (found) return true
+    } catch {
+      // An unreadable config is not an install; the remaining probes decide.
+    }
+  }
+
+  const count = registeredCount()
+  return typeof count === "number" && count > 0
+}
+
 function installPackage(packageSpec) {
   log(`  spec: ${packageSpec}`)
 
@@ -436,6 +470,32 @@ function installCodegraph() {
 // ---------------------------------------------------------------------------
 /** The plugin's own settings file, resolved the same way `src/settings.ts` does. */
 const settingsFile = join(configDir, "indexing.json")
+
+/**
+ * Whether `--aio` may apply its profile.
+ *
+ * The profile is a deliberate, one-shot choice. Re-applying it on every run
+ * would overwrite a setup the user has since edited, so an existing install or
+ * an existing settings file blocks it instead.
+ */
+export function aioProfileDecision({ installed, settingsExist }) {
+  if (installed) return { apply: false, reason: "installed" }
+  if (settingsExist) return { apply: false, reason: "settings" }
+  return { apply: true, reason: "none" }
+}
+
+/** The explanation printed when the profile is skipped, one line per `\n`. */
+export function aioSkipMessage(reason, settingsFile, settingsExist) {
+  if (reason === "installed") {
+    return settingsExist
+      ? `The plugin is already installed; the all-in-one profile was not applied.\nYour settings at ${settingsFile} were left untouched.\nTo apply the profile deliberately, back up and remove that file, then run this again.`
+      : "The plugin is already installed; the all-in-one profile was not applied.\nNo settings file exists yet, so nothing was overwritten.\nConfigure the local profile from Settings -> Indexing if you want it."
+  }
+  if (reason === "settings") {
+    return `A settings file already exists at ${settingsFile}; the all-in-one profile was not applied.\nThe file was left untouched.\nTo apply the profile deliberately, back up and remove that file, then run this again.`
+  }
+  return ""
+}
 
 const RPC_PATH = "/api/rpc/javierkaiser.indexing/settings.test"
 const RPC_ATTEMPTS = 10
@@ -615,6 +675,14 @@ function main() {
     log(flags.aio ? "  + codegraph (via --aio)" : "  + codegraph (via --with-codegraph, package mode)")
   }
 
+  // The guard that keeps `--aio` safe to re-run protects an existing setup from
+  // a second profile write. It has to be decided here, before `installPackage`:
+  // once `opencode plugin add` has run, every later check would report this
+  // plugin as installed and the decision would always be "skip".
+  const alreadyInstalled = flags.aio ? hasExistingInstall() : false
+  const settingsExist = existsSync(settingsFile)
+  const aioDecision = flags.aio ? aioProfileDecision({ installed: alreadyInstalled, settingsExist }) : undefined
+
   if (mode === "local") {
     installLocal(flags.skipDeps)
     if (flags.withCodegraph) warn("  --with-codegraph is ignored in --local mode; codegraph is not installed there")
@@ -623,7 +691,15 @@ function main() {
       warn("  not writing permissions or restarting: the install did not complete")
       process.exit(1)
     }
-    if (flags.aio) applyAioSettings()
+    if (flags.aio) {
+      if (aioDecision.apply) {
+        applyAioSettings()
+      } else {
+        log("")
+        for (const line of aioSkipMessage(aioDecision.reason, settingsFile, settingsExist).split("\n")) log(line)
+        log("")
+      }
+    }
     if (flags.withCodegraph) installCodegraph()
   }
 
@@ -637,7 +713,9 @@ function main() {
     if (count !== undefined && count > 1) {
       warn(`  ${count} entries report id javierkaiser.indexing; only one should. Check \`opencode plugin list\`.`)
     }
-    if (flags.aio) checkAioProfile(flags.noRestart)
+    // Only when the profile was applied: both checks validate a profile that,
+    // when skipped, is not the one on disk.
+    if (flags.aio && aioDecision.apply) checkAioProfile(flags.noRestart)
   }
 
   log("Done.")

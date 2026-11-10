@@ -149,3 +149,59 @@ test("README documents --aio", async () => {
   const readme = await readFile(join(root, "README.md"), "utf8")
   assert.match(readme, /--aio/)
 })
+
+/**
+ * The decisions below are exported by install.mjs so the run path stays small.
+ * A missing helper fails loudly here instead of surfacing as a `TypeError`.
+ */
+const helper = (name) => {
+  const fn = install[name]
+  assert.equal(typeof fn, "function", `${name} is not exported by install.mjs yet`)
+  return fn
+}
+
+test("aioProfileDecision never overwrites an install or a settings file", () => {
+  const decide = helper("aioProfileDecision")
+
+  assert.deepEqual(decide({ installed: true, settingsExist: true }), { apply: false, reason: "installed" })
+  assert.deepEqual(decide({ installed: true, settingsExist: false }), { apply: false, reason: "installed" })
+  assert.deepEqual(decide({ installed: false, settingsExist: true }), { apply: false, reason: "settings" })
+  assert.deepEqual(decide({ installed: false, settingsExist: false }), { apply: true, reason: "none" })
+})
+
+const skipFile = join(root, ".config", "opencode", "indexing.json")
+
+test("aioSkipMessage explains an existing install and leaves the settings path visible", () => {
+  const message = helper("aioSkipMessage")("installed", skipFile, true)
+
+  assert.match(message, /already installed/)
+  assert.ok(message.includes(skipFile), "the message names the settings file")
+  assert.match(message, /untouched/)
+})
+
+test("aioSkipMessage reports an existing install with no settings file", () => {
+  const message = helper("aioSkipMessage")("installed", skipFile, false)
+
+  assert.match(message, /already installed/)
+  assert.match(message, /no settings file/i, "capitalised at the start of a sentence, so the check is case-insensitive")
+})
+
+test("aioSkipMessage names the settings file it refused to replace", () => {
+  const message = helper("aioSkipMessage")("settings", skipFile, true)
+
+  assert.match(message, /already exists/)
+  assert.ok(message.includes(skipFile), "the message names the settings file")
+  assert.match(message, /untouched/)
+})
+
+test("aioSkipMessage is silent when the profile is applied", () => {
+  assert.equal(helper("aioSkipMessage")("none", skipFile, false), "")
+})
+
+test("install.mjs gates the all-in-one profile behind the existing-install decision", () => {
+  assert.match(installSource, /\baioProfileDecision\b/)
+  assert.match(installSource, /\bhasExistingInstall\b/)
+  // Best effort: the call site reads the decision into `aioDecision` and only
+  // then runs `checkAioProfile`.
+  assert.match(installSource, /\baioDecision\b/)
+})

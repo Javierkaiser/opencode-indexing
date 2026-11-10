@@ -112,6 +112,20 @@ the file, so an option that sets one of these keys takes precedence and the
 installer says so. `--aio` is the published-package install and cannot be
 combined with `--local`.
 
+Running `--aio` again is safe. If the plugin is already installed — a `plugins`
+entry in `opencode.json`, the copy at
+`<config>/opencode/plugins/opencode-indexing`, a `javierkaiser.indexing` line in
+`opencode plugin list` — or `indexing.json` already exists, the installer
+applies no profile: it says what it found, leaves the file untouched, and skips
+the `settings.test` model prefetch, so the multilingual weights are not
+downloaded a second time. The rest of the install still runs: plugin
+add/update, the codegraph registration, the permission rules and the service
+restart.
+
+To apply the profile deliberately, back up `indexing.json`, remove it, and run
+`--aio` again. With no file to protect, the installer writes the profile and
+fetches the model.
+
 ### The codegraph companion
 
 [CodeGraph](https://github.com/colbymchenry/codegraph) is a separate tool — a
