@@ -122,8 +122,10 @@ downloaded a second time. The rest of the install still runs: plugin
 add/update, the codegraph registration, the permission rules and the service
 restart.
 
-To apply the profile deliberately, back up `indexing.json`, remove it, and run
-`--aio` again. With no file to protect, the installer writes the profile and
+If the plugin is already installed, change the profile from **Settings →
+Indexing**; re-running the installer will not replace it. If only an
+`indexing.json` exists (the plugin is not detected), back it up, remove it, and
+run `--aio` again: with no file to protect, the installer writes the profile and
 fetches the model.
 
 ### The codegraph companion

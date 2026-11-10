@@ -177,6 +177,10 @@ test("aioSkipMessage explains an existing install and leaves the settings path v
   assert.match(message, /already installed/)
   assert.ok(message.includes(skipFile), "the message names the settings file")
   assert.match(message, /untouched/)
+  // Removing the file is not enough while the plugin is installed: the other
+  // half of the guard would still skip. Point at Settings instead.
+  assert.match(message, /Settings -> Indexing/)
+  assert.doesNotMatch(message, /remove that file/)
 })
 
 test("aioSkipMessage reports an existing install with no settings file", () => {

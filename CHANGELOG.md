@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.2] - 2026-11-10
+
+### Fixed
+- **The re-run guard no longer tells an installed user to delete
+  `indexing.json`.** With the plugin installed, the other half of the guard
+  would still skip, so that instruction went in circles. The message now points
+  at Settings → Indexing, and the README distinguishes an installed plugin from
+  a settings file without one: only the latter can be removed and re-run to
+  apply the profile.
+
 ## [0.10.1] - 2026-11-10
 
 ### Changed
@@ -784,7 +794,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.10.2...HEAD
+[0.10.2]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.10.2
 [0.10.1]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.10.1
 [0.10.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.10.0
 [0.9.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.9.0

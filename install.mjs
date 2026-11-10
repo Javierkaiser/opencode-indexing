@@ -488,7 +488,7 @@ export function aioProfileDecision({ installed, settingsExist }) {
 export function aioSkipMessage(reason, settingsFile, settingsExist) {
   if (reason === "installed") {
     return settingsExist
-      ? `The plugin is already installed; the all-in-one profile was not applied.\nYour settings at ${settingsFile} were left untouched.\nTo apply the profile deliberately, back up and remove that file, then run this again.`
+      ? `The plugin is already installed; the all-in-one profile was not applied.\nYour settings at ${settingsFile} were left untouched.\nUse Settings -> Indexing to change the profile; re-running this installer will not replace it.`
       : "The plugin is already installed; the all-in-one profile was not applied.\nNo settings file exists yet, so nothing was overwritten.\nConfigure the local profile from Settings -> Indexing if you want it."
   }
   if (reason === "settings") {
