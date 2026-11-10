@@ -206,7 +206,21 @@ jobs:
           # Name the asset the way `npm pack` does, so every release page lists
           # the same filename shape instead of a generic `release-asset.tgz`.
           asset=$(node -p "require('./package.json').name.replace(/^@/, '').replace('/', '-') + '-$version.tgz'")
-          curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors -o "$asset" "$url"
+          # The version endpoint can be visible before the tarball is served:
+          # `npm view` then returns a URL that still 404s, and the release page
+          # is lost to a few seconds of CDN lag. Retry the download itself, not
+          # just the metadata lookup.
+          for attempt in $(seq 1 40); do
+            if curl -fsSL -o "$asset" "$url"; then
+              break
+            fi
+            echo "  the tarball is not being served yet (attempt $attempt), waiting 15s"
+            sleep 15
+          done
+          if [ ! -s "$asset" ]; then
+            echo "the registry never served $url" >&2
+            exit 1
+          fi
           ls -l "$asset"
 
           # Idempotent: an earlier attempt may have created it already.
