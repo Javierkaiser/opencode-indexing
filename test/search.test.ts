@@ -1,7 +1,11 @@
 import assert from "node:assert/strict"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import * as os from "node:os"
+import * as path from "node:path"
 import { after, before, beforeEach, describe, test } from "node:test"
 
-import { searchCode } from "../src/search.ts"
+import { invalidateSearchCaches, searchCode, type SearchDeps } from "../src/search.ts"
+import { KILO_METADATA_ID, kiloCollectionCandidates, resolveKiloCollection } from "../src/kilo-store.ts"
 import { createTools } from "../src/tools.ts"
 import type { Qdrant } from "../src/qdrant.ts"
 import type { VectorStoreAdapter, VectorStoreInfo } from "../src/vector-store.ts"
@@ -31,6 +35,10 @@ before(() => {
 after(() => {
   globalThis.fetch = realFetch
 })
+
+// Search metadata is cached per workspace for a few seconds; each test builds
+// its own store, so a value from the previous one must not leak in.
+beforeEach(() => invalidateSearchCaches())
 
 function memoryKv(): KVStore {
   const store = new Map<string, unknown>()
@@ -98,6 +106,34 @@ const emptyQdrant = {
     return false
   },
 } as unknown as Qdrant
+
+/** A Qdrant fake for the Kilo read path: existence probes, metadata, queries. */
+function kiloQdrant(options: {
+  collections: string[]
+  info?: Record<string, unknown>
+  payload?: Record<string, unknown> | null
+  hits?: QueryHit[]
+  onProbe?: (name: string) => void
+  onRead?: () => void
+}): Qdrant {
+  const collections = new Set(options.collections)
+  return {
+    async collectionExists(name: string): Promise<boolean> {
+      options.onProbe?.(name)
+      return collections.has(name)
+    },
+    async getCollection(name: string): Promise<Record<string, any> | null> {
+      options.onRead?.()
+      return collections.has(name) ? (options.info ?? { points_count: 5 }) : null
+    },
+    async retrieve(): Promise<Array<{ id: string | number; payload: Record<string, unknown> | null }>> {
+      return [{ id: KILO_METADATA_ID, payload: options.payload ?? null }]
+    },
+    async query(): Promise<QueryHit[]> {
+      return options.hits ?? []
+    },
+  } as unknown as Qdrant
+}
 
 test("a search that cannot embed the own index's profile fails instead of shrinking", async () => {
   // The own index holds points built by a provider whose credential is missing,
@@ -198,6 +234,197 @@ test("a healthy profile returns its hits", async () => {
   assert.equal(outcome.hits[0]!.filePath, "src/a.ts")
   assert.equal(outcome.meta.kilo.searched, true, "the default looks for Kilo, even when there is none")
   assert.equal(outcome.meta.kilo.collection, null, "searched and absent still means no collection")
+})
+
+test("a query embeds every distinct profile and returns hits from both indexes", async () => {
+  // The own index and Kilo's were built with different models. Waiting for one
+  // provider before even starting the other doubles the latency of the search
+  // that touches both, for two requests that do not depend on each other.
+  const root = mkdtempSync(path.join(os.tmpdir(), "oi-search-dual-"))
+  mkdirSync(path.join(root, "src"))
+  writeFileSync(path.join(root, "src", "kilo.ts"), "export const kilo = 1\n")
+  writeFileSync(path.join(root, "src", "own.ts"), "export const own = 1\n")
+
+  const kiloProfile: EmbeddingProfile = { provider: "mistral", modelId: "codestral-embed-2505", dimension: 1536 }
+  const ownProfile: EmbeddingProfile = { provider: "voyage", modelId: "voyage-code-4", dimension: 1024 }
+  const collection = kiloCollectionCandidates(root)[0]!
+  const models: string[] = []
+
+  const real = globalThis.fetch
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as { model?: string }
+    models.push(String(body.model))
+    return new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3], index: 0 }] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })
+  }) as typeof fetch
+
+  try {
+    const outcome = await searchCode(
+      {
+        qdrant: kiloQdrant({
+          collections: [collection],
+          info: { points_count: 7 },
+          payload: {
+            embedding_provider: kiloProfile.provider,
+            embedding_model_id: kiloProfile.modelId,
+            embedding_dimension: kiloProfile.dimension,
+            indexing_complete: true,
+          },
+          hits: [
+            {
+              id: "k1",
+              score: 0.82,
+              payload: { filePath: "src/kilo.ts", fileHash: "h", codeChunk: "kilo", startLine: 1, endLine: 1 },
+            },
+          ],
+        }),
+        kv: memoryKv(),
+        root,
+        settings: settings({ vectorStore: "qdrant", credentials: { mistralApiKey: "m", voyageApiKey: "v" } }),
+        ownStore: fakeOwnStore(ownProfile, 10, [
+          {
+            id: "o1",
+            score: 0.71,
+            payload: { filePath: "src/own.ts", fileHash: "h", codeChunk: "own", startLine: 1, endLine: 1 },
+          },
+        ]),
+      },
+      "where is the auth check",
+    )
+
+    assert.deepEqual([...models].sort(), ["codestral-embed-2505", "voyage-code-4"], "both embeds ran")
+    assert.deepEqual(
+      outcome.hits.map((hit) => hit.source).sort(),
+      ["kilo", "own"],
+      "a hit from each index survives the merge",
+    )
+    assert.deepEqual(outcome.meta.profiles.sort(), [
+      "mistral:codestral-embed-2505:1536",
+      "voyage:voyage-code-4:1024",
+    ])
+  } finally {
+    globalThis.fetch = real
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+describe("search metadata cache", () => {
+  test("own store info is reused within the ttl and refreshed after invalidation", async () => {
+    const root = "D:\\Projects\\cached-own"
+    const profile: EmbeddingProfile = { provider: "mistral", modelId: "codestral-embed-2505", dimension: 1536 }
+    let infoCalls = 0
+    const store = {
+      kind: "lancedb",
+      name: "own",
+      async info(): Promise<VectorStoreInfo> {
+        infoCalls += 1
+        return { exists: true, pointsCount: 3, complete: true, profile } as VectorStoreInfo
+      },
+      async search(): Promise<QueryHit[]> {
+        return []
+      },
+    } as unknown as VectorStoreAdapter
+    const deps: SearchDeps = {
+      qdrant: emptyQdrant,
+      kv: memoryKv(),
+      root,
+      settings: settings({ credentials: { mistralApiKey: "k" } }),
+      ownStore: store,
+    }
+
+    await searchCode(deps, "first")
+    await searchCode(deps, "second")
+    assert.equal(infoCalls, 1, "the second search must reuse the metadata instead of asking the store again")
+
+    invalidateSearchCaches(root)
+    await searchCode(deps, "third")
+    assert.equal(infoCalls, 2, "invalidation forces a fresh read")
+
+    await searchCode({ ...deps, root: "D:\\Projects\\cached-own-other" }, "fourth")
+    assert.equal(infoCalls, 3, "another workspace has its own cache entry")
+  })
+
+  test("the resolved Kilo collection and its metadata are cached until invalidated", async () => {
+    const root = "D:/Projects/cached-kilo"
+    const collection = kiloCollectionCandidates(root)[0]!
+    let probes = 0
+    let infoReads = 0
+    const client = kiloQdrant({
+      collections: [collection],
+      onProbe: () => {
+        probes += 1
+      },
+      onRead: () => {
+        infoReads += 1
+      },
+    })
+    const deps: SearchDeps = {
+      qdrant: client,
+      kv: memoryKv(),
+      root,
+      settings: settings({ vectorStore: "qdrant", credentials: { mistralApiKey: "k" } }),
+      ownStore: fakeOwnStore(undefined, 0),
+    }
+
+    await searchCode(deps, "first")
+    await searchCode(deps, "second")
+    assert.equal(probes, 1, "the second search must not probe Qdrant again")
+    assert.equal(infoReads, 1, "nor re-read the Kilo collection metadata")
+
+    invalidateSearchCaches(root)
+    await searchCode(deps, "third")
+    assert.equal(probes, 2)
+    assert.equal(infoReads, 2)
+  })
+})
+
+describe("resolveKiloCollection probing", () => {
+  test("probes the cached name and candidate names without listing collections", async () => {
+    const root = "D:/Projects/probe"
+    const candidates = kiloCollectionCandidates(root)
+    const target = candidates[candidates.length - 1]!
+    const probed: string[] = []
+    const client = {
+      async listCollections(): Promise<string[]> {
+        throw new Error("resolving one workspace must not list every collection")
+      },
+      async collectionExists(name: string): Promise<boolean> {
+        probed.push(name)
+        return name === target
+      },
+    } as unknown as Qdrant
+
+    assert.equal(await resolveKiloCollection(client, root, "ws-cached"), target)
+    assert.deepEqual(probed, ["ws-cached", ...candidates])
+  })
+
+  test("returns null when neither the cached name nor a candidate exists", async () => {
+    const root = "D:/Projects/probe-missing"
+    const probed: string[] = []
+    const client = {
+      async collectionExists(name: string): Promise<boolean> {
+        probed.push(name)
+        return false
+      },
+    } as unknown as Qdrant
+
+    assert.equal(await resolveKiloCollection(client, root), null)
+    assert.deepEqual(probed, kiloCollectionCandidates(root))
+  })
+
+  test("a failed probe is an error, not an absent collection", async () => {
+    // "Kilo never indexed this workspace" and "Qdrant is unreachable" call for
+    // different actions; collapsing the second into the first hides the outage.
+    const client = {
+      async collectionExists(): Promise<boolean> {
+        throw new Error("connect ECONNREFUSED")
+      },
+    } as unknown as Qdrant
+
+    await assert.rejects(() => resolveKiloCollection(client, "D:/Projects/down"), /ECONNREFUSED/)
+  })
 })
 
 describe("search tool: why Kilo contributed nothing", () => {

@@ -3,7 +3,7 @@ import * as path from "node:path"
 
 import { createQdrant, type Qdrant } from "./qdrant.ts"
 import { getKiloStoreInfo, resolveKiloCollection } from "./kilo-store.ts"
-import { readLanceDbInfoAt, readLanceDbBatch, lanceDbName } from "./lancedb-store.ts"
+import { readLanceDbInfoAt, openLanceDbReader, lanceDbName, type LanceDbReader } from "./lancedb-store.ts"
 import { kiloLanceDbDirectory } from "./settings.ts"
 import { recordWorkspace } from "./workspaces.ts"
 import { describeError } from "./errors.ts"
@@ -132,6 +132,8 @@ export interface ImportOptions {
   qdrant?: Qdrant
   qdrantUrl?: string
   qdrantApiKey?: string
+  /** LanceDB reader factory for lancedb sources (opened on demand when omitted). */
+  lanceDbReader?: (dbPath: string) => Promise<LanceDbReader | null>
 }
 
 /**
@@ -203,24 +205,32 @@ export async function importFromKilo(options: ImportOptions): Promise<ImportRepo
       cursor = page.next
     }
   } else {
-    let offset = 0
-    for (;;) {
-      const page = await readLanceDbBatch(source.name, { limit: batchLimit, offset })
-      if (page.points.length > 0) {
-        await target.upsert(page.points)
-        report.imported += page.points.length
-        report.batches++
-        for (const point of page.points) {
-          const filePath = point.payload.filePath
-          const fileHash = point.payload.fileHash
-          if (typeof filePath === "string" && typeof fileHash === "string") {
-            report.files[filePath] = fileHash
+    const openReader = options.lanceDbReader ?? openLanceDbReader
+    const reader = await openReader(source.name)
+    if (reader) {
+      // One connection for the whole import, released even when a page or the
+      // destination upsert fails.
+      try {
+        for (;;) {
+          const page = await reader.next(batchLimit)
+          if (page.points.length > 0) {
+            await target.upsert(page.points)
+            report.imported += page.points.length
+            report.batches++
+            for (const point of page.points) {
+              const filePath = point.payload.filePath
+              const fileHash = point.payload.fileHash
+              if (typeof filePath === "string" && typeof fileHash === "string") {
+                report.files[filePath] = fileHash
+              }
+            }
+            await options.onProgress?.({ imported: report.imported, total: source.pointsCount })
           }
+          if (page.done) break
         }
-        await options.onProgress?.({ imported: report.imported, total: source.pointsCount })
+      } finally {
+        reader.close()
       }
-      offset += page.points.length
-      if (page.done) break
     }
   }
 

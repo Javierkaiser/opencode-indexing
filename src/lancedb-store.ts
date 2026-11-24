@@ -19,9 +19,11 @@ import { describeError } from "./errors.ts"
  * - `metadata`: key/value rows. Every value is stored as a string because
  *   LanceDB infers the `value` column type from the first inserted row.
  *
- * The native module is optional and only loaded on first use. Every native
- * call runs through a module-level promise queue because the bindings must not
- * be entered concurrently; the queue is never re-entered from inside a task.
+ * The native module is optional and only loaded on first use. Native calls run
+ * through a promise queue keyed by database path because the bindings must not
+ * be entered concurrently for the same database; separate databases are
+ * independent and run in parallel. The queue is never re-entered from inside a
+ * task.
  */
 
 export interface LanceDbStoreOptions {
@@ -80,15 +82,39 @@ function loadLanceDb(): Promise<any> {
   return lancedbPromise
 }
 
-/** Serialize native calls: the LanceDB bindings are not reentrant. */
-let nativeQueue: Promise<unknown> = Promise.resolve()
-function native<T>(run: () => Promise<T>): Promise<T> {
-  const task = nativeQueue.then(run)
-  nativeQueue = task.then(
-    () => undefined,
-    () => undefined,
-  )
-  return task
+export interface KeyedQueue {
+  /** Queue a task for `key`; tasks with the same key run one at a time, in order. */
+  run<T>(key: string, task: () => Promise<T>): Promise<T>
+  /** Keys still tracked; a key is dropped once its queue settles. */
+  size(): number
+}
+
+export function createKeyedQueue(): KeyedQueue {
+  const tails = new Map<string, Promise<void>>()
+
+  function run<T>(key: string, task: () => Promise<T>): Promise<T> {
+    const current = (tails.get(key) ?? Promise.resolve()).then(task)
+    const settled = current.then(
+      () => undefined,
+      () => undefined,
+    )
+    tails.set(key, settled)
+    void settled.then(() => {
+      // Drop only our own entry: a newer task for this key must keep its tail.
+      if (tails.get(key) === settled) tails.delete(key)
+    })
+    return current
+  }
+
+  return { run, size: () => tails.size }
+}
+
+const nativeQueue = createKeyedQueue()
+
+/** Serialize native calls per database: the LanceDB bindings are not reentrant. */
+function native<T>(dbPath: string, run: () => Promise<T>): Promise<T> {
+  // Resolve so two spellings of the same directory share one queue.
+  return nativeQueue.run(path.resolve(dbPath), run)
 }
 
 function wrapNativeError(operation: string, dbPath: string, error: unknown): Error {
@@ -452,7 +478,7 @@ class LanceDbStoreAdapter implements VectorStoreAdapter {
 
   private async runNative<T>(operation: string, run: () => Promise<T>): Promise<T> {
     try {
-      return await native(run)
+      return await native(this.dbPath, run)
     } catch (error) {
       throw wrapNativeError(operation, this.dbPath, error)
     }
@@ -476,29 +502,11 @@ export async function readLanceDbInfoAt(dbPath: string): Promise<LanceDbRawTable
   if (!isDirectory(dbPath)) return { ...empty }
   const db = await openReadOnly(dbPath)
   try {
-    return await native(async () => {
-      const names = (await db.tableNames()) as string[]
-      const vectorExists = names.includes(VECTOR_TABLE)
-      const metadataExists = names.includes(METADATA_TABLE)
-      const result: LanceDbRawTables = { vectorExists, metadataExists, pointsCount: 0 }
-      if (vectorExists) {
-        const table = await db.openTable(VECTOR_TABLE)
-        result.pointsCount = (await table.countRows()) as number
-      }
-      if (metadataExists) {
-        const meta = await readMetadataMap(await db.openTable(METADATA_TABLE))
-        const profile = profileFromMetadataMap(meta)
-        if (profile) result.profile = profile
-        if (meta.has(METADATA_KEYS.complete)) result.complete = meta.get(METADATA_KEYS.complete) === "true"
-        const schema = toFiniteNumber(meta.get(METADATA_KEYS.schema))
-        if (schema !== undefined) result.schema = schema
-      }
-      return result
-    })
+    return await native(dbPath, () => readRawTables(db))
   } catch (error) {
     throw wrapNativeError("read info", dbPath, error)
   } finally {
-    closeQuietly(db)
+    closeQuietly(dbPath, db)
   }
 }
 
@@ -516,7 +524,7 @@ export async function readLanceDbBatch(
 
   const db = await openReadOnly(dbPath)
   try {
-    return await native(async () => {
+    return await native(dbPath, async () => {
       const names = (await db.tableNames()) as string[]
       if (!names.includes(VECTOR_TABLE)) return { points: [], done: true }
       const table = await db.openTable(VECTOR_TABLE)
@@ -535,8 +543,103 @@ export async function readLanceDbBatch(
   } catch (error) {
     throw wrapNativeError("read batch", dbPath, error)
   } finally {
-    closeQuietly(db)
+    closeQuietly(dbPath, db)
   }
+}
+
+/**
+ * Sequential, read-only view over one LanceDB database.
+ *
+ * The connection and table are opened once and reused for every page, so a
+ * full import pays the open/schema cost once instead of once per batch.
+ */
+export interface LanceDbReader {
+  /** Table state read when the reader was opened. */
+  readonly info: LanceDbRawTables
+  /** Next page; `done` is set when the source is exhausted. */
+  next(limit: number): Promise<{ points: QdrantPoint[]; done: boolean }>
+  close(): void
+}
+
+/**
+ * Open a reader over an arbitrary LanceDB directory. Returns null when the
+ * directory or the vector table is missing; the caller owns `close()`.
+ */
+export async function openLanceDbReader(dbPath: string): Promise<LanceDbReader | null> {
+  if (!isDirectory(dbPath)) return null
+  const db = await openReadOnly(dbPath)
+  try {
+    const opened = await native(dbPath, async () => {
+      const names = (await db.tableNames()) as string[]
+      if (!names.includes(VECTOR_TABLE)) return null
+      const table = await db.openTable(VECTOR_TABLE)
+      const info = await readRawTables(db, table)
+      // Resolved once: the schema cannot change under a read-only page sequence.
+      const columns = await selectableExportColumns(table)
+      return { info, table, columns }
+    })
+    if (!opened) {
+      closeQuietly(dbPath, db)
+      return null
+    }
+
+    let offset = 0
+    let closed = false
+
+    return {
+      info: opened.info,
+      async next(limit: number): Promise<{ points: QdrantPoint[]; done: boolean }> {
+        if (closed) throw new Error(`LanceDB reader at ${dbPath} is already closed`)
+        const pageLimit = normalizeLimit(limit)
+        if (pageLimit <= 0) return { points: [], done: true }
+        const start = offset
+        let rows: Array<Record<string, unknown>>
+        try {
+          rows = (await native(dbPath, () =>
+            opened.table.query().select(opened.columns).offset(start).limit(pageLimit).toArray(),
+          )) as Array<Record<string, unknown>>
+        } catch (error) {
+          throw wrapNativeError("read batch", dbPath, error)
+        }
+        offset += rows.length
+        const points: QdrantPoint[] = []
+        for (const row of rows) {
+          const point = rowToPoint(row)
+          if (point) points.push(point)
+        }
+        return { points, done: rows.length < pageLimit }
+      },
+      close(): void {
+        if (closed) return
+        closed = true
+        closeQuietly(dbPath, db)
+      },
+    }
+  } catch (error) {
+    closeQuietly(dbPath, db)
+    throw wrapNativeError("open reader", dbPath, error)
+  }
+}
+
+/** Read the raw table state of an open connection. Must run inside a native task. */
+async function readRawTables(db: any, vectorTable?: any): Promise<LanceDbRawTables> {
+  const names = (await db.tableNames()) as string[]
+  const vectorExists = names.includes(VECTOR_TABLE)
+  const metadataExists = names.includes(METADATA_TABLE)
+  const result: LanceDbRawTables = { vectorExists, metadataExists, pointsCount: 0 }
+  if (vectorExists) {
+    const table = vectorTable ?? (await db.openTable(VECTOR_TABLE))
+    result.pointsCount = (await table.countRows()) as number
+  }
+  if (metadataExists) {
+    const meta = await readMetadataMap(await db.openTable(METADATA_TABLE))
+    const profile = profileFromMetadataMap(meta)
+    if (profile) result.profile = profile
+    if (meta.has(METADATA_KEYS.complete)) result.complete = meta.get(METADATA_KEYS.complete) === "true"
+    const schema = toFiniteNumber(meta.get(METADATA_KEYS.schema))
+    if (schema !== undefined) result.schema = schema
+  }
+  return result
 }
 
 // ---------------------------------------------------------------------------
@@ -732,7 +835,7 @@ function isDirectory(target: string): boolean {
 
 /** Open an arbitrary LanceDB directory read-only (caller may close()). */
 function openReadOnly(dbPath: string): Promise<any> {
-  return native(async () => {
+  return native(dbPath, async () => {
     try {
       const lancedb = await loadLanceDb()
       return await lancedb.connect(dbPath)
@@ -742,10 +845,10 @@ function openReadOnly(dbPath: string): Promise<any> {
   })
 }
 
-function closeQuietly(connection: any): void {
+function closeQuietly(dbPath: string, connection: any): void {
   if (!connection || typeof connection.close !== "function") return
   // Schedule on the native queue so a close never interleaves with an active task.
-  void native(async () => {
+  void native(dbPath, async () => {
     connection.close()
   }).catch(() => {
     // Connections are also released on GC; closing is best-effort.

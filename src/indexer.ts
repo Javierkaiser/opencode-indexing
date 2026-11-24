@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto"
-import { readFile } from "node:fs/promises"
+import { readFile, stat } from "node:fs/promises"
 import * as path from "node:path"
 
 import { chunkFile } from "./chunking.ts"
+import { mapConcurrent } from "./concurrency.ts"
 import { createEmbedder } from "./embedder.ts"
 import { deleteRecords, diffFiles, emptyManifest, loadManifest, saveManifest, setRecord } from "./manifest.ts"
 import { discoverKiloSources, importFromKilo } from "./import.ts"
@@ -49,6 +50,58 @@ export interface IndexOptions {
   maxFiles?: number
   /** Disable the Kilo import for this run (overrides settings.importFromKilo). */
   skipImport?: boolean
+}
+
+/** Store-delete calls carry at most this many paths (Qdrant request limits). */
+const DELETE_BATCH_SIZE = 500
+/** Minimum time between manifest writes while batches are still running. */
+const MANIFEST_SAVE_INTERVAL_MS = 2000
+/** …or every N batches, whichever comes first. */
+const MANIFEST_SAVE_EVERY_BATCHES = 10
+/** Parallel `stat` calls while seeding an imported manifest. */
+const IMPORT_STAT_CONCURRENCY = 32
+
+/**
+ * How many embedding batches may be in flight at once.
+ *
+ * A local model already saturates the machine, so it stays sequential; hosted
+ * providers tolerate a few requests in flight before rate limits answer with
+ * 429s. `KILO_INDEX_EMBEDDING_CONCURRENCY` overrides both when set to a
+ * positive integer.
+ */
+export function embeddingConcurrency(settings: IndexingSettings): number {
+  const override = Number.parseInt(process.env.KILO_INDEX_EMBEDDING_CONCURRENCY ?? "", 10)
+  if (Number.isFinite(override) && override > 0) return override
+  return settings.provider === "local" ? 1 : 3
+}
+
+/**
+ * Seed manifest records from an imported Kilo index.
+ *
+ * The import knows each file's hash but not its size/mtime. Recording `-1/0`
+ * makes every later refresh re-hash the whole workspace, so one bounded `stat`
+ * pass fills in the real values; files that vanished keep `-1/0` and are
+ * re-checked by the next scan.
+ */
+export async function seedImportedManifest(
+  manifest: Manifest,
+  root: string,
+  files: Record<string, string>,
+): Promise<void> {
+  const seeded = await mapConcurrent(
+    Object.entries(files),
+    IMPORT_STAT_CONCURRENCY,
+    async ([relPath, hash]) => {
+      const indexedAt = Date.now()
+      try {
+        const stats = await stat(path.join(root, relPath))
+        return [relPath, { hash, size: stats.size, mtimeMs: stats.mtimeMs, indexedAt }] as const
+      } catch {
+        return [relPath, { hash, size: -1, mtimeMs: 0, indexedAt }] as const
+      }
+    },
+  )
+  for (const [relPath, record] of seeded) setRecord(manifest, relPath, record)
 }
 
 function sha256Buffer(buf: Buffer): string {
@@ -186,9 +239,7 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
         report.batches += importReport.batches
         report.imported = { source: source.name, kind: source.kind, chunks: importReport.imported }
         // Seed the manifest so the incremental pass below only handles deltas.
-        for (const [relPath, hash] of Object.entries(importReport.files)) {
-          setRecord(manifest, relPath, { hash, size: -1, mtimeMs: 0, indexedAt: Date.now() })
-        }
+        await seedImportedManifest(manifest, root, importReport.files)
         manifest.collection = store.name
         forceFull = false
       } else if (source && !source.compatible) {
@@ -256,15 +307,32 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
     report.unchangedFiles = diff.unchanged.length
   }
 
-  if (diff.deleted.length > 0) {
-    try {
-      await store.deleteByFilePaths(diff.deleted)
-      deleteRecords(manifest, diff.deleted)
-    } catch (error) {
-      // Cleanup only: stale points for deleted files may linger, but no file
-      // went unindexed, so this must not poison completion.
-      report.warnings.push(`delete phase: ${describeError(error)}`)
+  /**
+   * Delete points for `paths` in store-sized chunks.
+   *
+   * Best effort: a failed chunk is warned about and its files are left for a
+   * later run; only the chunks the store accepted are reported back, so the
+   * manifest drops exactly the records whose points are gone.
+   */
+  const deletePathsInBatches = async (paths: readonly string[], label: string): Promise<string[]> => {
+    const deleted: string[] = []
+    for (let i = 0; i < paths.length; i += DELETE_BATCH_SIZE) {
+      const batch = paths.slice(i, i + DELETE_BATCH_SIZE)
+      try {
+        await store.deleteByFilePaths(batch)
+        deleted.push(...batch)
+      } catch (error) {
+        report.warnings.push(`${label}: ${describeError(error)}`)
+      }
     }
+    return deleted
+  }
+
+  if (diff.deleted.length > 0) {
+    // Cleanup only: stale points for deleted files may linger, but no file
+    // went unindexed, so this must not poison completion.
+    const deleted = await deletePathsInBatches(diff.deleted, "delete phase")
+    deleteRecords(manifest, deleted)
   }
 
   const total = toIndex.length
@@ -301,13 +369,9 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
   // Remove stale points for changed files before inserting fresh ones.
   const changedPaths = perFile.map((entry) => entry.file.relPath)
   if (changedPaths.length > 0) {
-    try {
-      await store.deleteByFilePaths(changedPaths)
-    } catch (error) {
-      // Cleanup only: stale tail points for changed files may linger, but the
-      // fresh chunks are still upserted below, so this is non-fatal.
-      report.warnings.push(`clearing changed files: ${describeError(error)}`)
-    }
+    // Cleanup only: stale tail points for changed files may linger, but the
+    // fresh chunks are still upserted below, so this is non-fatal.
+    await deletePathsInBatches(changedPaths, "clearing changed files")
   }
 
   // ---- Embed + upsert ----
@@ -335,8 +399,35 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
     }
   }
 
-  for (let i = 0; i < chunks.length; i += batchSize) {
-    const batch = chunks.slice(i, i + batchSize)
+  // Manifest writes are serialized and spaced out: batches now finish out of
+  // order, and saving after every batch rewrote the whole manifest thousands
+  // of times on a large workspace. `lastSaveAt` is updated before the save is
+  // queued so concurrent workers see the interval as taken.
+  let saveTail: Promise<void> = Promise.resolve()
+  let lastSaveAt = Date.now()
+  let batchesSinceSave = 0
+  const queueManifestSave = (fatal = false): Promise<void> => {
+    manifest.collection = store.name
+    saveTail = saveTail.then(async () => {
+      try {
+        await saveManifest(kv, manifest)
+      } catch (error) {
+        // A lost save costs the next run some work but never leaves a file
+        // unindexed, so it is a warning unless it is the one that would have
+        // recorded completion.
+        const message = `manifest save: ${describeError(error)}`
+        if (fatal) report.errors.push(message)
+        else report.warnings.push(message)
+      }
+    })
+    return saveTail
+  }
+
+  const batches: Chunk[][] = []
+  for (let i = 0; i < chunks.length; i += batchSize) batches.push(chunks.slice(i, i + batchSize))
+
+  let processedChunks = 0
+  await mapConcurrent(batches, embeddingConcurrency(settings), async (batch, batchIndex) => {
     let succeeded = false
     try {
       const vectors = await embedderInstance.embed(
@@ -363,25 +454,38 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
       report.batches++
       succeeded = true
     } catch (error) {
-      report.errors.push(`batch ${Math.floor(i / batchSize) + 1}: ${describeError(error)}`)
+      report.errors.push(`batch ${batchIndex + 1}: ${describeError(error)}`)
     }
 
-    for (const chunk of batch) {
-      if (!succeeded) continue
-      const remaining = (pendingByFile.get(chunk.filePath) ?? 1) - 1
-      pendingByFile.set(chunk.filePath, remaining)
-      if (remaining <= 0) completedFiles.add(chunk.filePath)
+    if (succeeded) {
+      for (const chunk of batch) {
+        const remaining = (pendingByFile.get(chunk.filePath) ?? 1) - 1
+        pendingByFile.set(chunk.filePath, remaining)
+        if (remaining <= 0) completedFiles.add(chunk.filePath)
+      }
+      recordCompleted()
     }
 
-    recordCompleted()
-    manifest.collection = store.name
-    await saveManifest(kv, manifest)
+    processedChunks += batch.length
     await deps.onProgress?.({
       phase: "embedding",
-      processed: Math.min(i + batch.length, chunks.length),
+      processed: processedChunks,
       total: chunks.length,
     })
-  }
+
+    // A failed batch saves immediately: the files it would have completed stay
+    // unrecorded, and losing this run's successful progress to a crash would
+    // repeat embedding calls that were already paid for.
+    batchesSinceSave++
+    const due =
+      !succeeded ||
+      batchesSinceSave >= MANIFEST_SAVE_EVERY_BATCHES ||
+      Date.now() - lastSaveAt >= MANIFEST_SAVE_INTERVAL_MS
+    if (!due) return
+    lastSaveAt = Date.now()
+    batchesSinceSave = 0
+    await queueManifestSave()
+  })
 
   // Files whose chunks all succeeded (including files that produced no chunks
   // legitimately). Files that failed to read or chunk stay unrecorded so the
@@ -392,6 +496,11 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
   }
   recordCompleted()
   manifest.lastRun = Date.now()
+  // Progress reaches the KV before completion is claimed anywhere: if the
+  // store later refuses the flag, the work of this run still survives.
+  lastSaveAt = Date.now()
+  batchesSinceSave = 0
+  await queueManifestSave()
   // Only fatal errors (files left unindexed) mark the run incomplete; cleanup
   // warnings do not, because every file's fresh chunks were still upserted.
   let complete = report.errors.length === 0
@@ -405,7 +514,10 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
     complete = false
   }
   manifest.complete = complete
-  await saveManifest(kv, manifest)
+  // The manifest is the last writer: a save that fails here is fatal to the
+  // run's bookkeeping (the completion flag never persists), even though the
+  // store already accepted it.
+  await queueManifestSave(true)
 
   // Registry: a collection name is a one-way hash of the root, so remember the
   // mapping that makes the store nameable (and forgettable) later on. Recorded

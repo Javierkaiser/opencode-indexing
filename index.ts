@@ -15,7 +15,8 @@ import type { Plugin } from "@opencode/plugin"
 import { resolveSettings, VALID_PROVIDERS, type PluginOptionsInput } from "./src/config.ts"
 import { maskSecret, settingsFilePath } from "./src/settings.ts"
 import { createPluginStorage } from "./src/storage.ts"
-import { createTools, type ToolDefinition } from "./src/tools.ts"
+import { createTools, invalidateAutoRefresh, type ToolDefinition } from "./src/tools.ts"
+import { invalidateSearchCaches } from "./src/search.ts"
 import { runIndex } from "./src/indexer.ts"
 import { getStatus } from "./src/status.ts"
 import { discoverKiloSources, importFromKilo } from "./src/import.ts"
@@ -167,6 +168,18 @@ function summarizeReport(report: {
   return parts.join(" · ")
 }
 
+/**
+ * Drop the metadata caches and the auto-refresh throttle after a write.
+ *
+ * Both are keyed by workspace and cheap to rebuild; letting them sit out their
+ * TTL would keep reporting the pre-write collection, points or profile, and
+ * would skip the freshness check a just-written workspace needs.
+ */
+function invalidateCaches(root?: string): void {
+  invalidateSearchCaches(root)
+  invalidateAutoRefresh(root)
+}
+
 const plugin = {
   id: "javierkaiser.indexing",
   async setup(ctx: Plugin.Context): Promise<void> {
@@ -273,6 +286,8 @@ Behavior:
 
         const { writeSettingsFile } = await import("./src/settings.ts")
         writeSettingsFile(applied.patch as never)
+        // The new value can move the store or the embedding profile.
+        invalidateCaches()
 
         // Read back rather than echoing what was asked for: the file may clamp
         // or normalise a value, and reporting the request would hide that.
@@ -431,6 +446,7 @@ Behavior:
         targetProfile,
         qdrant: createSettingsQdrant(settings),
       })
+      invalidateCaches(workspace)
       return `Imported ${report.imported} chunks from ${report.source.kind} ${report.source.name} · ${report.batches} batches · 0 embedding calls`
     }
 
@@ -505,6 +521,9 @@ Behavior:
       const info = await readOwnCollectionInfo(client, name)
       if (info) await client.deleteCollection(name)
       const forgotten = forgetWorkspace(name)
+      // The collection may be gone; a cached "exists, N points" would make the
+      // next search query it and fail instead of reporting an unbuilt index.
+      if (record?.root) invalidateCaches(record.root)
 
       if (!info && !forgotten) {
         return { ok: true, summary: `Nothing to forget for ${label}: no such collection and no registry entry.`, pointsDeleted: null }
@@ -628,6 +647,7 @@ class ForgetRefusedError extends Error {}
                   }
                   const { writeSettingsFile } = await import("./src/settings.ts")
                   writeSettingsFile(applied.patch as never)
+                  invalidateCaches()
                   await reply(`${parsed.key} = ${applied.display}\n\nSaved to ${settingsFilePath()}`)
                   return
                 }
@@ -685,6 +705,7 @@ class ForgetRefusedError extends Error {}
           const { writeSettingsFile } = await import("./src/settings.ts")
           const patch = (input as { patch?: Record<string, unknown> }).patch ?? {}
           writeSettingsFile(patch as never)
+          invalidateCaches()
           const settings = await getSettings()
           return { settings: settingsView(settings), version: pluginVersion() }
         },
@@ -695,6 +716,7 @@ class ForgetRefusedError extends Error {}
           if (!applied.ok) return { ok: false, error: applied.error }
           const { writeSettingsFile } = await import("./src/settings.ts")
           writeSettingsFile(applied.patch as never)
+          invalidateCaches()
           const settings = await getSettings()
           return {
             ok: true,
@@ -710,6 +732,8 @@ class ForgetRefusedError extends Error {}
           if (!applied.ok) return { ok: false, error: applied.error }
           const { writeSettingsFile } = await import("./src/settings.ts")
           writeSettingsFile(applied.patch as never)
+          // A credential decides whether a stored profile is reachable at all.
+          invalidateCaches()
           const settings = await getSettings()
           return {
             ok: true,
@@ -801,6 +825,7 @@ class ForgetRefusedError extends Error {}
                 skipImport: (input as { skipImport?: boolean }).skipImport === true,
               },
             )
+            invalidateCaches(rootFor(input))
             return { summary: summarizeReport(report) }
           } catch (error) {
             // Returning the failure as data keeps the message readable. Letting
@@ -817,6 +842,7 @@ class ForgetRefusedError extends Error {}
               { kv, root: rootFor(input), settings, qdrant: createSettingsQdrant(settings) },
               { mode: "refresh", maxFiles: (input as { maxFiles?: number }).maxFiles },
             )
+            invalidateCaches(rootFor(input))
             return { summary: summarizeReport(report) }
           } catch (error) {
             return { summary: "Refresh failed", error: describeError(error) }

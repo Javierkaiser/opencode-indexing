@@ -5,6 +5,24 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-11-24
+
+### Changed
+- **Index runs overlap network work and stop rewriting the manifest per batch.**
+  Embedding and upsert batches now run concurrently (three in flight for hosted
+  providers, one for the local model, overridable with
+  `KILO_INDEX_EMBEDDING_CONCURRENCY`), manifest saves are coalesced, and path
+  deletes are sent to the store in bounded batches. LanceDB reuses one
+  connection per database through a per-database queue, search caches its
+  metadata and auto-refresh checks, query embeddings run in parallel, and an
+  imported manifest seeds file size and mtime with a bounded parallel `stat`
+  pass.
+
+### Added
+- **`npm run perf` measures indexing throughput on synthetic data.** It indexes
+  generated TypeScript files with fake embeddings and an in-memory store, so it
+  reports batching and bookkeeping without a provider account or network calls.
+
 ## [0.10.3] - 2026-11-24
 
 ### Changed
@@ -815,7 +833,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.10.3...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.11.0
 [0.10.3]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.10.3
 [0.10.2]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.10.2
 [0.10.1]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.10.1

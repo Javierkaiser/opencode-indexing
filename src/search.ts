@@ -2,13 +2,14 @@ import * as fs from "node:fs/promises"
 import * as path from "node:path"
 
 import { createEmbedder } from "./embedder.ts"
-import { getKiloStoreInfo, resolveKiloCollection, searchKiloCollection } from "./kilo-store.ts"
+import { getKiloStoreInfo, resolveKiloCollection, searchKiloCollection, type KiloStoreInfo } from "./kilo-store.ts"
 import { createOwnStore, createSettingsQdrant } from "./store-factory.ts"
 import { getModelScoreThreshold, profileKey, workspaceHash } from "./registry.ts"
 import { withProfile } from "./config.ts"
+import { TtlCache } from "./ttl-cache.ts"
 import type { EmbedderProvider, IndexingSettings, KVStore, QueryHit, SearchHit } from "./types.ts"
 import type { Qdrant } from "./qdrant.ts"
-import type { VectorStoreAdapter } from "./vector-store.ts"
+import type { VectorStoreAdapter, VectorStoreInfo } from "./vector-store.ts"
 import { describeError } from "./errors.ts"
 
 export interface SearchDeps {
@@ -47,6 +48,66 @@ export interface SearchOutcome {
 }
 
 const KILO_CACHE_PREFIX = "kiloCollection/"
+
+/**
+ * How long search metadata may be reused.
+ *
+ * Points counts, the resolved Kilo collection and its profile are metadata:
+ * a few seconds of staleness can change which collection is read, never which
+ * vectors are compared. Every write path that changes them invalidates
+ * explicitly, so this only bounds the paths that do not call us — a settings
+ * file edited by hand, or another process indexing the same workspace.
+ */
+export const SEARCH_META_TTL_MS = 5_000
+
+const ownInfoCache = new TtlCache<string, VectorStoreInfo | null>()
+const kiloCollectionCache = new TtlCache<string, string | null>()
+const kiloInfoCache = new TtlCache<string, KiloStoreInfo>()
+
+/**
+ * Cache key for one workspace and one store identity.
+ *
+ * The store identity is part of the key so a settings change that points at a
+ * different backend or server can never be answered from the previous one's
+ * metadata.
+ */
+function metadataKey(root: string, kind: string, ...identity: string[]): string {
+  return [root, kind, ...identity].join("\u0000")
+}
+
+/** Forget cached search metadata; every workspace when `root` is omitted. */
+export function invalidateSearchCaches(root?: string): void {
+  if (root === undefined) {
+    ownInfoCache.clear()
+    kiloCollectionCache.clear()
+    kiloInfoCache.clear()
+    return
+  }
+  const prefix = `${root}\u0000`
+  dropByPrefix(ownInfoCache, prefix)
+  dropByPrefix(kiloCollectionCache, prefix)
+  dropByPrefix(kiloInfoCache, prefix)
+}
+
+function dropByPrefix<V>(cache: TtlCache<string, V>, prefix: string): void {
+  for (const key of cache.keys()) {
+    if (key.startsWith(prefix)) cache.delete(key)
+  }
+}
+
+/**
+ * Serve a cached value, or load and remember it for the metadata TTL.
+ *
+ * Failures are not cached: a transiently unreachable store must not make the
+ * next searches answer from nothing for the rest of the window.
+ */
+async function cachedMetadata<V>(cache: TtlCache<string, V>, key: string, load: () => Promise<V>): Promise<V> {
+  const hit = cache.get(key)
+  if (hit !== undefined) return hit
+  const value = await load()
+  cache.set(key, value, SEARCH_META_TTL_MS)
+  return value
+}
 
 function validHit(hit: QueryHit): boolean {
   const payload = hit.payload
@@ -101,16 +162,34 @@ export async function searchCode(deps: SearchDeps, query: string, pathPrefix?: s
   // profile this machine cannot embed any more. Without it the search would have
   // to answer from half the corpus, and it deliberately refuses to do that.
   const searchKilo = settings.searchKilo !== false
+  const ownKey = metadataKey(
+    root,
+    "own",
+    settings.vectorStore,
+    settings.qdrantUrl,
+    settings.lancedbDirectory,
+    ownStore.kind,
+    ownStore.name,
+  )
+  // The same collection name can exist on two servers; the identity of the
+  // server Kilo is read from belongs in both Kilo keys, not only the resolution.
+  const kiloIdentity = [settings.qdrantUrl, settings.kiloVectorStore ?? ""]
+  const kiloKey = metadataKey(root, "kilo", ...kiloIdentity)
   const [ownInfo, kiloCollection] = await Promise.all([
-    ownStore.info().catch(() => null),
+    cachedMetadata(ownInfoCache, ownKey, () => ownStore.info()).catch(() => null),
     searchKilo
-      ? resolveKiloCached(qdrantClient, kv, root).catch((error) => {
+      ? cachedMetadata(kiloCollectionCache, kiloKey, () => resolveKiloCached(qdrantClient, kv, root)).catch((error) => {
           errors.push(`kilo resolve: ${describeError(error)}`)
           return null
         })
       : Promise.resolve(null),
   ])
-  const kiloInfo = searchKilo && kiloCollection ? await getKiloStoreInfo(qdrantClient, kiloCollection).catch(() => null) : null
+  const kiloInfo =
+    searchKilo && kiloCollection
+      ? await cachedMetadata(kiloInfoCache, metadataKey(root, "kilo-info", ...kiloIdentity, kiloCollection), () =>
+          getKiloStoreInfo(qdrantClient, kiloCollection),
+        ).catch(() => null)
+      : null
 
   const profiles = new Map<string, ProfileRef>()
   if (ownInfo?.profile) profiles.set(profileKey(ownInfo.profile), { ...ownInfo.profile })
@@ -124,16 +203,20 @@ export async function searchCode(deps: SearchDeps, query: string, pathPrefix?: s
 
   const vectors = new Map<string, number[]>()
   const embedFailures = new Map<string, string>()
-  for (const [key, profile] of profiles) {
-    try {
-      const embedder = createEmbedder(withProfile(settings, profile))
-      const [vector] = await embedder.embed([query], { asQuery: true })
-      if (!vector) throw new Error("empty embedding")
-      vectors.set(key, vector)
-    } catch (error) {
-      embedFailures.set(key, describeError(error))
-    }
-  }
+  // One task per profile: the indexes are independent, so a second provider
+  // round trip must not wait for the first to finish.
+  await Promise.all(
+    [...profiles].map(async ([key, profile]) => {
+      try {
+        const embedder = createEmbedder(withProfile(settings, profile))
+        const [vector] = await embedder.embed([query], { asQuery: true })
+        if (!vector) throw new Error("empty embedding")
+        vectors.set(key, vector)
+      } catch (error) {
+        embedFailures.set(key, describeError(error))
+      }
+    }),
+  )
 
   /**
    * Refuse to answer from part of the corpus.

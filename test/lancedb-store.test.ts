@@ -13,7 +13,14 @@ const lanceUnavailable = await import("@lancedb/lancedb")
   .then(() => false as const)
   .catch(() => "optional @lancedb/lancedb is not installed")
 
-import { createLanceDbStore, lanceDbName, readLanceDbBatch, readLanceDbInfoAt } from "../src/lancedb-store.ts"
+import {
+  createKeyedQueue,
+  createLanceDbStore,
+  lanceDbName,
+  openLanceDbReader,
+  readLanceDbBatch,
+  readLanceDbInfoAt,
+} from "../src/lancedb-store.ts"
 import type { EmbeddingProfile, QdrantPoint } from "../src/types.ts"
 import type { ExportBatch } from "../src/vector-store.ts"
 
@@ -411,5 +418,143 @@ describe("readLanceDbInfoAt / readLanceDbBatch", { skip: lanceUnavailable }, () 
       pointsCount: 0,
     })
     assert.deepEqual(await readLanceDbBatch(missing, { limit: 10, offset: 0 }), { points: [], done: true })
+  })
+})
+
+describe("openLanceDbReader", { skip: lanceUnavailable }, () => {
+  test("reads every page from one open connection", async () => {
+    const name = uniqueName("reader")
+    const s = store(name)
+    await s.ensure(4, PROFILE)
+
+    const points = EXACT_VECTORS.map((vector, index) => point(index + 1, `src\\r${index}.ts`, vector, index + 1, index + 4))
+    await s.upsert(points)
+    await s.markComplete(PROFILE, true, 4)
+
+    const reader = await openLanceDbReader(s.name)
+    assert.ok(reader, "the reader must open an existing store")
+    try {
+      assert.deepEqual(reader.info, {
+        vectorExists: true,
+        metadataExists: true,
+        pointsCount: 5,
+        profile: PROFILE,
+        complete: true,
+        schema: 2,
+      })
+
+      const seen: QdrantPoint[] = []
+      const sizes: number[] = []
+      for (let guard = 0; guard < 10; guard++) {
+        const page = await reader.next(2)
+        sizes.push(page.points.length)
+        seen.push(...page.points)
+        if (page.done) break
+      }
+
+      assert.deepEqual(sizes, [2, 2, 1])
+      assert.equal(seen.length, points.length)
+      for (const original of points) {
+        const exported = seen.find((entry) => entry.id === original.id)
+        assert.ok(exported, `missing read point ${original.id}`)
+        assert.deepEqual(exported.vector, original.vector)
+        assert.deepEqual(exported.payload, {
+          ...original.payload,
+          filePath: String(original.payload.filePath).replaceAll("\\", "/"),
+        })
+      }
+    } finally {
+      reader.close()
+    }
+  })
+
+  test("returns null for a missing path or a database without a vector table", async () => {
+    assert.equal(await openLanceDbReader(path.join(DIRECTORY, "no-such-store")), null)
+
+    const emptyDir = path.join(DIRECTORY, uniqueName("empty"))
+    fs.mkdirSync(emptyDir, { recursive: true })
+    assert.equal(await openLanceDbReader(emptyDir), null)
+  })
+})
+
+describe("createKeyedQueue", () => {
+  function deferred(): { promise: Promise<void>; resolve: () => void } {
+    let resolve = (): void => {}
+    const promise = new Promise<void>((done) => {
+      resolve = done
+    })
+    return { promise, resolve }
+  }
+
+  test("runs different keys in parallel and the same key in call order", async () => {
+    const queue = createKeyedQueue()
+    const first = deferred()
+    const second = deferred()
+    const events: string[] = []
+
+    const a1 = queue.run("a", async () => {
+      events.push("a1:start")
+      await first.promise
+      events.push("a1:end")
+      return "a1"
+    })
+    const b1 = queue.run("b", async () => {
+      events.push("b1:start")
+      await second.promise
+      events.push("b1:end")
+      return "b1"
+    })
+
+    await Promise.resolve()
+    // Both tasks started although neither has finished: separate keys do not block.
+    assert.deepEqual(events, ["a1:start", "b1:start"])
+
+    const a2 = queue.run("a", async () => {
+      events.push("a2:start")
+      return "a2"
+    })
+    await Promise.resolve()
+    assert.deepEqual(events, ["a1:start", "b1:start"], "a queued task for a busy key must wait")
+
+    first.resolve()
+    assert.equal(await a1, "a1")
+    assert.equal(await a2, "a2")
+    assert.ok(events.indexOf("a1:end") < events.indexOf("a2:start"))
+    assert.equal(events.includes("b1:end"), false, "the other key is still running")
+
+    second.resolve()
+    assert.equal(await b1, "b1")
+
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(queue.size(), 0, "settled keys are dropped instead of leaking")
+  })
+
+  test("keeps the tail of a newer task when an older one settles", async () => {
+    const queue = createKeyedQueue()
+    const gate = deferred()
+    const events: string[] = []
+
+    const first = queue.run("k", async () => {
+      events.push("first")
+    })
+    const second = queue.run("k", async () => {
+      events.push("second:start")
+      await gate.promise
+      events.push("second:end")
+    })
+    await first
+    // Let the cleanup of the settled first task run while `second` is pending.
+    await new Promise((resolve) => setImmediate(resolve))
+
+    const third = queue.run("k", async () => {
+      events.push("third")
+    })
+    await Promise.resolve()
+    assert.deepEqual(events, ["first", "second:start"], "third must queue behind the pending second task")
+
+    gate.resolve()
+    await second
+    await third
+    assert.deepEqual(events, ["first", "second:start", "second:end", "third"])
   })
 })

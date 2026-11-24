@@ -77,6 +77,27 @@ because it maps the anonymous labels to real paths. Create it as:
 `queries` is optional: without it, questions are derived from the project's own
 git history instead.
 
+## Performance
+
+Retrieval quality is one axis; indexing throughput is another. This one needs no
+provider, no key and no existing index:
+
+```bash
+npm run perf                                   # 1000 files, 25 ms per embed call
+npm run perf -- --files 500 --latency 25      # pick the workload
+```
+
+It generates small TypeScript modules in a temporary directory and runs the real
+`runIndex` over them twice: once with `KILO_INDEX_EMBEDDING_CONCURRENCY=1`, once
+with `3`. A short unmeasured warm-up run comes first. The table reports each
+phase (scan, chunking, embedding + upsert), total wall time, chunks/s, batches,
+manifest KV writes, observed in-flight embeddings and RSS, plus the speedup.
+
+Embeddings are deterministic fake vectors and the vector store and KV live in
+memory, so the numbers measure batching and bookkeeping — not provider latency,
+quality or cost. The temporary workspace, config and state directories are
+removed on exit (`--keep` leaves them in place for inspection).
+
 ## Where the questions come from
 
 Two sources, reported **separately** because they are different distributions

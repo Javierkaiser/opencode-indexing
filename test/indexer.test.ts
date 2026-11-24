@@ -1,12 +1,13 @@
 import * as assert from "node:assert/strict"
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 
-import { runIndex } from "../src/indexer.ts"
+import { runIndex, seedImportedManifest, embeddingConcurrency } from "../src/indexer.ts"
+import { emptyManifest, loadManifest, saveManifest, setRecord } from "../src/manifest.ts"
 import { createMemoryStorage } from "../src/storage.ts"
-import type { EmbeddingProfile, IndexingSettings, QdrantPoint, QueryHit } from "../src/types.ts"
+import type { EmbeddingProfile, IndexingSettings, KVStore, QdrantPoint, QueryHit } from "../src/types.ts"
 import type { ExportBatch, StoreSearchOptions, VectorStoreAdapter, VectorStoreInfo } from "../src/vector-store.ts"
 
 const PROFILE: EmbeddingProfile = { provider: "mistral", modelId: "codestral-embed-2500-test", dimension: 4 }
@@ -61,6 +62,10 @@ class FakeStore implements VectorStoreAdapter {
   complete: boolean | null = null
   forgery: "none" | "mismatch" = "none"
   ensureCalls = 0
+  /** Every `deleteByFilePaths` batch, in call order. */
+  deleteCalls: string[][] = []
+  /** 1-based call number that should reject, to simulate a partial cleanup outage. */
+  failDeleteCall?: number
 
   constructor(dbPath: string) {
     this.name = dbPath
@@ -105,6 +110,10 @@ class FakeStore implements VectorStoreAdapter {
   }
 
   async deleteByFilePaths(relPaths: string[]) {
+    this.deleteCalls.push([...relPaths])
+    if (this.failDeleteCall !== undefined && this.deleteCalls.length === this.failDeleteCall) {
+      throw new Error("simulated delete outage")
+    }
     const wanted = new Set(relPaths)
     for (const [id, point] of this.points) {
       if (wanted.has(String(point.payload.filePath))) this.points.delete(id)
@@ -242,6 +251,9 @@ describe("runIndex (incremental, fake store)", () => {
           async listCollections() {
             return []
           },
+          async collectionExists() {
+            return false
+          },
         } as never,
       },
       { mode: "build" },
@@ -272,6 +284,9 @@ describe("runIndex (incremental, fake store)", () => {
           async listCollections() {
             throw new Error("connection refused")
           },
+          async collectionExists() {
+            throw new Error("connection refused")
+          },
         } as never,
       },
       { mode: "build" },
@@ -283,5 +298,258 @@ describe("runIndex (incremental, fake store)", () => {
     // The fallback still happens; it is the silence that was wrong.
     assert.equal(report.imported, undefined)
     assert.ok(report.chunksUpserted > 0, "still indexes from scratch")
+  })
+})
+
+/** In-memory KV that counts manifest writes. */
+function countingStorage(): { kv: KVStore; sets: () => number } {
+  const inner = createMemoryStorage()
+  let sets = 0
+  return {
+    kv: {
+      get: (key) => inner.get(key),
+      set: async (key, value) => {
+        sets++
+        await inner.set(key, value)
+      },
+      remove: (key) => inner.remove(key),
+      scan: (options) => inner.scan(options),
+    },
+    sets: () => sets,
+  }
+}
+
+/** Embedder that tracks how many requests are in flight at once. */
+function trackingEmbedder(delayMs = 5) {
+  const stats = { active: 0, maxActive: 0, calls: 0 }
+  const embedder = {
+    provider: "openai" as const,
+    modelId: "text-embedding-3-small",
+    dimension: 4,
+    async embed(texts: string[]): Promise<number[][]> {
+      stats.calls++
+      stats.active++
+      stats.maxActive = Math.max(stats.maxActive, stats.active)
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+      stats.active--
+      return texts.map(() => [1, 0, 0, 0])
+    },
+  }
+  return { embedder, stats }
+}
+
+async function withEmbeddingConcurrencyEnv<T>(value: string | undefined, fn: () => Promise<T>): Promise<T> {
+  const saved = process.env.KILO_INDEX_EMBEDDING_CONCURRENCY
+  if (value === undefined) delete process.env.KILO_INDEX_EMBEDDING_CONCURRENCY
+  else process.env.KILO_INDEX_EMBEDDING_CONCURRENCY = value
+  try {
+    return await fn()
+  } finally {
+    if (saved === undefined) delete process.env.KILO_INDEX_EMBEDDING_CONCURRENCY
+    else process.env.KILO_INDEX_EMBEDDING_CONCURRENCY = saved
+  }
+}
+
+describe("embedding concurrency (A1)", () => {
+  test("defaults per provider, overridable by KILO_INDEX_EMBEDDING_CONCURRENCY", async () => {
+    await withEmbeddingConcurrencyEnv(undefined, async () => {
+      assert.equal(embeddingConcurrency(makeSettings("root", { provider: "local" })), 1)
+      assert.equal(embeddingConcurrency(makeSettings("root", { provider: "openai" })), 3)
+    })
+    await withEmbeddingConcurrencyEnv("5", async () => {
+      assert.equal(embeddingConcurrency(makeSettings("root", { provider: "local" })), 5)
+    })
+    await withEmbeddingConcurrencyEnv("0", async () => {
+      assert.equal(embeddingConcurrency(makeSettings("root", { provider: "openai" })), 3, "non-positive falls back")
+    })
+  })
+
+  test("hosted providers embed several batches at once, up to the limit", async () => {
+    const root = makeWorkspace()
+    const store = new FakeStore(path.join(root, ".lancedb", "db"))
+    const kv = createMemoryStorage()
+    const settings = makeSettings(root, { provider: "openai", modelId: "text-embedding-3-small" })
+    settings.embeddingBatchSize = 1
+    for (let i = 0; i < 8; i++) writeFileSync(path.join(root, "src", `f${i}.ts`), fileWithChunk(`f${i}`, i))
+    const { embedder, stats } = trackingEmbedder()
+
+    const report = await withEmbeddingConcurrencyEnv(undefined, () =>
+      runIndex({ kv, root, settings, store, embedder }, { mode: "build", skipImport: true }),
+    )
+
+    assert.equal(report.errors.length, 0, report.errors.join("; "))
+    assert.ok(report.batches >= 3, `need several batches to observe parallelism; batches=${report.batches}`)
+    assert.ok(stats.maxActive > 1, `batches must overlap; maxActive=${stats.maxActive}`)
+    assert.ok(stats.maxActive <= 3, `never above the default limit; maxActive=${stats.maxActive}`)
+  })
+
+  test("KILO_INDEX_EMBEDDING_CONCURRENCY=1 restores sequential embedding", async () => {
+    const root = makeWorkspace()
+    const store = new FakeStore(path.join(root, ".lancedb", "db"))
+    const kv = createMemoryStorage()
+    const settings = makeSettings(root, { provider: "openai", modelId: "text-embedding-3-small" })
+    settings.embeddingBatchSize = 1
+    for (let i = 0; i < 5; i++) writeFileSync(path.join(root, "src", `g${i}.ts`), fileWithChunk(`g${i}`, i))
+    const { embedder, stats } = trackingEmbedder()
+
+    const report = await withEmbeddingConcurrencyEnv("1", () =>
+      runIndex({ kv, root, settings, store, embedder }, { mode: "build", skipImport: true }),
+    )
+
+    assert.equal(report.errors.length, 0, report.errors.join("; "))
+    assert.ok(report.batches > 1, "more than one batch ran")
+    assert.equal(stats.maxActive, 1)
+  })
+})
+
+describe("batch failures and manifest saves (A1)", () => {
+  test("a failed batch leaves its files unrecorded and the run incomplete", async () => {
+    const root = makeWorkspace()
+    const store = new FakeStore(path.join(root, ".lancedb", "db"))
+    const kv = createMemoryStorage()
+    const settings = makeSettings(root)
+    writeFileSync(path.join(root, "src", "a.ts"), fileWithChunk("a", 1))
+    writeFileSync(path.join(root, "src", "b.ts"), fileWithChunk("b", 2))
+
+    const failingEmbedder = {
+      provider: PROFILE.provider,
+      modelId: PROFILE.modelId,
+      dimension: 4,
+      async embed(): Promise<number[][]> {
+        throw new Error("simulated embedding outage")
+      },
+    }
+
+    const report = await runIndex({ kv, root, settings, store, embedder: failingEmbedder }, { mode: "build", skipImport: true })
+
+    assert.ok(report.errors.length >= 1, "the failed batch must be reported")
+    assert.equal(store.complete, false)
+    const manifest = await loadManifest(kv, root)
+    assert.equal(Object.keys(manifest!.files).length, 0, "no file is recorded when its chunks failed")
+    assert.equal(manifest!.complete, false)
+  })
+
+  test("manifest writes are fewer than the batches they cover", async () => {
+    const root = makeWorkspace()
+    const store = new FakeStore(path.join(root, ".lancedb", "db"))
+    const { kv, sets } = countingStorage()
+    const settings = makeSettings(root)
+    settings.embeddingBatchSize = 1
+    for (let i = 0; i < 15; i++) writeFileSync(path.join(root, "src", `h${i}.ts`), fileWithChunk(`h${i}`, i))
+
+    const report = await runIndex({ kv, root, settings, store, embedder: fakeEmbedder }, { mode: "build", skipImport: true })
+
+    assert.equal(report.errors.length, 0, report.errors.join("; "))
+    assert.ok(report.batches >= 15, `many batches; batches=${report.batches}`)
+    assert.ok(
+      sets() < report.batches,
+      `manifest saves must be throttled: saves=${sets()} batches=${report.batches}`,
+    )
+  })
+
+  test("a failing manifest save is reported and does not abort the run", async () => {
+    const root = makeWorkspace()
+    const store = new FakeStore(path.join(root, ".lancedb", "db"))
+    const inner = createMemoryStorage()
+    let attempts = 0
+    const kv: KVStore = {
+      get: (key) => inner.get(key),
+      set: async () => {
+        attempts++
+        throw new Error("storage offline")
+      },
+      remove: (key) => inner.remove(key),
+      scan: (options) => inner.scan(options),
+    }
+    const settings = makeSettings(root)
+    writeFileSync(path.join(root, "src", "a.ts"), fileWithChunk("a", 1))
+
+    const report = await runIndex({ kv, root, settings, store, embedder: fakeEmbedder }, { mode: "build", skipImport: true })
+
+    assert.ok(store.points.size > 0, "the work itself still happened")
+    assert.ok(
+      report.errors.some((error) => error.includes("manifest save")),
+      `losing the completion record must be fatal to the run's report; errors=${JSON.stringify(report.errors)}`,
+    )
+    assert.ok(attempts >= 2, `the final save is still attempted after an earlier one failed; attempts=${attempts}`)
+  })
+})
+
+describe("batched store deletes (A1)", () => {
+  test("more than DELETE_BATCH_SIZE deleted files are split across store calls", async () => {
+    const root = makeWorkspace()
+    const store = new FakeStore(path.join(root, ".lancedb", "db"))
+    const kv = createMemoryStorage()
+    const settings = makeSettings(root)
+
+    // 501 recorded files that no longer exist on disk: no read or embed work,
+    // only the deletion path.
+    const manifest = emptyManifest(root, store.name, PROFILE)
+    for (let i = 0; i < 501; i++) {
+      setRecord(manifest, `src/gone${i}.ts`, { hash: `hash-${i}`, size: 1, mtimeMs: 1, indexedAt: 1 })
+    }
+    await saveManifest(kv, manifest)
+
+    const report = await runIndex({ kv, root, settings, store, embedder: fakeEmbedder }, { mode: "refresh", skipImport: true })
+
+    assert.equal(report.deletedFiles, 501)
+    assert.equal(report.errors.length, 0, report.errors.join("; "))
+    assert.deepEqual(
+      store.deleteCalls.map((batch) => batch.length),
+      [500, 1],
+      "deletes must respect the store batch size",
+    )
+    const after = await loadManifest(kv, root)
+    assert.equal(Object.keys(after!.files).length, 0, "records dropped for every successful delete")
+  })
+
+  test("a failed delete chunk is warned about and keeps its manifest records", async () => {
+    const root = makeWorkspace()
+    const store = new FakeStore(path.join(root, ".lancedb", "db"))
+    store.failDeleteCall = 2
+    const kv = createMemoryStorage()
+    const settings = makeSettings(root)
+
+    const manifest = emptyManifest(root, store.name, PROFILE)
+    for (let i = 0; i < 501; i++) {
+      setRecord(manifest, `src/gone${i}.ts`, { hash: `hash-${i}`, size: 1, mtimeMs: 1, indexedAt: 1 })
+    }
+    await saveManifest(kv, manifest)
+
+    const report = await runIndex({ kv, root, settings, store, embedder: fakeEmbedder }, { mode: "refresh", skipImport: true })
+
+    assert.equal(store.deleteCalls.length, 2)
+    assert.ok(
+      report.warnings.some((warning) => warning.includes("delete phase")),
+      `the failed chunk must be surfaced; warnings=${JSON.stringify(report.warnings)}`,
+    )
+    assert.equal(report.errors.length, 0, "cleanup failures stay warnings")
+    const after = await loadManifest(kv, root)
+    assert.equal(Object.keys(after!.files).length, 1, "only the failed chunk's records survive")
+  })
+})
+
+describe("imported manifest seeding (A4)", () => {
+  test("records real size/mtime and leaves missing files at -1/0", async () => {
+    const root = makeWorkspace()
+    const manifest = emptyManifest(root, "collection", PROFILE)
+    const present = path.join("src", "a.ts")
+    const missing = path.join("src", "gone.ts")
+    const content = "export const a = 1\n"
+    writeFileSync(path.join(root, present), content)
+    const stats = statSync(path.join(root, present))
+
+    await seedImportedManifest(manifest, root, { [present]: "hash-present", [missing]: "hash-missing" })
+
+    const record = manifest.files[present]!
+    assert.equal(record.hash, "hash-present")
+    assert.equal(record.size, stats.size)
+    assert.equal(record.mtimeMs, stats.mtimeMs)
+    assert.ok(record.indexedAt > 0)
+
+    const absent = manifest.files[missing]!
+    assert.equal(absent.hash, "hash-missing")
+    assert.equal(absent.size, -1, "a missing file stays undetectable as unchanged")
+    assert.equal(absent.mtimeMs, 0)
   })
 })

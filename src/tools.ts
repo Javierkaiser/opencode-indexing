@@ -1,5 +1,5 @@
 import { runIndex } from "./indexer.ts"
-import { searchCode } from "./search.ts"
+import { invalidateSearchCaches, searchCode } from "./search.ts"
 import { getStatus } from "./status.ts"
 import { indexStatusLine } from "./index-state.ts"
 import { discoverKiloSources, importFromKilo, type KiloSourceInfo } from "./import.ts"
@@ -291,6 +291,7 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
           },
           { mode: "refresh", maxFiles },
         )
+        invalidateSearchCaches(root)
         const summary = formatReport("refresh", report)
         const warning = scopeWarning(root)
         return {
@@ -321,6 +322,7 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
           },
           { mode: "build", rebuild: input.rebuild === true, skipImport: input.skipImport === true },
         )
+        invalidateSearchCaches(root)
         const summary = formatReport("build", report)
         const lines = [scopeWarning(root), summary, await codegraphLine(root, settings)].filter(Boolean)
         return {
@@ -389,6 +391,7 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
           onProgress: (update) =>
             context.progress?.({ status: `importing ${update.imported}/${update.total ?? "?"}` }) ?? Promise.resolve(),
         })
+        invalidateSearchCaches(root)
         const lines = [
           `Imported ${report.imported} chunks from ${report.source.kind} ${report.source.name} in ${(report.durationMs / 1000).toFixed(1)}s.`,
           `Batches: ${report.batches}, skipped: ${report.skipped}. Embedding API calls: 0.`,
@@ -450,28 +453,90 @@ function assertIndexingEnabled(settings: { enabled?: boolean }): void {
 /** Max changed files that trigger an inline refresh on search. */
 const AUTO_REFRESH_MAX_FILES = 200
 
+/**
+ * Least time between freshness checks for one workspace.
+ *
+ * The check scans the tree, and a search should not pay for a scan on every
+ * call. Five seconds keeps "edit, search, see it" immediate while a burst of
+ * searches scans once.
+ */
+export const AUTO_REFRESH_INTERVAL_MS = 5_000
+
+const autoRefreshChecks = new Map<string, number>()
+/** Workspaces whose scan/refresh is running right now. */
+const autoRefreshInFlight = new Set<string>()
+
+/**
+ * Claims this workspace's freshness-check slot for `now`.
+ *
+ * Returns false when a check is already running, or when one finished within
+ * the interval, so consecutive searches share one scan. The slot is claimed
+ * before the async scan starts: concurrent searches must not all decide the
+ * check is due, and a slow refresh must not overlap itself just because its
+ * scan outlived the interval.
+ */
+export function claimAutoRefreshSlot(root: string, now: number = Date.now()): boolean {
+  if (autoRefreshInFlight.has(root)) return false
+  const last = autoRefreshChecks.get(root)
+  if (last !== undefined && now - last < AUTO_REFRESH_INTERVAL_MS) return false
+  autoRefreshChecks.set(root, now)
+  autoRefreshInFlight.add(root)
+  return true
+}
+
+/**
+ * Releases the slot after the scan/refresh finished.
+ *
+ * The interval starts at completion, not at claim: a refresh that took longer
+ * than the interval would otherwise let the next search start a second one
+ * immediately.
+ */
+export function releaseAutoRefreshSlot(root: string, now: number = Date.now()): void {
+  autoRefreshInFlight.delete(root)
+  autoRefreshChecks.set(root, now)
+}
+
+/** Forget the freshness-check interval, for one workspace or all of them. */
+export function invalidateAutoRefresh(root?: string): void {
+  if (root === undefined) {
+    autoRefreshChecks.clear()
+    autoRefreshInFlight.clear()
+  } else {
+    autoRefreshChecks.delete(root)
+    autoRefreshInFlight.delete(root)
+  }
+}
+
 async function maybeAutoRefresh(
   root: string,
   deps: ToolDeps,
   settings: IndexingSettings,
   qdrant: Qdrant,
 ): Promise<void> {
-  // Cheap pre-check: diff the manifest against a bounded workspace scan.
-  const { loadManifest, diffFiles } = await import("./manifest.ts")
-  const { scanWorkspace } = await import("./scanner.ts")
-  const manifest = await loadManifest(deps.kv, root)
-  const scan = await scanWorkspace(root, {
-    extensions: settings.fileExtensions,
-    maxFileSizeBytes: settings.maxFileSizeBytes,
-    maxFiles: AUTO_REFRESH_MAX_FILES + 1,
-  })
-  const diff = diffFiles(manifest, scan.files)
-  const delta = diff.added.length + diff.maybeStale.length + diff.deleted.length
-  if (delta === 0 || delta > AUTO_REFRESH_MAX_FILES) return
-  await runIndex(
-    { kv: deps.kv, root, settings, qdrant },
-    { mode: "refresh", maxFiles: AUTO_REFRESH_MAX_FILES },
-  )
+  if (!claimAutoRefreshSlot(root)) return
+  try {
+    // Cheap pre-check: diff the manifest against a bounded workspace scan.
+    const { loadManifest, diffFiles } = await import("./manifest.ts")
+    const { scanWorkspace } = await import("./scanner.ts")
+    const manifest = await loadManifest(deps.kv, root)
+    const scan = await scanWorkspace(root, {
+      extensions: settings.fileExtensions,
+      maxFileSizeBytes: settings.maxFileSizeBytes,
+      maxFiles: AUTO_REFRESH_MAX_FILES + 1,
+    })
+    const diff = diffFiles(manifest, scan.files)
+    const delta = diff.added.length + diff.maybeStale.length + diff.deleted.length
+    if (delta === 0 || delta > AUTO_REFRESH_MAX_FILES) return
+    await runIndex(
+      { kv: deps.kv, root, settings, qdrant },
+      { mode: "refresh", maxFiles: AUTO_REFRESH_MAX_FILES },
+    )
+    // The refresh just changed the store's points; the search that follows must
+    // not answer from metadata read before it.
+    invalidateSearchCaches(root)
+  } finally {
+    releaseAutoRefreshSlot(root)
+  }
 }
 
 function formatReport(kind: "refresh" | "build", report: {

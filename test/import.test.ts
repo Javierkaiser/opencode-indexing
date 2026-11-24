@@ -5,6 +5,7 @@ import * as path from "node:path"
 import { after, describe, test } from "node:test"
 
 import { discoverKiloSources, importFromKilo, importReportToIndexReport, type KiloSourceInfo } from "../src/import.ts"
+import type { LanceDbReader } from "../src/lancedb-store.ts"
 import type { EmbeddingProfile, QdrantPoint, QueryHit } from "../src/types.ts"
 import type { ExportBatch, StoreSearchOptions, VectorStoreAdapter, VectorStoreInfo } from "../src/vector-store.ts"
 
@@ -197,12 +198,119 @@ describe("importFromKilo (qdrant source)", () => {
   })
 })
 
+describe("importFromKilo (lancedb source)", () => {
+  const LANCE_SOURCE: KiloSourceInfo = {
+    kind: "lancedb",
+    name: path.join(os.tmpdir(), "kilo-lancedb", "ws-abc"),
+    pointsCount: 3,
+    profile: PROFILE,
+    complete: false,
+    schema: 2,
+    compatible: true,
+  }
+
+  function lancePoint(id: string, filePath: string, fileHash: string): QdrantPoint {
+    return { id, vector: [0.1, 0.2, 0.3, 0.4], payload: chunkPayload(filePath, fileHash) }
+  }
+
+  /** Reader stand-in: yields fixed pages and records open/close calls. */
+  function fakeLanceSource(pages: QdrantPoint[][]) {
+    const calls = { opened: 0, closed: 0 }
+    const factory = async (_dbPath: string): Promise<LanceDbReader> => {
+      calls.opened++
+      let index = 0
+      return {
+        info: {
+          vectorExists: true,
+          metadataExists: false,
+          pointsCount: pages.reduce((total, page) => total + page.length, 0),
+        },
+        async next() {
+          const page = pages[index] ?? []
+          index++
+          return { points: page, done: index >= pages.length }
+        },
+        close() {
+          calls.closed++
+        },
+      }
+    }
+    return { calls, factory }
+  }
+
+  test("imports every page through one reader, opened and closed exactly once", async () => {
+    const source = fakeLanceSource([
+      [lancePoint("1", "src\\a.ts", "h1"), lancePoint("2", "src\\b.ts", "h2")],
+      [lancePoint("3", "lib\\c.ts", "h3")],
+    ])
+    const target = new FakeTarget()
+    const progress: number[] = []
+
+    const report = await importFromKilo({
+      root: "D:\\proj",
+      source: LANCE_SOURCE,
+      target,
+      targetProfile: PROFILE,
+      lanceDbReader: source.factory,
+      batchLimit: 2,
+      onProgress: (update) => {
+        progress.push(update.imported)
+      },
+    })
+
+    assert.equal(report.imported, 3)
+    assert.equal(report.batches, 2)
+    assert.equal(report.skipped, 0)
+    assert.deepEqual(target.points.map((point) => point.id), ["1", "2", "3"])
+    assert.deepEqual(progress, [2, 3])
+    assert.deepEqual(report.files, { "src\\a.ts": "h1", "src\\b.ts": "h2", "lib\\c.ts": "h3" })
+    assert.deepEqual(source.calls, { opened: 1, closed: 1 }, "one connection for the whole import")
+    assert.equal(target.markedComplete.length, 1)
+  })
+
+  test("closes the reader when a page upsert fails", async () => {
+    const source = fakeLanceSource([[lancePoint("1", "src\\a.ts", "h1")]])
+    const target = new FakeTarget()
+    target.upsert = async () => {
+      throw new Error("destination unavailable")
+    }
+
+    await assert.rejects(
+      importFromKilo({
+        root: "D:\\proj",
+        source: LANCE_SOURCE,
+        target,
+        targetProfile: PROFILE,
+        lanceDbReader: source.factory,
+      }),
+      /destination unavailable/,
+    )
+    assert.deepEqual(source.calls, { opened: 1, closed: 1 })
+    assert.deepEqual(target.markedComplete, [])
+  })
+
+  test("a missing source table imports nothing instead of throwing on open", async () => {
+    const target = new FakeTarget()
+    await assert.rejects(
+      importFromKilo({
+        root: "D:\\proj",
+        source: { ...LANCE_SOURCE, pointsCount: 0 },
+        target,
+        targetProfile: PROFILE,
+        lanceDbReader: async () => null,
+      }),
+      /Imported 0 chunks/,
+    )
+    assert.equal(target.upserts, 0)
+  })
+})
+
 describe("discoverKiloSources", () => {
   const ROOT = path.join(os.tmpdir(), "discover-root")
 
   /** A reachable Qdrant with no collection for this workspace. */
   function emptyQdrant() {
-    return { listCollections: async () => [] } as never
+    return { collectionExists: async () => false } as never
   }
 
   test("says nothing was found when nothing exists", async () => {
@@ -252,7 +360,7 @@ describe("discoverKiloSources", () => {
     const problems: string[] = []
     const sources = await discoverKiloSources(ROOT, {
       qdrant: {
-        listCollections: async () => {
+        collectionExists: async () => {
           throw new Error("Unable to connect to Qdrant at localhost:6333")
         },
       } as never,

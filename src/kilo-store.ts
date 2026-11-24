@@ -80,12 +80,17 @@ export function kiloCollectionCandidates(root: string): string[] {
  * `cached` (persisted by the caller) wins when it still exists; otherwise the
  * hash candidates are probed in order. Returns null when Kilo never indexed
  * this workspace.
+ *
+ * Probing one name at a time instead of listing every collection keeps the
+ * common case (the collection exists, and is usually the cached name) to a
+ * single request, and a workspace Kilo never indexed costs one probe per
+ * spelling instead of downloading the collection list. `collectionExists` is
+ * the 404-aware probe: a missing name is false, any other failure throws.
  */
 export async function resolveKiloCollection(client: Qdrant, root: string, cached?: string): Promise<string | null> {
-  const collections = new Set(await client.listCollections())
-  if (cached && collections.has(cached)) return cached
-  for (const candidate of kiloCollectionCandidates(root)) {
-    if (collections.has(candidate)) return candidate
+  const names = [...new Set([...(cached ? [cached] : []), ...kiloCollectionCandidates(root)])]
+  for (const name of names) {
+    if (await client.collectionExists(name)) return name
   }
   return null
 }

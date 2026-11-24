@@ -795,6 +795,11 @@ node test/cli.ts import     --root . --source ws-43dfc9b3ee33fcfd
 node test/cli.ts build      --vector-store lancedb --root .
 ```
 
+For indexing throughput there is a provider-free benchmark: `npm run perf`
+(optionally `npm run perf -- --files 500 --latency 25`). It indexes synthetic
+TypeScript files with deterministic fake embeddings into an in-memory store, so
+it measures batching and bookkeeping — not provider quality, latency or cost.
+
 ## Acknowledgements
 
 This plugin interoperates with the open-source [Kilo Code](https://github.com/Kilo-Org/kilocode) indexing format (MIT License, Copyright (c) 2026 Kilo Code). The line-based chunker and the tree-sitter queries are ports of Kilo Code's implementation. It also builds on [opencode](https://github.com/anomalyco/opencode) (MIT), [LanceDB](https://github.com/lancedb/lancedb) (Apache-2.0), [Apache Arrow](https://github.com/apache/arrow) (Apache-2.0), [web-tree-sitter](https://github.com/tree-sitter/tree-sitter) (MIT), [tree-sitter-wasms](https://github.com/Gregoor/tree-sitter-wasms) (Unlicense), [ignore](https://github.com/kaelzhang/node-ignore) (MIT), and — for the terminal UI, whose runtime the host provides — [SolidJS](https://github.com/solidjs/solid) (MIT) and [OpenTUI](https://github.com/sst/opentui) (MIT).
