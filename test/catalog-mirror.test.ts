@@ -53,7 +53,17 @@ const KILO_MIRROR: Record<string, Record<string, number>> = {
   },
 }
 
-test("every model Kilo knows is present here with the same dimension", () => {
+/**
+ * Providers Kilo can index with that this plugin deliberately does not offer.
+ *
+ * `kilo` is Kilo's hosted provider: its model list comes from Kilo's service,
+ * so there is no local profile an import could match. `bedrock` and
+ * `vercel-ai-gateway` have no adapter here. An index built with any of them is
+ * reported incompatible.
+ */
+const UNSUPPORTED_KILO_PROVIDERS = ["kilo", "bedrock", "vercel-ai-gateway"] as const
+
+test("every model Kilo knows in the providers this plugin supports is present here with the same dimension", () => {
   for (const [provider, models] of Object.entries(KILO_MIRROR)) {
     for (const [modelId, dimension] of Object.entries(models)) {
       assert.equal(
@@ -118,14 +128,12 @@ test("every selectable provider has a default model and a resolvable dimension",
   }
 })
 
-test("a provider with no catalog entry is not offered as selectable", () => {
-  // Kilo also ships bedrock and vercel-ai-gateway. Neither is here, because
-  // neither has an adapter; offering one would fail only once indexing started.
-  for (const absent of ["bedrock", "vercel-ai-gateway"]) {
+test("the Kilo providers this plugin does not support are not selectable", () => {
+  for (const provider of UNSUPPORTED_KILO_PROVIDERS) {
     assert.equal(
-      (VALID_PROVIDERS as readonly string[]).includes(absent),
+      (VALID_PROVIDERS as readonly string[]).includes(provider),
       false,
-      `${absent} has no adapter and must not be selectable`,
+      `${provider} has no adapter here and must not be selectable`,
     )
   }
 })

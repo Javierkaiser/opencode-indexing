@@ -3,8 +3,10 @@ import * as path from "node:path"
 
 import { createQdrant, type Qdrant } from "./qdrant.ts"
 import { getKiloStoreInfo, resolveKiloCollection } from "./kilo-store.ts"
-import { readLanceDbInfoAt, openLanceDbReader, lanceDbName, type LanceDbReader } from "./lancedb-store.ts"
-import { kiloLanceDbDirectory } from "./settings.ts"
+import { readLanceDbInfoAt, openLanceDbReader, lanceDbNames, type LanceDbReader } from "./lancedb-store.ts"
+import { kiloLanceDbDirectories } from "./settings.ts"
+import { VALID_PROVIDERS } from "./config.ts"
+import { mainWorktree } from "./worktree.ts"
 import { recordWorkspace } from "./workspaces.ts"
 import { describeError } from "./errors.ts"
 import type { EmbeddingProfile, QdrantPoint, IndexReport } from "./types.ts"
@@ -19,9 +21,20 @@ import { profileKey } from "./registry.ts"
  *  - Kilo Qdrant collection  (`ws-<hash16>`)
  *  - Kilo LanceDB database   (`<basename>-<hash16>` under Kilo's state dir)
  *
+ * When `root` is a linked git worktree, the main worktree's index is discovered
+ * as well (`role: "baseline"`), next to the one this checkout has (`role:
+ * "delta"`): Kilo indexed the main checkout, and the linked one is usually
+ * empty until something indexes it on its own.
+ *
  * Compatibility: the embedding profile (provider:model:dimension) must match
  * the destination profile; mismatched vectors are never copied.
  */
+
+/** Why a Kilo source cannot be imported as-is. */
+export type KiloSourceReason = "profile" | "schema" | "provider"
+
+/** Which checkout a source belongs to when the workspace is a linked worktree. */
+export type KiloSourceRole = "baseline" | "delta"
 
 export interface KiloSourceInfo {
   kind: "qdrant" | "lancedb"
@@ -32,6 +45,14 @@ export interface KiloSourceInfo {
   complete?: boolean | null
   schema?: number | null
   compatible: boolean
+  /**
+   * Why `compatible` is false. `provider` is a provider this plugin cannot
+   * embed with at all, `schema` a Kilo index layout it does not read, and
+   * `profile` a different provider:model:dimension than the target.
+   */
+  reason?: KiloSourceReason
+  /** Set only when the workspace is a linked worktree; see above. */
+  role?: KiloSourceRole
 }
 
 export interface ImportReport {
@@ -50,8 +71,13 @@ export async function discoverKiloSources(
   root: string,
   options: {
     qdrant?: Qdrant
+    /** Single LanceDB root (legacy); `lancedbDirectories` wins when both are set. */
     lancedbDirectory?: string
+    /** Candidate LanceDB roots; overrides the default Kilo locations. */
+    lancedbDirectories?: string[]
     homeDir?: string
+    /** Main worktree to read the full index from when `root` is a linked worktree. */
+    baselineRoot?: string
     targetProfile?: EmbeddingProfile
     /**
      * Called when a source exists but could not be read.
@@ -66,55 +92,126 @@ export async function discoverKiloSources(
   },
 ): Promise<KiloSourceInfo[]> {
   const sources: KiloSourceInfo[] = []
-  const problem = options.onProblem ?? ((): void => {})
-  const isCompatible = (profile?: EmbeddingProfile): boolean => {
-    if (!options.targetProfile || !profile) return true
-    return profileKey(profile) === profileKey(options.targetProfile)
+  const seen = new Set<string>()
+  const reported = new Set<string>()
+  const problem = (message: string): void => {
+    // Both checkouts can hit the same outage; one line per distinct cause is
+    // enough to explain why discovery came back empty.
+    if (reported.has(message)) return
+    reported.add(message)
+    options.onProblem?.(message)
   }
 
-  // Qdrant source
+  /**
+   * Why a source cannot be imported, if it cannot.
+   *
+   * The reason replaces a bare boolean because the remedies differ: a different
+   * profile is fixed by switching the model, an unsupported provider or a newer
+   * index schema is not.
+   */
+  const incompatibility = (profile?: EmbeddingProfile, schema?: number | null): KiloSourceReason | undefined => {
+    // A provider this plugin has no embedder for can never be reused, whatever
+    // the target is, so this check does not depend on having one.
+    if (profile && !VALID_PROVIDERS.includes(profile.provider)) return "provider"
+    // Schemas 1 and 2 are the layouts Kilo writes; anything else is newer than
+    // what this reads. Absent is treated as readable.
+    if (schema !== null && schema !== undefined && schema !== 1 && schema !== 2) return "schema"
+    if (!options.targetProfile || !profile) return undefined
+    return profileKey(profile) === profileKey(options.targetProfile) ? undefined : "profile"
+  }
+
+  // A linked worktree shares the repository but not its index. The baseline
+  // comes from the main checkout, which is what Kilo actually indexed.
+  const baselineRoot = options.baselineRoot ?? mainWorktree(root)
+  const targets: Array<{ root: string; role?: KiloSourceRole }> =
+    baselineRoot && path.resolve(baselineRoot) !== path.resolve(root)
+      ? [
+          { root: baselineRoot, role: "baseline" },
+          { root, role: "delta" },
+        ]
+      : [{ root }]
+
+  /** Append once: baseline and delta can resolve to the same collection/path. */
+  const add = (source: KiloSourceInfo, role?: KiloSourceRole): void => {
+    const key = `${source.kind}\u0000${source.name}`
+    if (seen.has(key)) return
+    seen.add(key)
+    sources.push(role ? { ...source, role } : source)
+  }
+
+  // Qdrant source(s)
+  let client: Qdrant | undefined
   try {
-    const client = options.qdrant ?? createQdrant({ url: "http://localhost:6333" })
-    const collection = await resolveKiloCollection(client, root)
-    if (collection) {
-      const info = await getKiloStoreInfo(client, collection)
-      sources.push({
-        kind: "qdrant",
-        name: collection,
-        pointsCount: info.pointsCount,
-        profile: info.profile,
-        complete: info.complete ?? null,
-        schema: info.schema ?? null,
-        compatible: isCompatible(info.profile),
-      })
-    }
+    client = options.qdrant ?? createQdrant({ url: "http://localhost:6333" })
   } catch (error) {
-    // A backend that answers with no matching collection is not a failure; a
-    // backend that never answered is.
     problem(`Could not reach the Qdrant server to look for a Kilo index: ${describeError(error)}`)
   }
-
-  // LanceDB source
-  const directory = options.lancedbDirectory ?? kiloLanceDbDirectory(options.homeDir)
-  const dbPath = path.join(directory, lanceDbName(root))
-  if (fs.existsSync(dbPath)) {
-    try {
-      const info = await readLanceDbInfoAt(dbPath)
-      if (info.vectorExists) {
-        sources.push({
-          kind: "lancedb",
-          name: dbPath,
-          pointsCount: info.pointsCount,
-          profile: info.profile,
-          complete: info.complete ?? null,
-          schema: info.schema ?? null,
-          compatible: isCompatible(info.profile),
-        })
+  if (client) {
+    for (const target of targets) {
+      try {
+        const collection = await resolveKiloCollection(client, target.root)
+        if (!collection) continue
+        const info = await getKiloStoreInfo(client, collection)
+        const schema = info.schema ?? null
+        const reason = incompatibility(info.profile, schema)
+        add(
+          {
+            kind: "qdrant",
+            name: collection,
+            pointsCount: info.pointsCount,
+            profile: info.profile,
+            complete: info.complete ?? null,
+            schema,
+            compatible: reason === undefined,
+            reason,
+          },
+          target.role,
+        )
+      } catch (error) {
+        // A backend that answers with no matching collection is not a failure; a
+        // backend that never answered is.
+        problem(`Could not reach the Qdrant server to look for a Kilo index: ${describeError(error)}`)
       }
-    } catch (error) {
-      // The directory is there, so this is "found but unreadable", never
-      // "not indexed". Say so, with the reason.
-      problem(`A Kilo LanceDB index exists at ${dbPath} but could not be read: ${describeError(error)}`)
+    }
+  }
+
+  // LanceDB source(s)
+  const directories =
+    options.lancedbDirectories ??
+    (options.lancedbDirectory ? [options.lancedbDirectory] : kiloLanceDbDirectories(options.homeDir))
+  const roots = [...new Set(directories.map((directory) => path.resolve(directory)))]
+  for (const target of targets) {
+    for (const directory of roots) {
+      // Probe every spelling of the workspace path; the first database that
+      // exists is the one Kilo wrote for this directory.
+      for (const name of lanceDbNames(target.root)) {
+        const dbPath = path.join(directory, name)
+        if (!fs.existsSync(dbPath)) continue
+        try {
+          const info = await readLanceDbInfoAt(dbPath)
+          if (!info.vectorExists) break
+          const schema = info.schema ?? null
+          const reason = incompatibility(info.profile, schema)
+          add(
+            {
+              kind: "lancedb",
+              name: dbPath,
+              pointsCount: info.pointsCount,
+              profile: info.profile,
+              complete: info.complete ?? null,
+              schema,
+              compatible: reason === undefined,
+              reason,
+            },
+            target.role,
+          )
+        } catch (error) {
+          // The directory is there, so this is "found but unreadable", never
+          // "not indexed". Say so, with the reason.
+          problem(`A Kilo LanceDB index exists at ${dbPath} but could not be read: ${describeError(error)}`)
+        }
+        break
+      }
     }
   }
 
@@ -134,6 +231,41 @@ export interface ImportOptions {
   qdrantApiKey?: string
   /** LanceDB reader factory for lancedb sources (opened on demand when omitted). */
   lanceDbReader?: (dbPath: string) => Promise<LanceDbReader | null>
+  /**
+   * Files already imported from a more authoritative source.
+   *
+   * A linked worktree imports its own (delta) index first and the main
+   * checkout's baseline second. Every file the delta already covers is skipped
+   * here instead of being copied again with the older baseline hash.
+   */
+  skipFiles?: ReadonlySet<string>
+}
+
+/**
+ * Why a source was refused, in the terms of what actually fixes it.
+ *
+ * A profile mismatch is fixed by switching the model; a provider this plugin
+ * has no embedder for and a newer index schema are not.
+ */
+function incompatibleSourceError(source: KiloSourceInfo, targetProfile: EmbeddingProfile): Error {
+  const label = `${source.kind} ${source.name}`
+  switch (source.reason) {
+    case "provider":
+      return new Error(
+        `Kilo index (${label}) was built with the ${source.profile?.provider ?? "unknown"} embedding provider, ` +
+          `which this plugin cannot embed with. Re-index this workspace in Kilo with a supported provider, or index it from scratch.`,
+      )
+    case "schema":
+      return new Error(
+        `Kilo index (${label}) uses index schema ${source.schema ?? "unknown"}; this build reads schemas 1 and 2. ` +
+          `Rebuild the Kilo index, or update the plugin.`,
+      )
+    default:
+      return new Error(
+        `Kilo index profile (${source.profile ? profileKey(source.profile) : "unknown"}) does not match the target profile ` +
+          `(${profileKey(targetProfile)}). Re-index with matching settings or switch the embedding model.`,
+      )
+  }
 }
 
 /**
@@ -150,6 +282,11 @@ export async function importFromKilo(options: ImportOptions): Promise<ImportRepo
   const started = Date.now()
   const { root, source, target, targetProfile } = options
   const batchLimit = options.batchLimit ?? 500
+  const skipFiles = options.skipFiles
+  // Points dropped because a more authoritative source already imported their
+  // file. Unlike an invalid payload this is not a failed read, so an
+  // all-filtered pass is a complete answer rather than an empty import.
+  let filtered = 0
   const report: ImportReport = {
     source,
     imported: 0,
@@ -160,12 +297,7 @@ export async function importFromKilo(options: ImportOptions): Promise<ImportRepo
     files: {},
   }
 
-  if (!source.compatible) {
-    throw new Error(
-      `Kilo index profile (${source.profile ? profileKey(source.profile) : "unknown"}) does not match the target profile ` +
-        `(${profileKey(targetProfile)}). Re-index with matching settings or switch the embedding model.`,
-    )
-  }
+  if (!source.compatible) throw incompatibleSourceError(source, targetProfile)
 
   if (source.kind === "qdrant") {
     const client = options.qdrant ?? createQdrant({ url: options.qdrantUrl ?? "http://localhost:6333", apiKey: options.qdrantApiKey })
@@ -184,12 +316,17 @@ export async function importFromKilo(options: ImportOptions): Promise<ImportRepo
           report.skipped++
           continue
         }
+        const filePath = point.payload.filePath
+        if (typeof filePath === "string" && skipFiles?.has(filePath)) {
+          filtered++
+          report.skipped++
+          continue
+        }
         points.push({
           id: typeof point.id === "string" ? point.id : String(point.id),
           vector: point.vector,
           payload: point.payload,
         })
-        const filePath = point.payload.filePath
         const fileHash = point.payload.fileHash
         if (typeof filePath === "string" && typeof fileHash === "string") {
           report.files[filePath] = fileHash
@@ -213,11 +350,22 @@ export async function importFromKilo(options: ImportOptions): Promise<ImportRepo
       try {
         for (;;) {
           const page = await reader.next(batchLimit)
-          if (page.points.length > 0) {
-            await target.upsert(page.points)
-            report.imported += page.points.length
+          const points = skipFiles
+            ? page.points.filter((point) => {
+                const filePath = point.payload.filePath
+                return !(typeof filePath === "string" && skipFiles.has(filePath))
+              })
+            : page.points
+          const dropped = page.points.length - points.length
+          if (dropped > 0) {
+            filtered += dropped
+            report.skipped += dropped
+          }
+          if (points.length > 0) {
+            await target.upsert(points)
+            report.imported += points.length
             report.batches++
-            for (const point of page.points) {
+            for (const point of points) {
               const filePath = point.payload.filePath
               const fileHash = point.payload.fileHash
               if (typeof filePath === "string" && typeof fileHash === "string") {
@@ -232,6 +380,14 @@ export async function importFromKilo(options: ImportOptions): Promise<ImportRepo
         reader.close()
       }
     }
+  }
+
+  if (report.imported === 0 && filtered > 0) {
+    // Every point belonged to a file another source already imported. That is
+    // a complete answer, not a failed read: it must not become an error, and it
+    // must not claim completion on the shared store either.
+    report.durationMs = Date.now() - started
+    return report
   }
 
   if (report.imported === 0) {

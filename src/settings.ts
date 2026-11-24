@@ -67,13 +67,45 @@ export function defaultLanceDbDirectory(homeDir?: string): string {
   return path.join(base, "opencode-indexing", "lancedb")
 }
 
+/**
+ * Every directory where Kilo may keep its LanceDB index, most likely first.
+ *
+ * Kilo's own state dir is the documented location, but the same shape exists
+ * under OpenCode's name (the two share the indexer) and, on Windows and macOS,
+ * under the platform's application-data dir instead of XDG. The caller probes
+ * each of them for the workspace's database; the order is the preference.
+ */
+export function kiloLanceDbDirectories(homeDir?: string): string[] {
+  const candidates: string[] = []
+  const override = process.env.KILO_INDEX_KILO_LANCEDB_DIR
+  if (override && override.trim()) candidates.push(override.trim())
+
+  const home = homeDir ?? os.homedir()
+  const xdgState = process.env.XDG_STATE_HOME
+  const base = xdgState && xdgState.trim() ? xdgState.trim() : path.join(home, ".local", "state")
+  candidates.push(path.join(base, "kilo", "indexing", "lancedb"))
+  candidates.push(path.join(base, "opencode", "indexing", "lancedb"))
+
+  if (process.platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA
+    const local = localAppData && localAppData.trim() ? localAppData.trim() : path.join(home, "AppData", "Local")
+    candidates.push(path.join(local, "kilo", "indexing", "lancedb"))
+    candidates.push(path.join(local, "opencode", "indexing", "lancedb"))
+  }
+  if (process.platform === "darwin") {
+    const applicationSupport = path.join(home, "Library", "Application Support")
+    candidates.push(path.join(applicationSupport, "kilo", "indexing", "lancedb"))
+    candidates.push(path.join(applicationSupport, "opencode", "indexing", "lancedb"))
+  }
+
+  // Deduplicate on the resolved path: the override often names a default
+  // location, and the same directory must not be probed (or imported) twice.
+  return [...new Set(candidates.map((directory) => path.resolve(directory)))]
+}
+
 /** Kilo's own LanceDB directory (read-only import source). */
 export function kiloLanceDbDirectory(homeDir?: string): string {
-  const override = process.env.KILO_INDEX_KILO_LANCEDB_DIR
-  if (override && override.trim()) return override.trim()
-  const xdgState = process.env.XDG_STATE_HOME
-  const base = xdgState && xdgState.trim() ? xdgState : path.join(homeDir ?? os.homedir(), ".local", "state")
-  return path.join(base, "kilo", "indexing", "lancedb")
+  return kiloLanceDbDirectories(homeDir)[0]!
 }
 
 export function readSettingsFile(homeDir?: string): SettingsFile | undefined {

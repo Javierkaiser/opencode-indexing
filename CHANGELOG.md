@@ -5,6 +5,39 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-11-24
+
+### Changed
+
+- **An import says why a Kilo source is incompatible.** The profile comparison
+  still decides it, but the report now names the reason — a provider this plugin
+  has no adapter for (`kilo`, `bedrock`, `vercel-ai-gateway`), a
+  provider/model/dimension mismatch, or a metadata schema it does not read —
+  instead of leaving a bare `compatible: false` to be interpreted.
+- **Kilo's LanceDB is read from every candidate directory.** Kilo 7.8.32
+  defaults to LanceDB under its state directory, so the import looks for
+  `<basename>-<hash16>` databases under `~/.local/state/kilo/indexing/lancedb`,
+  the `XDG_STATE_HOME` and Windows equivalents, and the `opencode`-named
+  directory older builds used; `KILO_INDEX_KILO_LANCEDB_DIR` still names the
+  base explicitly. A missing candidate is not an error, and an unreadable one
+  keeps its reason.
+- **A linked worktree imports its baseline and its delta.** Kilo keeps the main
+  worktree's database plus a delta for the linked one and merges them at search
+  time; the import reads both and says which side is missing when only one
+  exists, instead of reporting that there is no Kilo index. A workspace opened
+  in a subdirectory of the worktree is mirrored into the main checkout the way
+  Kilo mirrors it. Baseline files are re-hashed by the scan that follows, so a
+  local change Kilo had not indexed yet is not mistaken for the main checkout's
+  content.
+
+### Added
+
+- **The README documents Kilo's two source shapes, the importable providers and
+  the worktree model**, and distinguishes Kilo's `semantic_search` from
+  `indexing_search`. The bundled skill carries the same distinction, and a
+  catalog test pins `kilo`, `bedrock` and `vercel-ai-gateway` as deliberately
+  unsupported.
+
 ## [0.11.0] - 2026-11-24
 
 ### Changed
@@ -833,7 +866,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.12.0
 [0.11.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.11.0
 [0.10.3]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.10.3
 [0.10.2]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.10.2

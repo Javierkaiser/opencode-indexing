@@ -223,6 +223,10 @@ export const IndexingRpc = {
                 complete: { type: ["boolean", "null"] },
                 profile: { type: ["string", "null"] },
                 compatible: { type: "boolean" },
+                /** Present only when `compatible` is false: why the source is refused. */
+                reason: { type: "string", enum: ["profile", "schema", "provider"] },
+                /** Which checkout the source belongs to, when the workspace is a linked worktree. */
+                role: { type: "string", enum: ["baseline", "delta"] },
               },
               required: ["kind", "name", "compatible"],
               additionalProperties: true,

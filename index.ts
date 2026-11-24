@@ -157,11 +157,26 @@ function summarizeReport(report: {
   chunksUpserted: number
   batches: number
   imported?: { source: string; kind: string; chunks: number }
+  importedSources?: Array<{ source: string; kind: string; chunks: number; role?: string }>
   errors: string[]
   warnings: string[]
 }): string {
   const parts = [`Finished in ${(report.durationMs / 1000).toFixed(1)}s`]
-  if (report.imported) parts.push(`imported ${report.imported.chunks} chunks from ${report.imported.kind} ${report.imported.source} (no embedding calls)`)
+  // `importedSources` is additive; a single source keeps the older wording so
+  // existing callers read exactly what they used to.
+  const sources: Array<{ source: string; kind: string; chunks: number; role?: string }> =
+    report.importedSources ?? (report.imported ? [report.imported] : [])
+  if (sources.length === 1) {
+    const entry = sources[0]!
+    const role = entry.role ? `${entry.role} ` : ""
+    parts.push(`imported ${entry.chunks} chunks from ${role}${entry.kind} ${entry.source} (no embedding calls)`)
+  } else if (sources.length > 1) {
+    const total = sources.reduce((sum, entry) => sum + entry.chunks, 0)
+    const detail = sources
+      .map((entry) => `${entry.role ? `${entry.role} ` : ""}${entry.kind} ${entry.source} (${entry.chunks} chunks)`)
+      .join(" · ")
+    parts.push(`imported ${total} chunks from ${sources.length} Kilo sources: ${detail} (no embedding calls)`)
+  }
   parts.push(`${report.chunksUpserted} chunks in ${report.batches} batch(es)`)
   if (report.errors.length > 0) parts.push(`errors: ${report.errors.slice(0, 3).join("; ")}`)
   if (report.warnings.length > 0) parts.push(`warnings: ${report.warnings.slice(0, 3).join("; ")}`)
@@ -781,6 +796,10 @@ class ForgetRefusedError extends Error {}
                 ? `${source.profile.provider}:${source.profile.modelId}:${source.profile.dimension}`
                 : null,
               compatible: source.compatible,
+              // Why a source is refused, and which checkout it belongs to: the
+              // same collection can be compatible as a baseline and not here.
+              ...(source.reason ? { reason: source.reason } : {}),
+              ...(source.role ? { role: source.role } : {}),
             })),
             problems,
           }

@@ -17,6 +17,7 @@ import {
   createKeyedQueue,
   createLanceDbStore,
   lanceDbName,
+  lanceDbNames,
   openLanceDbReader,
   readLanceDbBatch,
   readLanceDbInfoAt,
@@ -86,6 +87,22 @@ describe("lanceDbName", () => {
     // The store name defaults to the same value under the configured directory.
     const s = createLanceDbStore({ root: ROOT, directory: DIRECTORY })
     assert.equal(s.name, path.join(DIRECTORY, expected))
+  })
+})
+
+describe("lanceDbNames", () => {
+  test("covers the literal and resolved spellings without duplicates", () => {
+    const names = lanceDbNames(ROOT)
+    assert.equal(names[0], lanceDbName(ROOT))
+    assert.ok(names.includes(lanceDbName(path.resolve(ROOT))))
+    assert.equal(new Set(names).size, names.length)
+  })
+
+  test("covers both separators on Windows", { skip: process.platform !== "win32" }, () => {
+    // A baseline recovered from git uses forward slashes; Kilo's own
+    // directories were named with the host separator.
+    const names = lanceDbNames("C:/Proyectos/demo")
+    assert.ok(names.includes(lanceDbName("C:\\Proyectos\\demo")))
   })
 })
 

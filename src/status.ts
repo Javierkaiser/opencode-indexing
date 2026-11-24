@@ -57,6 +57,31 @@ export interface IndexStatus {
 
 const KILO_CACHE_PREFIX = "kiloCollection/"
 
+/**
+ * Why a Kilo source cannot be imported, and what actually fixes it.
+ *
+ * Only a profile mismatch is resolved by switching the model. An unsupported
+ * provider or a newer index schema is not, so telling the user to switch sends
+ * them in circles.
+ */
+function incompatibleSourceRecommendation(source: KiloSourceInfo): string {
+  const rebuild = "Run indexing_build to index from scratch with your configured model"
+  switch (source.reason) {
+    case "provider":
+      return (
+        `Kilo index detected but it was built with the ${source.profile?.provider ?? "unknown"} embedding provider, ` +
+        `which this plugin cannot call. ${rebuild}.`
+      )
+    case "schema":
+      return (
+        `Kilo index detected but it uses index schema ${source.schema ?? "unknown"}, which this plugin does not read. ` +
+        `${rebuild}, or upgrade the plugin.`
+      )
+    default:
+      return `Kilo index detected but its embedding profile differs. ${rebuild}, or switch to the matching model.`
+  }
+}
+
 export async function getStatus(deps: StatusDeps, options?: { checkFreshness?: boolean }): Promise<IndexStatus> {
   const { qdrant, kv, root, settings } = deps
   // Configuration warnings are produced once per resolution and were previously
@@ -126,14 +151,35 @@ export async function getStatus(deps: StatusDeps, options?: { checkFreshness?: b
     }
   }
 
-  const kiloProfile = kiloInfo?.profile
-    ? `${kiloInfo.profile.provider}:${kiloInfo.profile.modelId}:${kiloInfo.profile.dimension}`
-    : null
+  const compatibleSource = kiloSources.find((source) => source.compatible)
+
+  /**
+   * The Kilo source that best explains this workspace.
+   *
+   * A linked worktree usually has no collection of its own while the main
+   * checkout holds the repository's. Reading only the root's collection then
+   * reported "Kilo: none" with a baseline source sitting right there, so the
+   * discovered sources fill the gap: delta first, then baseline.
+   */
+  const effectiveKiloSource =
+    kiloSources.find((source) => source.role === "delta" && source.compatible) ??
+    kiloSources.find((source) => source.role === "baseline" && source.compatible) ??
+    kiloSources.find((source) => source.role === "delta") ??
+    kiloSources.find((source) => source.role === "baseline")
+  const kiloFromDiscovery = kiloCollection === null && effectiveKiloSource !== undefined
+  const kiloCollectionName = kiloCollection ?? effectiveKiloSource?.name ?? null
+  const kiloPoints = kiloFromDiscovery ? (effectiveKiloSource.pointsCount ?? null) : (kiloInfo?.pointsCount ?? null)
+  const kiloComplete = kiloFromDiscovery ? (effectiveKiloSource.complete ?? null) : (kiloInfo?.complete ?? null)
+  const kiloProfile = kiloFromDiscovery
+    ? effectiveKiloSource.profile
+      ? profileKey(effectiveKiloSource.profile)
+      : null
+    : kiloInfo?.profile
+      ? profileKey(kiloInfo.profile)
+      : null
   const ownProfile = ownInfo?.profile
     ? `${ownInfo.profile.provider}:${ownInfo.profile.modelId}:${ownInfo.profile.dimension}`
     : null
-
-  const compatibleSource = kiloSources.find((source) => source.compatible)
 
   /**
    * A profile change destroys the own index and re-embeds everything.
@@ -189,19 +235,19 @@ export async function getStatus(deps: StatusDeps, options?: { checkFreshness?: b
     recommendation = "Start Qdrant (e.g. `docker run -p 6333:6333 qdrant/qdrant` or Podman equivalent), then re-run indexing_status."
   } else if (!kiloInSearch) {
     recommendation = ownIndexRecommendation()
-  } else if (!kiloCollection && !ownInfo?.exists && kiloSources.length === 0) {
+  } else if (!kiloCollectionName && !ownInfo?.exists && kiloSources.length === 0) {
     recommendation = "No index found. Run indexing_build to create an independent index (works without Kilo Code)."
   } else if (kiloSources.length > 0 && !ownInfo?.exists && compatibleSource) {
     recommendation = `Kilo index detected (${compatibleSource.kind}: ${compatibleSource.name}). Run indexing_build to import it without re-embedding.`
   } else if (kiloSources.some((source) => !source.compatible) && !ownInfo?.exists) {
-    recommendation =
-      "Kilo index detected but its embedding profile differs. Run indexing_build to index from scratch with your configured model, or switch to the matching model."
-  } else if (kiloCollection && kiloInfo && kiloInfo.complete === false && !ownInfo?.exists) {
+    const blocked = kiloSources.find((source) => !source.compatible)!
+    recommendation = incompatibleSourceRecommendation(blocked)
+  } else if (kiloCollectionName && kiloComplete === false && !ownInfo?.exists) {
     recommendation =
       "Kilo index exists but its last indexing run did not complete. Run indexing_build (import) or indexing_refresh once built."
   } else if (freshness.checked && freshness.added + freshness.maybeStale + freshness.deleted > 0) {
     recommendation = `Workspace has ${freshness.added} new, ${freshness.maybeStale} possibly changed and ${freshness.deleted} deleted files vs own index. Run indexing_refresh.`
-  } else if (!ownInfo?.exists && kiloCollection) {
+  } else if (!ownInfo?.exists && kiloCollectionName) {
     recommendation = "Kilo index available. Search works now; run indexing_build/refresh as files change to keep results fresh."
   } else if (ownInfo?.exists && ownInfo.complete === false) {
     recommendation = "Own index reported a previous incomplete run. Run indexing_refresh to finish it."
@@ -213,10 +259,10 @@ export async function getStatus(deps: StatusDeps, options?: { checkFreshness?: b
     root,
     qdrant: { url: settings.qdrantUrl, reachable },
     kilo: {
-      collection: kiloCollection,
-      exists: kiloCollection !== null && kiloInfo !== null,
-      points: kiloInfo?.pointsCount ?? null,
-      complete: kiloInfo?.complete ?? null,
+      collection: kiloCollectionName,
+      exists: kiloFromDiscovery ? true : kiloCollection !== null && kiloInfo !== null,
+      points: kiloPoints,
+      complete: kiloComplete,
       profile: kiloProfile,
     },
     kiloSources,

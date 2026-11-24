@@ -45,6 +45,12 @@ LanceDB). When the same chunk exists in both, the own index wins.
 - With `searchKilo: false`, only the own index is searched. The tool says so
   when it finds nothing, instead of claiming Kilo has no index.
 
+## If Kilo's `semantic_search` is also available
+
+`semantic_search` is Kilo's own tool and searches Kilo's index only. Use
+`indexing_search` for the own + Kilo view: it merges both indexes and keeps
+answering when Kilo is absent or its index is unavailable.
+
 ## When codegraph is also installed
 
 The codegraph MCP server answers structure; this tool answers meaning. Use them

@@ -139,6 +139,29 @@ export function lanceDbName(root: string): string {
   return `${base}-${workspaceHash(root).slice(0, 16)}`
 }
 
+/**
+ * Every database name Kilo may have derived for `root`, without duplicates.
+ *
+ * Kilo hashes the path string verbatim. A linked worktree's baseline is
+ * recovered from git, which writes forward slashes on Windows, while Kilo's own
+ * directories use the host separator; both forms have to be probed or an
+ * existing baseline is reported as missing.
+ */
+export function lanceDbNames(root: string): string[] {
+  const variants = [root, path.resolve(root)]
+  if (process.platform === "win32") {
+    for (const value of [...variants]) {
+      variants.push(value.replaceAll("\\", "/"), value.replaceAll("/", "\\"))
+    }
+  }
+  const names: string[] = []
+  for (const value of variants) {
+    const name = lanceDbName(value)
+    if (!names.includes(name)) names.push(name)
+  }
+  return names
+}
+
 // ---------------------------------------------------------------------------
 // Adapter
 // ---------------------------------------------------------------------------

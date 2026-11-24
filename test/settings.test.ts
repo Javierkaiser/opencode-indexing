@@ -7,6 +7,7 @@ import { after, beforeEach, describe, test } from "node:test"
 import {
   configDir,
   defaultLanceDbDirectory,
+  kiloLanceDbDirectories,
   kiloLanceDbDirectory,
   maskSecret,
   readSettingsFile,
@@ -23,6 +24,24 @@ function makeHome(): string {
   mkdirSync(path.join(home, ".config", "opencode"), { recursive: true })
   mkdirSync(path.join(home, ".config", "kilo"), { recursive: true })
   return home
+}
+
+/** Run `run` with these environment values, restoring the previous ones after. */
+function withEnv(values: Record<string, string | undefined>, run: () => void): void {
+  const saved = new Map<string, string | undefined>()
+  for (const [key, value] of Object.entries(values)) {
+    saved.set(key, process.env[key])
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
+  }
+  try {
+    run()
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
 }
 
 after(() => {
@@ -99,6 +118,53 @@ describe("settings file", () => {
     assert.ok(dir.endsWith(path.join("lancedb")))
     const kilo = kiloLanceDbDirectory("C:\\Users\\test")
     assert.ok(kilo.includes(path.join("kilo", "indexing", "lancedb")))
+  })
+
+  test("Kilo LanceDB directories are listed in preference order, deduplicated", () => {
+    const home = makeHome()
+    const state = mkdtempSync(path.join(os.tmpdir(), "oi-state-"))
+    const local = mkdtempSync(path.join(os.tmpdir(), "oi-local-"))
+    homes.push(state, local)
+
+    withEnv({ XDG_STATE_HOME: state, LOCALAPPDATA: local, KILO_INDEX_KILO_LANCEDB_DIR: undefined }, () => {
+      const dirs = kiloLanceDbDirectories(home)
+      const expected = [
+        path.join(state, "kilo", "indexing", "lancedb"),
+        path.join(state, "opencode", "indexing", "lancedb"),
+        ...(process.platform === "win32"
+          ? [
+              path.join(local, "kilo", "indexing", "lancedb"),
+              path.join(local, "opencode", "indexing", "lancedb"),
+            ]
+          : []),
+        ...(process.platform === "darwin"
+          ? [
+              path.join(home, "Library", "Application Support", "kilo", "indexing", "lancedb"),
+              path.join(home, "Library", "Application Support", "opencode", "indexing", "lancedb"),
+            ]
+          : []),
+      ]
+      assert.deepEqual(dirs, expected.map((directory) => path.resolve(directory)))
+      assert.equal(new Set(dirs).size, dirs.length, "the same directory must not be probed twice")
+      assert.equal(kiloLanceDbDirectory(home), dirs[0], "the singular helper keeps returning the first choice")
+    })
+  })
+
+  test("the KILO_INDEX_KILO_LANCEDB_DIR override wins and collapses duplicates", () => {
+    const home = makeHome()
+    const state = mkdtempSync(path.join(os.tmpdir(), "oi-state-"))
+    homes.push(state)
+    const override = path.join(state, "kilo", "indexing", "lancedb")
+
+    withEnv({ XDG_STATE_HOME: state, LOCALAPPDATA: undefined, KILO_INDEX_KILO_LANCEDB_DIR: override }, () => {
+      const dirs = kiloLanceDbDirectories(home)
+      assert.equal(dirs[0], path.resolve(override))
+      assert.equal(
+        dirs.filter((directory) => directory === path.resolve(override)).length,
+        1,
+        "an override naming a default location must appear once",
+      )
+    })
   })
 })
 

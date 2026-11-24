@@ -275,4 +275,17 @@ export interface IndexReport {
     kind: "qdrant" | "lancedb"
     chunks: number
   }
+  /**
+   * Every Kilo source that seeded this build, in import order.
+   *
+   * A linked worktree imports two: the delta indexed from the worktree itself
+   * and the baseline from the main checkout. `imported` keeps naming the
+   * primary one so callers written before this field keep working.
+   */
+  importedSources?: Array<{
+    source: string
+    kind: "qdrant" | "lancedb"
+    chunks: number
+    role?: "baseline" | "delta"
+  }>
 }

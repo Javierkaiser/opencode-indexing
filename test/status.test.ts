@@ -1,8 +1,11 @@
 import assert from "node:assert/strict"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import * as os from "node:os"
+import * as path from "node:path"
 import { test } from "node:test"
 
 import { getStatus } from "../src/status.ts"
-import { kiloCollectionCandidates } from "../src/kilo-store.ts"
+import { kiloCollectionCandidates, KILO_METADATA_ID } from "../src/kilo-store.ts"
 import type { Qdrant } from "../src/qdrant.ts"
 import type { VectorStoreAdapter, VectorStoreInfo } from "../src/vector-store.ts"
 import type { EmbeddingProfile, IndexingSettings, KVStore } from "../src/types.ts"
@@ -208,4 +211,110 @@ test("with searchKilo on the Kilo-only advice is unchanged", async () => {
   })
 
   assert.match(status.recommendation, /kilo/i)
+})
+
+/** A Qdrant whose Kilo collection carries a specific metadata payload. */
+function qdrantWithKiloMeta(root: string, payload: Record<string, unknown>): Qdrant {
+  const collection = kiloCollectionCandidates(root)[0]!
+  return {
+    async listCollections(): Promise<string[]> {
+      return [collection]
+    },
+    async getCollection(): Promise<Record<string, unknown>> {
+      return { points_count: 4242 }
+    },
+    async retrieve(): Promise<unknown[]> {
+      return [{ id: KILO_METADATA_ID, payload }]
+    },
+    async collectionExists(): Promise<boolean> {
+      return true
+    },
+  } as unknown as Qdrant
+}
+
+test("a provider this plugin cannot call is not sold as a model mismatch", async () => {
+  // "Switch to the matching model" is impossible advice for a source built with
+  // Bedrock: there is no model choice that makes it importable.
+  const root = "D:\\Projects\\demo"
+  const status = await getStatus({
+    qdrant: qdrantWithKiloMeta(root, {
+      embedding_provider: "bedrock",
+      embedding_model_id: "amazon.titan-embed-text-v2",
+      embedding_dimension: 1024,
+      index_schema: 2,
+      indexing_complete: true,
+    }),
+    kv: memoryKv(),
+    root,
+    settings: settings(),
+    ownStore: ownStore(undefined, 0),
+  })
+
+  assert.equal(status.kiloSources[0]?.reason, "provider")
+  assert.match(status.recommendation, /bedrock/)
+  assert.doesNotMatch(status.recommendation, /switch to the matching model/)
+})
+
+test("a newer index schema is named, with the action that works", async () => {
+  const root = "D:\\Projects\\demo"
+  const status = await getStatus({
+    qdrant: qdrantWithKiloMeta(root, {
+      embedding_provider: "mistral",
+      embedding_model_id: "codestral-embed-2505",
+      embedding_dimension: 1536,
+      index_schema: 3,
+      indexing_complete: true,
+    }),
+    kv: memoryKv(),
+    root,
+    settings: settings(),
+    ownStore: ownStore(undefined, 0),
+  })
+
+  assert.equal(status.kiloSources[0]?.reason, "schema")
+  assert.match(status.recommendation, /schema 3/)
+  assert.match(status.recommendation, /upgrade the plugin/)
+})
+
+test("a linked worktree reports its baseline instead of claiming there is no Kilo index", async () => {
+  // Kilo indexed the main checkout, so the linked worktree has no collection of
+  // its own. "Kilo: none" was wrong: the baseline is right there, and the
+  // summary read as if nothing could be imported.
+  const main = mkdtempSync(path.join(os.tmpdir(), "oi-status-main-"))
+  const linked = mkdtempSync(path.join(os.tmpdir(), "oi-status-linked-"))
+  try {
+    writeFileSync(path.join(linked, ".git"), `gitdir: ${path.join(main, ".git", "worktrees", "feature")}\n`)
+    const baseline = kiloCollectionCandidates(main)[0]!
+    const qdrant = {
+      async listCollections(): Promise<string[]> {
+        return [baseline]
+      },
+      async getCollection(name: string): Promise<Record<string, unknown> | null> {
+        return name === baseline ? { points_count: 99 } : null
+      },
+      async retrieve(): Promise<unknown[]> {
+        return []
+      },
+      async collectionExists(name: string): Promise<boolean> {
+        return name === baseline
+      },
+    } as unknown as Qdrant
+
+    const status = await getStatus({
+      qdrant,
+      kv: memoryKv(),
+      root: linked,
+      settings: settings(),
+      ownStore: ownStore(undefined, 0),
+    })
+
+    assert.equal(status.kilo.collection, baseline, "the effective source must not be reported as none")
+    assert.equal(status.kilo.points, 99)
+    assert.equal(status.kiloSources[0]?.role, "baseline")
+    assert.doesNotMatch(status.recommendation, /No index found/)
+    assert.match(status.recommendation, /import it without re-embedding/)
+  } finally {
+    rmSync(main, { recursive: true, force: true })
+    rmSync(linked, { recursive: true, force: true })
+  }
 })

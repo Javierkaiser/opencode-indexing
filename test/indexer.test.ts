@@ -1,12 +1,15 @@
 import * as assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { existsSync, mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 
-import { runIndex, seedImportedManifest, embeddingConcurrency } from "../src/indexer.ts"
+import { runIndex, seedImportedManifest, embeddingConcurrency, planKiloImport } from "../src/indexer.ts"
 import { emptyManifest, loadManifest, saveManifest, setRecord } from "../src/manifest.ts"
 import { createMemoryStorage } from "../src/storage.ts"
+import { KILO_METADATA_ID, kiloCollectionCandidates } from "../src/kilo-store.ts"
+import type { KiloSourceInfo } from "../src/import.ts"
 import type { EmbeddingProfile, IndexingSettings, KVStore, QdrantPoint, QueryHit } from "../src/types.ts"
 import type { ExportBatch, StoreSearchOptions, VectorStoreAdapter, VectorStoreInfo } from "../src/vector-store.ts"
 
@@ -551,5 +554,286 @@ describe("imported manifest seeding (A4)", () => {
     assert.equal(absent.hash, "hash-missing")
     assert.equal(absent.size, -1, "a missing file stays undetectable as unchanged")
     assert.equal(absent.mtimeMs, 0)
+  })
+
+  test("verifyAll keeps every record stale so the next scan re-hashes it", async () => {
+    // A baseline hash was computed in the main checkout, so even an existing
+    // file has to be read here before its content is trusted.
+    const root = makeWorkspace()
+    const manifest = emptyManifest(root, "collection", PROFILE)
+    const present = path.join("src", "a.ts")
+    writeFileSync(path.join(root, present), "export const a = 1\n")
+
+    await seedImportedManifest(manifest, root, { [present]: "baseline-hash" }, { verifyAll: true })
+
+    const record = manifest.files[present]!
+    assert.equal(record.hash, "baseline-hash")
+    assert.equal(record.size, -1, "the record must look changed to the scan")
+    assert.equal(record.mtimeMs, 0)
+  })
+})
+
+describe("Kilo import planning (B4)", () => {
+  const source = (overrides: Partial<KiloSourceInfo> & { name: string }): KiloSourceInfo => ({
+    kind: "qdrant",
+    pointsCount: 1,
+    compatible: true,
+    ...overrides,
+  })
+
+  test("a single workspace keeps the first compatible source, as before", () => {
+    const plan = planKiloImport(
+      [source({ name: "incompatible", compatible: false, reason: "profile" }), source({ name: "usable" })],
+      PROFILE,
+    )
+    assert.deepEqual(plan.steps.map((step) => step.source.name), ["usable"])
+    assert.equal(plan.steps[0]!.skipRole, undefined)
+    assert.equal(plan.verifyAll, false)
+    assert.deepEqual(plan.warnings, [])
+    assert.equal(plan.unavailable, undefined)
+  })
+
+  test("the worktree delta shadows the baseline", () => {
+    const plan = planKiloImport(
+      [source({ name: "main", role: "baseline" }), source({ name: "feature", role: "delta" })],
+      PROFILE,
+    )
+
+    assert.deepEqual(
+      plan.steps.map((step) => [step.source.name, step.skipRole]),
+      [["feature", undefined], ["main", "delta"]],
+      "delta first, and the baseline skips everything the delta covers",
+    )
+    assert.equal(plan.verifyAll, true, "baseline hashes describe the main checkout and must be re-checked here")
+    assert.deepEqual(plan.warnings, [])
+  })
+
+  test("baseline only imports it, forces verification and says the delta is missing", () => {
+    const plan = planKiloImport([source({ name: "main", role: "baseline" })], PROFILE)
+
+    assert.deepEqual(plan.steps.map((step) => step.source.name), ["main"])
+    assert.equal(plan.verifyAll, true, "baseline hashes describe the main checkout")
+    assert.match(plan.warnings.join(" "), /delta index is unavailable/)
+    assert.match(plan.warnings.join(" "), /scan that follows/)
+  })
+
+  test("delta only imports it and says the baseline is missing", () => {
+    const plan = planKiloImport([source({ name: "feature", role: "delta" })], PROFILE)
+
+    assert.deepEqual(plan.steps.map((step) => step.source.name), ["feature"])
+    assert.equal(plan.verifyAll, false, "the delta was indexed from this checkout")
+    assert.match(plan.warnings.join(" "), /baseline index is unavailable/)
+    assert.match(plan.warnings.join(" "), /scan that follows/)
+  })
+
+  test("neither worktree source is compatible: the delta's reason is the actionable one", () => {
+    const plan = planKiloImport(
+      [
+        source({ name: "main", role: "baseline", compatible: false, reason: "provider" }),
+        source({
+          name: "feature",
+          role: "delta",
+          compatible: false,
+          reason: "profile",
+          profile: PROFILE,
+        }),
+      ],
+      { ...PROFILE, dimension: 8 },
+    )
+
+    assert.deepEqual(plan.steps, [])
+    assert.match(plan.unavailable!, /feature, delta/)
+    assert.match(plan.unavailable!, /does not match/)
+    assert.doesNotMatch(plan.unavailable!, /cannot embed with/, "the delta's reason wins over the baseline's")
+  })
+
+  test("a refused single source names the provider or schema, not always a profile mismatch", () => {
+    const provider = planKiloImport(
+      [
+        source({
+          name: "ws-bedrock",
+          compatible: false,
+          reason: "provider",
+          profile: {
+            provider: "bedrock" as unknown as EmbeddingProfile["provider"],
+            modelId: "amazon.titan-embed-text-v2",
+            dimension: 1024,
+          },
+        }),
+      ],
+      PROFILE,
+    )
+    assert.equal(provider.steps.length, 0)
+    assert.match(provider.unavailable!, /bedrock/)
+    assert.match(provider.unavailable!, /cannot embed with/)
+    assert.doesNotMatch(provider.unavailable!, /embedding profile does not match/)
+
+    const schema = planKiloImport([source({ name: "ws-new", compatible: false, reason: "schema", schema: 3 })], PROFILE)
+    assert.match(schema.unavailable!, /schema 3/)
+    assert.match(schema.unavailable!, /\(1\/2\)/)
+  })
+
+  test("no sources means nothing to plan and nothing to report", () => {
+    const plan = planKiloImport([], PROFILE)
+    assert.deepEqual(plan.steps, [])
+    assert.equal(plan.unavailable, undefined)
+    assert.deepEqual(plan.warnings, [])
+  })
+})
+
+/** A Kilo-shaped chunk point, as both the import and the scan would see one. */
+function kiloPoint(id: string, filePath: string, fileHash: string): QdrantPoint {
+  return {
+    id,
+    vector: [0.1, 0.2, 0.3, 0.4],
+    payload: {
+      filePath,
+      fileHash,
+      codeChunk: `chunk for ${filePath}`,
+      startLine: 1,
+      endLine: 2,
+      segmentHash: `seg-${id}`,
+    },
+  }
+}
+
+/** Qdrant holding one Kilo collection per workspace root, with matching metadata. */
+function fakeKiloQdrant(
+  collections: Map<string, QdrantPoint[]>,
+  profile: EmbeddingProfile,
+  unreadable: ReadonlySet<string> = new Set(),
+) {
+  return {
+    async listCollections() {
+      return [...collections.keys()]
+    },
+    async collectionExists(name: string) {
+      return collections.has(name)
+    },
+    async getCollection(name: string) {
+      return collections.has(name) ? { points_count: collections.get(name)!.length } : null
+    },
+    async retrieve(name: string) {
+      if (!collections.has(name)) return []
+      return [
+        {
+          id: KILO_METADATA_ID,
+          payload: {
+            embedding_provider: profile.provider,
+            embedding_model_id: profile.modelId,
+            embedding_dimension: profile.dimension,
+            index_schema: 2,
+            indexing_complete: true,
+          },
+        },
+      ]
+    },
+    async scroll(name: string) {
+      if (unreadable.has(name)) throw new Error(`collection ${name} is unavailable`)
+      return { points: collections.get(name) ?? [] }
+    },
+  } as never
+}
+
+describe("runIndex worktree import (B4)", () => {
+  test("imports the delta first and the baseline without copying delta files", async () => {
+    const main = makeWorkspace()
+    const linked = makeWorkspace()
+    // A linked worktree is a `.git` file pointing into the main checkout's
+    // metadata, which is all mainWorktree() needs to find the baseline.
+    writeFileSync(path.join(linked, ".git"), `gitdir: ${path.join(main, ".git", "worktrees", "feature")}\n`)
+    // Kilo stores sha256 of the file content; using the real hash here keeps the
+    // post-import verification from mistaking a valid delta for a changed file.
+    const deltaContent = fileWithChunk("a", 1)
+    const deltaHash = createHash("sha256").update(deltaContent).digest("hex")
+    writeFileSync(path.join(linked, "src", "a.ts"), deltaContent)
+
+    const baselineName = kiloCollectionCandidates(main)[0]!
+    const deltaName = kiloCollectionCandidates(linked)[0]!
+    const collections = new Map<string, QdrantPoint[]>([
+      [deltaName, [kiloPoint("delta-a", "src\\a.ts", deltaHash)]],
+      [
+        baselineName,
+        [kiloPoint("baseline-a", "src\\a.ts", "baseline-hash"), kiloPoint("baseline-b", "src\\b.ts", "baseline-hash")],
+      ],
+    ])
+    const store = new FakeStore(path.join(linked, ".lancedb", "db"))
+    const kv = createMemoryStorage()
+    const settings = makeSettings(linked, { importFromKilo: true })
+
+    const report = await runIndex(
+      {
+        kv,
+        root: linked,
+        settings,
+        store,
+        embedder: fakeEmbedder,
+        qdrant: fakeKiloQdrant(collections, PROFILE),
+      },
+      { mode: "build" },
+    )
+
+    assert.equal(report.errors.length, 0, report.errors.join("; "))
+    assert.deepEqual(
+      report.importedSources?.map((entry) => [entry.source, entry.role, entry.chunks]),
+      [
+        [deltaName, "delta", 1],
+        [baselineName, "baseline", 1],
+      ],
+      "delta first, and the baseline copies only what the delta does not cover",
+    )
+    assert.equal(report.imported?.source, deltaName, "the primary source stays the delta")
+    assert.equal(report.imported?.chunks, 1)
+
+    const manifest = await loadManifest(kv, linked)
+    assert.equal(manifest!.files["src\\a.ts"]!.hash, deltaHash, "the delta's hash wins for a shared file")
+    assert.equal(manifest!.files["src\\b.ts"], undefined, "a baseline-only file missing here is deleted by the scan")
+
+    const kept = [...store.points.values()]
+    assert.equal(kept.length, 1)
+    assert.equal(kept[0]!.payload.fileHash, deltaHash)
+  })
+
+  test("a failed delta never leaves its files trusted against baseline hashes", async () => {
+    const main = makeWorkspace()
+    const linked = makeWorkspace()
+    writeFileSync(path.join(linked, ".git"), `gitdir: ${path.join(main, ".git", "worktrees", "feature")}\n`)
+    writeFileSync(path.join(linked, "src", "a.ts"), fileWithChunk("a", 1))
+
+    const baselineName = kiloCollectionCandidates(main)[0]!
+    const deltaName = kiloCollectionCandidates(linked)[0]!
+    const collections = new Map<string, QdrantPoint[]>([
+      [deltaName, [kiloPoint("delta-a", "src\\a.ts", "delta-hash")]],
+      [baselineName, [kiloPoint("baseline-a", "src\\a.ts", "baseline-hash")]],
+    ])
+    const store = new FakeStore(path.join(linked, ".lancedb", "db"))
+    const kv = createMemoryStorage()
+    const settings = makeSettings(linked, { importFromKilo: true })
+
+    const report = await runIndex(
+      {
+        kv,
+        root: linked,
+        settings,
+        store,
+        embedder: fakeEmbedder,
+        qdrant: fakeKiloQdrant(collections, PROFILE, new Set([deltaName])),
+      },
+      { mode: "build" },
+    )
+
+    assert.ok(
+      report.errors.some((error) => error.includes("import failed (delta)")),
+      `the delta failure must be reported; errors=${JSON.stringify(report.errors)}`,
+    )
+    assert.equal(report.imported?.source, baselineName, "the baseline still seeds what it can")
+
+    const manifest = await loadManifest(kv, linked)
+    const record = manifest!.files["src\\a.ts"]!
+    assert.notEqual(
+      record.hash,
+      "baseline-hash",
+      "the scan must re-hash the file instead of trusting the main checkout's hash",
+    )
   })
 })

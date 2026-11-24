@@ -6,7 +6,13 @@ import { chunkFile } from "./chunking.ts"
 import { mapConcurrent } from "./concurrency.ts"
 import { createEmbedder } from "./embedder.ts"
 import { deleteRecords, diffFiles, emptyManifest, loadManifest, saveManifest, setRecord } from "./manifest.ts"
-import { discoverKiloSources, importFromKilo } from "./import.ts"
+import {
+  discoverKiloSources,
+  importFromKilo,
+  type ImportReport,
+  type KiloSourceInfo,
+  type KiloSourceRole,
+} from "./import.ts"
 import { createOwnStore, createSettingsQdrant, recreateOwnStore } from "./store-factory.ts"
 import { scanWorkspace } from "./scanner.ts"
 import { profileKey } from "./registry.ts"
@@ -15,6 +21,7 @@ import type { Qdrant } from "./qdrant.ts"
 import type {
   Chunk,
   Embedder,
+  EmbeddingProfile,
   FileEntry,
   IndexReport,
   IndexingSettings,
@@ -82,17 +89,25 @@ export function embeddingConcurrency(settings: IndexingSettings): number {
  * makes every later refresh re-hash the whole workspace, so one bounded `stat`
  * pass fills in the real values; files that vanished keep `-1/0` and are
  * re-checked by the next scan.
+ *
+ * `verifyAll` keeps every record at `-1/0` instead: hashes imported from the
+ * main worktree's baseline describe another checkout, so the scan that follows
+ * has to read the worktree's files to confirm them.
  */
 export async function seedImportedManifest(
   manifest: Manifest,
   root: string,
   files: Record<string, string>,
+  options: { verifyAll?: boolean } = {},
 ): Promise<void> {
   const seeded = await mapConcurrent(
     Object.entries(files),
     IMPORT_STAT_CONCURRENCY,
     async ([relPath, hash]) => {
       const indexedAt = Date.now()
+      if (options.verifyAll) {
+        return [relPath, { hash, size: -1, mtimeMs: 0, indexedAt }] as const
+      }
       try {
         const stats = await stat(path.join(root, relPath))
         return [relPath, { hash, size: stats.size, mtimeMs: stats.mtimeMs, indexedAt }] as const
@@ -102,6 +117,123 @@ export async function seedImportedManifest(
     },
   )
   for (const [relPath, record] of seeded) setRecord(manifest, relPath, record)
+}
+
+/** One import step: a source plus the role whose files it must not copy again. */
+export interface KiloImportStep {
+  source: KiloSourceInfo
+  skipRole?: KiloSourceRole
+}
+
+export interface KiloImportPlan {
+  /** Sources to import, in order. Empty when nothing can be imported. */
+  steps: KiloImportStep[]
+  /** Seed every imported file as stale so the following scan re-hashes it. */
+  verifyAll: boolean
+  /** Non-fatal notices for the report (a role missing from the worktree pair). */
+  warnings: string[]
+  /** Why no source can be imported, when sources were found but refused. */
+  unavailable?: string
+}
+
+/**
+ * Decide what a build imports from Kilo, and in which order.
+ *
+ * A linked worktree has two sources: the delta indexed from the worktree
+ * itself, and the baseline from the main checkout that Kilo usually indexed.
+ * The delta goes first and the baseline skips its files, so the hashes that
+ * reach the manifest describe this checkout rather than the main one.
+ */
+export function planKiloImport(
+  sources: readonly KiloSourceInfo[],
+  targetProfile?: EmbeddingProfile,
+): KiloImportPlan {
+  const compatible = sources.filter((source) => source.compatible)
+  const worktree = sources.some((source) => source.role !== undefined)
+
+  if (!worktree) {
+    // One workspace, one index: the old choice (first compatible) still holds.
+    const first = compatible[0]
+    if (first) return { steps: [{ source: first }], verifyAll: false, warnings: [] }
+    return {
+      steps: [],
+      verifyAll: false,
+      warnings: [],
+      unavailable: sources[0] ? unavailableMessage(sources[0], targetProfile) : undefined,
+    }
+  }
+
+  const delta = compatible.find((source) => source.role === "delta")
+  const baseline = compatible.find((source) => source.role === "baseline")
+
+  if (delta && baseline) {
+    return {
+      steps: [{ source: delta }, { source: baseline, skipRole: "delta" }],
+      // The delta's hashes describe this checkout, but the baseline's describe
+      // the main one. A file that changed here without being re-indexed in Kilo
+      // would otherwise be seeded with a hash the scan trusts and never
+      // verifies; re-hash everything once instead.
+      verifyAll: true,
+      warnings: [],
+    }
+  }
+  if (baseline) {
+    return {
+      steps: [{ source: baseline }],
+      // The baseline describes the main checkout: its hashes cannot be trusted
+      // for this one, so every record is seeded stale and the scan re-reads it.
+      verifyAll: true,
+      warnings: [
+        "the worktree's Kilo delta index is unavailable, so only the main checkout's baseline is imported; " +
+          "files changed in this worktree are re-indexed by the scan that follows",
+      ],
+    }
+  }
+  if (delta) {
+    return {
+      steps: [{ source: delta }],
+      verifyAll: false,
+      warnings: [
+        "the main checkout's Kilo baseline index is unavailable, so only this worktree's delta is imported; " +
+          "the rest of the workspace is indexed by the scan that follows",
+      ],
+    }
+  }
+
+  // Neither checkout is importable. The delta is the more actionable one to
+  // name: it is what this workspace would use, and a profile fix can enable it.
+  const unusable =
+    sources.find((source) => source.role === "delta" && source.reason) ??
+    sources.find((source) => source.role === "baseline" && source.reason) ??
+    sources.find((source) => source.reason)
+  return {
+    steps: [],
+    verifyAll: false,
+    warnings: [],
+    unavailable: unusable ? unavailableMessage(unusable, targetProfile) : undefined,
+  }
+}
+
+/** Why a refused source is refused, and what the user can do about it. */
+function unavailableMessage(source: KiloSourceInfo, targetProfile?: EmbeddingProfile): string {
+  const label = `${source.kind} ${source.name}${source.role ? `, ${source.role}` : ""}`
+  switch (source.reason) {
+    case "provider":
+      return (
+        `Kilo index found (${label}) but it was built with the ${source.profile?.provider ?? "unknown"} embedding provider, ` +
+        `which this plugin cannot embed with; indexing from scratch`
+      )
+    case "schema":
+      return (
+        `Kilo index found (${label}) but it uses index schema ${source.schema ?? "unknown"}, ` +
+        `which this build does not read (1/2); indexing from scratch`
+      )
+    default:
+      return (
+        `Kilo index found (${label}) but its embedding profile does not match ` +
+        `${targetProfile ? profileKey(targetProfile) : "the configured model"}; indexing from scratch`
+      )
+  }
 }
 
 function sha256Buffer(buf: Buffer): string {
@@ -120,8 +252,10 @@ async function tryRead(root: string, relPath: string): Promise<Buffer | undefine
  * Index the workspace into our own store.
  * - refresh: incremental (manifest diff).
  * - build: creates/validates the store; when `importFromKilo` is enabled and a
- *   compatible Kilo index exists, seeds from it WITHOUT embedding calls, then
- *   incrementally indexes the delta. Otherwise indexes everything from scratch.
+ *   compatible Kilo index exists, seeds from it WITHOUT embedding calls — both
+ *   checkouts when the workspace is a linked worktree — then incrementally
+ *   indexes what the import did not cover. Otherwise indexes everything from
+ *   scratch.
  */
 export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promise<IndexReport> {
   const started = Date.now()
@@ -220,38 +354,70 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
         targetProfile: profile,
         onProblem: (message) => problems.push(message),
       })
-      const source = sources.find((item) => item.compatible) ?? sources[0]
-      if (source && source.compatible) {
-        const importReport = await importFromKilo({
-          root,
-          source,
-          target: store,
-          targetProfile: profile,
-          qdrant,
-          onProgress: (update) =>
-            deps.onProgress?.({
-              phase: "importing",
-              processed: update.imported,
-              total: update.total ?? 0,
-            }),
-        })
-        report.chunksUpserted += importReport.imported
-        report.batches += importReport.batches
-        report.imported = { source: source.name, kind: source.kind, chunks: importReport.imported }
-        // Seed the manifest so the incremental pass below only handles deltas.
-        await seedImportedManifest(manifest, root, importReport.files)
-        manifest.collection = store.name
-        forceFull = false
-      } else if (source && !source.compatible) {
-        report.errors.push(
-          `Kilo index found (${source.name}) but its embedding profile does not match ${profile.provider}:${profile.modelId}:${profile.dimension}; indexing from scratch`,
-        )
-      } else if (problems.length > 0) {
+      const plan = planKiloImport(sources, profile)
+      report.warnings.push(...plan.warnings)
+      if (plan.unavailable) {
+        report.errors.push(plan.unavailable)
+      } else if (plan.steps.length === 0 && problems.length > 0) {
         // No usable source and a reason why. Without this the build reads as a
         // workspace that has no Kilo index at all, and the full re-embedding
         // that follows looks like the normal path rather than the expensive
         // fallback it is.
         report.errors.push(`${problems.join(" · ")} Indexing from scratch instead.`)
+      }
+
+      // Files imported per role, so a later baseline can skip what the delta
+      // already covers instead of copying the older hashes over it.
+      const filesByRole = new Map<KiloSourceRole, Record<string, string>>()
+      const imported: ImportReport[] = []
+      for (const step of plan.steps) {
+        const skipped = step.skipRole ? filesByRole.get(step.skipRole) : undefined
+        try {
+          const importReport = await importFromKilo({
+            root,
+            source: step.source,
+            target: store,
+            targetProfile: profile,
+            qdrant,
+            skipFiles: skipped ? new Set(Object.keys(skipped)) : undefined,
+            onProgress: (update) =>
+              deps.onProgress?.({
+                phase: "importing",
+                processed: update.imported,
+                total: update.total ?? 0,
+              }),
+          })
+          imported.push(importReport)
+          if (step.source.role) {
+            filesByRole.set(step.source.role, { ...filesByRole.get(step.source.role), ...importReport.files })
+          }
+          report.chunksUpserted += importReport.imported
+          report.batches += importReport.batches
+        } catch (error) {
+          // One refused source must not discard the other's work: the delta of
+          // a worktree is still worth importing when its baseline fails.
+          const role = step.source.role ? ` (${step.source.role})` : ""
+          report.errors.push(`import failed${role}: ${describeError(error)}`)
+        }
+      }
+
+      if (imported.length > 0) {
+        // Delta hashes win: they were indexed from this checkout, while the
+        // baseline describes the main one.
+        const files: Record<string, string> = {}
+        for (const entry of imported) if (entry.source.role !== "delta") Object.assign(files, entry.files)
+        for (const entry of imported) if (entry.source.role === "delta") Object.assign(files, entry.files)
+        await seedImportedManifest(manifest, root, files, { verifyAll: plan.verifyAll })
+        manifest.collection = store.name
+        forceFull = false
+        const primary = imported.find((entry) => entry.source.role === "delta") ?? imported[0]!
+        report.imported = { source: primary.source.name, kind: primary.source.kind, chunks: primary.imported }
+        report.importedSources = imported.map((entry) => ({
+          source: entry.source.name,
+          kind: entry.source.kind,
+          chunks: entry.imported,
+          ...(entry.source.role ? { role: entry.source.role } : {}),
+        }))
       }
     } catch (error) {
       report.errors.push(`import failed: ${describeError(error)}`)

@@ -122,6 +122,27 @@ describe("IndexingRpc contract", () => {
     assert.deepEqual(output.required, ["sources"], "an empty list with problems is still a valid answer")
   })
 
+  test("kilo.discover carries worktree roles and compatibility reasons", () => {
+    // Both fields are optional and additive: the server may omit them, and a
+    // validator must not reject a payload that includes them.
+    const output = IndexingRpc.methods["kilo.discover"].output as unknown as {
+      properties: {
+        sources: {
+          items: {
+            properties: Record<string, { type?: string; enum?: readonly string[] }>
+            required?: readonly string[]
+            additionalProperties?: boolean
+          }
+        }
+      }
+    }
+    const items = output.properties.sources.items
+    assert.deepEqual([...(items.properties.role?.enum ?? [])], ["baseline", "delta"])
+    assert.deepEqual([...(items.properties.reason?.enum ?? [])], ["profile", "schema", "provider"])
+    assert.equal(items.additionalProperties, true, "the source shape stays additive")
+    assert.deepEqual([...(items.required ?? [])], ["kind", "name", "compatible"])
+  })
+
   test("status.get declares the reachability flag both UIs read", () => {
     // The server returns it and the footer/page read it to tell "nothing
     // indexed" from "could not look", but it was missing from the contract.
@@ -129,6 +150,16 @@ describe("IndexingRpc contract", () => {
       properties: Record<string, { type?: string }>
     }
     assert.equal(output.properties.ownStoreReachable?.type, "boolean")
+  })
+
+  test("status.get keeps room for additive worktree reporting", () => {
+    // `kiloCollection` stays a single value, but the effective source can be a
+    // baseline from the main checkout and a role/note can be attached later.
+    // Tightening this object would make that a contract break for no reason.
+    const output = IndexingRpc.methods["status.get"].output as unknown as {
+      additionalProperties?: boolean
+    }
+    assert.equal(output.additionalProperties, true)
   })
 
   test("index.import does not declare a rebuild the handler ignores", () => {

@@ -6,7 +6,9 @@ import {
   claimAutoRefreshSlot,
   invalidateAutoRefresh,
   releaseAutoRefreshSlot,
+  sourceLine,
 } from "../src/tools.ts"
+import type { EmbeddingProfile } from "../src/types.ts"
 
 /**
  * Auto-refresh scans the workspace before every search when enabled. The scan
@@ -18,6 +20,32 @@ const ROOT = "D:\\Projects\\demo"
 const OTHER = "D:\\Projects\\other"
 
 beforeEach(() => invalidateAutoRefresh())
+
+describe("source line", () => {
+  test("names the worktree role and why the source is refused", () => {
+    const line = sourceLine({
+      kind: "qdrant",
+      name: "ws-abc",
+      pointsCount: 4242,
+      profile: { provider: "bedrock" as EmbeddingProfile["provider"], modelId: "titan", dimension: 1024 },
+      complete: true,
+      schema: 2,
+      compatible: false,
+      reason: "provider",
+      role: "baseline",
+    })
+
+    assert.match(line, /\[baseline\]/, "the role tells the user which checkout it came from")
+    assert.match(line, /unsupported provider: bedrock/, "a bare INCOMPATIBLE hides the actionable part")
+  })
+
+  test("a compatible source stays free of refusal noise", () => {
+    const line = sourceLine({ kind: "qdrant", name: "ws-abc", pointsCount: 10, compatible: true, role: "delta" })
+    assert.match(line, /\[delta\]/)
+    assert.match(line, /compatible/)
+    assert.doesNotMatch(line, /INCOMPATIBLE/)
+  })
+})
 
 describe("auto-refresh throttle", () => {
   test("two searches inside the interval share one check", () => {

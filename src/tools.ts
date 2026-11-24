@@ -122,14 +122,27 @@ const jsonSchema = (properties: Record<string, unknown>, required: string[] = []
   additionalProperties: false,
 })
 
-function sourceLine(source: KiloSourceInfo): string {
+/** One line describing a Kilo import source, including its role and why it is refused. */
+export function sourceLine(source: KiloSourceInfo): string {
   const profile = source.profile
     ? `${source.profile.provider}:${source.profile.modelId}:${source.profile.dimension}`
     : "unknown profile"
   const points = source.pointsCount ?? "?"
   const complete = source.complete === true ? "complete" : source.complete === false ? "INCOMPLETE" : "unknown state"
-  const compat = source.compatible ? "compatible" : "INCOMPATIBLE (different embedding profile)"
-  return `${source.kind} ${source.name} — ${points} points, ${complete}, ${profile}, ${compat}`
+  const compat = source.compatible ? "compatible" : incompatibilityLine(source)
+  const role = source.role ? ` [${source.role}]` : ""
+  return `${source.kind} ${source.name}${role} — ${points} points, ${complete}, ${profile}, ${compat}`
+}
+
+function incompatibilityLine(source: KiloSourceInfo): string {
+  switch (source.reason) {
+    case "provider":
+      return `INCOMPATIBLE (unsupported provider: ${source.profile?.provider ?? "unknown"})`
+    case "schema":
+      return `INCOMPATIBLE (unsupported index schema: ${source.schema ?? "unknown"})`
+    default:
+      return "INCOMPATIBLE (different embedding profile)"
+  }
 }
 
 /**
