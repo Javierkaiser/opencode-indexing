@@ -7,7 +7,7 @@ import { settingsFilePath } from "./settings.ts"
  * "install X" messages quote it, and a stale value sends people to a version
  * the plugin was never tested with.
  */
-export const LANCEDB_VERSION = "0.40.0"
+export const LANCEDB_VERSION = "0.41.0"
 
 /** `platform-arch`, the way a native package would be named. */
 export function platformId(platform: string = process.platform, arch: string = process.arch): string {
