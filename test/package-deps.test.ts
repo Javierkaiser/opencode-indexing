@@ -285,6 +285,28 @@ describe("published dependencies", () => {
     if (themePeer) {
       assert.equal(pkg.devDependencies?.["@opencode/theme"], themePeer, "the theme peer is exact and must match the SDK")
     }
+
+    // The theme is not just an exact peer of the SDK: it pins its own
+    // OpenTUI peer exactly (`@opencode/theme` 2.4.1 wants `@opentui/core`
+    // 0.9.4). A caret on the devDependency would resolve a newer OpenTUI and
+    // npm would report an invalid peer while the typecheck looked fine.
+    const theme = JSON.parse(
+      readFileSync(join(root, "node_modules", "@opencode", "theme", "package.json"), "utf8"),
+    ) as { version: string; peerDependencies?: Record<string, string> }
+    assert.equal(
+      pkg.devDependencies?.["@opencode/theme"],
+      theme.version,
+      "the theme devDependency must be the installed theme, not only the SDK's range",
+    )
+    const themeOpenTui = theme.peerDependencies?.["@opentui/core"]
+    if (themeOpenTui) {
+      assert.equal(
+        pkg.devDependencies?.["@opentui/core"],
+        themeOpenTui,
+        "the theme's @opentui/core peer is exact and must match the devDependency",
+      )
+    }
+
     for (const name of ["@opentui/core", "@opentui/solid", "solid-js"]) {
       const peer = installed.peerDependencies?.[name]
       if (!peer) continue

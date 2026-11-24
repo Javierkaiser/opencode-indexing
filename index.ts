@@ -296,8 +296,12 @@ Behavior:
             input: tool.input as never,
             options: { namespace: "indexing", ...(tool.permission ? { permission: tool.permission } : {}) },
             execute: async (input, context) => {
+              // Do not read `context.signal` here. Since OpenCode 2.4.1 it is a
+              // getter whose first read opts the call into cooperative stop; a
+              // tool that does not observe it would then be asked to finish
+              // instead of being interrupted. None of these tools observes it,
+              // so leaving it unread keeps Stop's existing behaviour.
               const result = await tool.execute(input as Record<string, unknown>, {
-                signal: context.signal,
                 progress: context.progress as never,
               })
               return { content: result.output, metadata: result.metadata as never }

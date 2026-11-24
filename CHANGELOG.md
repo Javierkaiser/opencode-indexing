@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.3] - 2026-11-24
+
+### Changed
+- **The dev toolchain moves to OpenCode 2.4.1.** `@opencode/plugin` and
+  `@opencode/theme` are pinned to exactly 2.4.1 in devDependencies, and
+  `@opentui/core` and `@opentui/solid` to exactly 0.9.4. The OpenTUI pin is not
+  cosmetic: `@opencode/theme` 2.4.1 pins its `@opentui/core` peer to exactly
+  0.9.4, so the caret this repository used before would resolve a newer OpenTUI
+  and leave npm reporting an invalid peer. The consumer peers do not change:
+  `@opencode/plugin >=2.2.7` and `solid-js >=1.9.0`. The Desktop page still uses
+  the settings components added in 2.2.6, so the floor stays 2.2.7; the
+  devDependencies follow the current host (CLI 2.4.1) so the typecheck sees the
+  SDK it ships.
+- **The tool wrapper no longer reads `context.signal`.** OpenCode 2.4.1 turned
+  it into a getter whose first read opts a call into cooperative stop; a tool
+  that never observes it would then be asked to finish instead of being
+  interrupted. None of this plugin's tools observes the signal, so leaving it
+  unread preserves the previous Stop behaviour. The dependency test now also
+  checks the theme's exact `@opentui/core` peer, and the README documents that
+  `@latest` plugins update themselves since 2.4.0.
+
 ## [0.10.2] - 2026-11-10
 
 ### Fixed
@@ -794,7 +815,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.10.2...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.10.3...HEAD
+[0.10.3]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.10.3
 [0.10.2]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.10.2
 [0.10.1]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.10.1
 [0.10.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.10.0
