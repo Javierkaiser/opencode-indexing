@@ -201,15 +201,19 @@ jobs:
             echo "  $version is not on the registry yet (attempt $attempt), waiting 15s"
             sleep 15
           done
-          url=$(npm view "$name@$version" dist.tarball)
+          # The registry tarball URL is deterministic: the file is named after
+          # the package without its scope. `npm view` can still answer 404 for a
+          # version the version endpoint already serves, which is how a release
+          # page was lost, so build the URL from the manifest instead of asking
+          # npm to look the version up again.
+          tarball=$(node -p "require('./package.json').name.replace(/^@[^/]+\//, '') + '-$version.tgz'")
+          url="https://registry.npmjs.org/$name/-/$tarball"
           echo "tarball: $url"
           # Name the asset the way `npm pack` does, so every release page lists
           # the same filename shape instead of a generic `release-asset.tgz`.
           asset=$(node -p "require('./package.json').name.replace(/^@/, '').replace('/', '-') + '-$version.tgz'")
-          # The version endpoint can be visible before the tarball is served:
-          # `npm view` then returns a URL that still 404s, and the release page
-          # is lost to a few seconds of CDN lag. Retry the download itself, not
-          # just the metadata lookup.
+          # The version endpoint can be visible before the tarball is served.
+          # Retry the download itself, not just the metadata lookup.
           for attempt in $(seq 1 40); do
             if curl -fsSL -o "$asset" "$url"; then
               break
