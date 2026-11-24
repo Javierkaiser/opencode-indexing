@@ -144,6 +144,15 @@ describe("Desktop GUI entry", () => {
     assert.match(file, /ctx\.dialogs\.prompt/)
   })
 
+  test("custom model metadata is editable through the native rows", () => {
+    const file = read("src/gui.tsx")
+    assert.match(file, /editModelMetadata/)
+    assert.match(file, /"dimension"/)
+    assert.match(file, /"queryprefix"/)
+    assert.match(file, /"maxinputtokens"/)
+    assert.match(file, /"modelscorethreshold"/)
+  })
+
   test("credentials are typed in a secret prompt and written through their own method", () => {
     // The chat tool refuses secrets; a settings surface is the user typing
     // their own key. A distinct RPC keeps that exception visible instead of

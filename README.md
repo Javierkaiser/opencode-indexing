@@ -250,7 +250,9 @@ Kilo keeps its index in one of two shapes, and this plugin reads both the same
 way: it never writes to either, and the metadata point
 (`f946a536-9af4-4f1f-9f95-7d6efb4647d5`), the chunk payload fields (`filePath`,
 `fileHash`, `codeChunk`, `startLine`, `endLine`, `pathSegments`) and schema 2
-are the same contract in both.
+are the same contract in both. The same two stores are read live by
+`indexing_search`: a Kilo index does not have to be imported for its hits to
+appear.
 
 | Kilo's store | Where the source is | What is read |
 | --- | --- | --- |
@@ -268,6 +270,13 @@ Kilo build that kept the host's directory name, and treats a missing one as
 lives elsewhere, `KILO_INDEX_KILO_LANCEDB_DIR` names the directory that holds
 the per-workspace databases. Kilo's own `KILO_LANCEDB_PATH` is not that setting
 — it points at the native `@lancedb/lancedb` module.
+
+The plugin reads the same project config Kilo reads: `kilo.jsonc`/`kilo.json`
+in the workspace and its ancestors up to the checkout root, plus the
+`.kilo`/`.kilocode` directories, with the same precedence over the global
+`~/.config/kilo` files. That is how a project-level `indexing.vectorStore`,
+`indexing.lancedb.directory` or Qdrant URL is respected. The plugin never writes
+these files and never uses them to change where the own index is stored.
 
 Kilo's indexing is opt-in and off until it is started, so no Kilo index is a
 normal state, not a fault.
@@ -293,18 +302,20 @@ same report names a profile mismatch and a schema this plugin does not read.
 A linked git worktree is not one index. Kilo keeps a **baseline** database for
 the main worktree and a **delta** for the linked one, and merges the two when it
 searches. The import reads both sides and copies what each one holds, so the
-result matches what Kilo would have answered. When only one side exists — the
+result matches what Kilo would have answered. A live search reads both too:
+delta hits win, and a baseline hit is only shown when the file in this checkout
+still has the hash Kilo indexed in the main one. When only one side exists — the
 main worktree was removed, or Kilo never wrote a delta for this worktree — the
-import uses the side it found and says which one was missing, rather than
-reporting that there is no Kilo index. If the workspace is a subdirectory of the
-linked worktree, Kilo mirrors that subdirectory into the main checkout, and the
-import looks for the mirrored baseline there too.
+import and the search use the side they found and say which one was missing,
+rather than reporting that there is no Kilo index. If the workspace is a
+subdirectory of the linked worktree, Kilo mirrors that subdirectory into the
+main checkout, and the plugin looks for the mirrored baseline there too.
 
 ## Tools (namespace `indexing`)
 
 | Tool | Purpose |
 | --- | --- |
-| `indexing_search` | Semantic search across Kilo's index + own index. `{ query, path? }`. Ends with a one-line index status |
+| `indexing_search` | Semantic search across Kilo's live index (Qdrant or LanceDB, baseline + delta) and the own index. `{ query, path? }`. Ends with a one-line index status |
 | `indexing_status` | Backends, Kilo sources available for import, both indexes, freshness, recommendation |
 | `indexing_config` | Effective configuration: backend, provider/model, credentials (masked), search and behavior settings, settings file, Kilo sources. Read-only |
 | `indexing_config_set` | Change one setting and persist it. `{ key, value }`. Refuses credentials |
@@ -470,6 +481,42 @@ first use. See the next section for how far each one has actually been tested.
 | `ollama` | `nomic-embed-text` | `mxbai-embed-large`, `all-minilm`, `bge-m3` | 512 – 8,192 |
 | `openai-compatible` | none | whatever your endpoint serves | probed |
 
+#### Custom models
+
+A model the catalog has never heard of still works through `openai-compatible`,
+and its metadata can be pinned without a code change:
+
+```json
+{
+  "models": {
+    "openai-compatible": {
+      "my-embedding-model": {
+        "dimension": 1024,
+        "queryPrefix": "search_query: ",
+        "maxInputTokens": 32768,
+        "maxBatchItems": 64,
+        "maxBatchTokens": 120000,
+        "scoreThreshold": 0.35
+      }
+    }
+  }
+}
+```
+
+`dimension` is the only field needed for a normal setup; the dimension is also
+probed from the first response when it is absent. `queryPrefix` is applied to
+both documents and queries, matching how Kilo applies it. The other fields tune
+batching and the search threshold. Only `openai-compatible`, `ollama` and
+`local` apply a prefix; the hosted providers ignore it. The `local` provider
+still only loads its bundled weights, so a new local model needs a plugin
+release, not just metadata.
+
+The same metadata is editable from the settings page (**Dimensions → Edit**) or
+with `/indexing-config set dimension|queryprefix|maxinputtokens|modelscorethreshold`.
+A custom entry that changes the dimension or prefix of a mirrored Kilo model is
+allowed, but it warns: an index Kilo built with the original profile will no
+longer import.
+
 #### Local embeddings (no key, no network)
 
 Two static models, and neither runs a neural network: Model2Vec keeps one vector
@@ -599,7 +646,9 @@ cannot embed — an expired cloud key, an exhausted budget, a provider that is n
 configured. That refusal is deliberate: half an answer looks exactly like a
 complete one. `searchKilo: false` (or `KILO_INDEX_SEARCH_KILO=false`) answers
 from the own index only, which is what makes a local model usable in a workspace
-that still has a Kilo collection.
+that still has a Kilo collection. Kilo search follows the project config: it
+reads LanceDB or Qdrant, whichever Kilo writes, and in a linked worktree it
+searches the delta plus the baseline with the hash check described above.
 
 Turning Kilo search off is a choice, and the plugin reports it as one. With
 `searchKilo: false`, `indexing_status` writes that Kilo search is disabled rather
@@ -621,15 +670,17 @@ your back.
 entry, because an import is accepted only when provider, model id and dimension
 match exactly. Models marked *ours* in the table above are not in Kilo's
 registry and can never be imported; `indexing_config` says which is which. A
-provider is the other half: `kilo`, `bedrock` and `vercel-ai-gateway` have no
-adapter here, so an index built with one is reported incompatible — see
+custom `models` entry is not a mirror either: it imports only if its provider,
+model id and dimension happen to match an index Kilo built. A provider is the
+other half: `kilo`, `bedrock` and `vercel-ai-gateway` have no adapter here, so
+an index built with one is reported incompatible — see
 [Which Kilo embedding providers can be imported](#which-kilo-embedding-providers-can-be-imported).
 If your Kilo index uses a different model, set the same provider and model here
 and the import costs nothing.
 
 Settings are stored in `~/.config/opencode/indexing.json` (plugin options → `indexing.json` → environment → defaults). Plugin options in `opencode.json` still work and take precedence. API keys set from the TUI or the Desktop page are written to `indexing.json` in plain text; using the environment (`KILO_INDEX_*`) or plugin options keeps them out of that file.
 
-`~/.config/kilo/kilo.jsonc` is still read, and still supplies the embedding provider, model, dimensions and API keys — and it still says where *Kilo* keeps its index. It no longer decides where this plugin's own index is written; that stopped being coupled so that the default could actually take effect for people running Kilo. See [Where each index lives](#where-each-index-lives).
+The global `~/.config/kilo/kilo.jsonc` is still read and still supplies the plugin's embedding provider, model, dimensions and API keys. Project-level Kilo config is read separately, only to find and read Kilo's index; it does not change the own index's defaults or location. Kilo's config no longer decides where this plugin's own index is written — that stopped being coupled so the default could actually take effect for people running Kilo. See [Where each index lives](#where-each-index-lives).
 
 ## Configuration (optional, `opencode.json`)
 
@@ -715,11 +766,11 @@ Word about data safety: Kilo's indexes (`ws-*` collections and its LanceDB direc
   (~123 MB after quantization). Set a provider key to switch to a cloud model, or
   run Ollama for a local multilingual one.
 - **For the own index: nothing to run.** The default store is embedded LanceDB
-  (`@lancedb/lancedb`, pinned to 0.40.0), so there is no server to start, no
+  (`@lancedb/lancedb`, pinned to 0.41.0), so there is no server to start, no
   port to free and no container to keep alive.
 - **A Qdrant server is only needed if you ask for it**, either by setting
-  `vectorStore=qdrant` or because a Kilo index you want to import lives in Qdrant.
-  In that case the default URL is `http://localhost:6333`.
+  `vectorStore=qdrant` or because a Kilo index you want to import or search lives
+  in Qdrant. In that case the default URL is `http://localhost:6333`.
 - Embedding credentials compatible with the collection you search (the profile is read from the metadata point).
 
 ### Where each index lives
@@ -741,7 +792,7 @@ the own index still goes to LanceDB and `indexing_status` says so.
 
 ### Platform support for the embedded store
 
-`@lancedb/lancedb` 0.40.0 is a JavaScript wrapper around a native library, with
+`@lancedb/lancedb` 0.41.0 is a JavaScript wrapper around a native library, with
 one prebuilt binary per platform and no WebAssembly fallback. The platforms it
 ships a binary for are:
 
@@ -864,6 +915,12 @@ For indexing throughput there is a provider-free benchmark: `npm run perf`
 (optionally `npm run perf -- --files 500 --latency 25`). It indexes synthetic
 TypeScript files with deterministic fake embeddings into an in-memory store, so
 it measures batching and bookkeeping — not provider quality, latency or cost.
+
+The mirrored embedding catalog can drift when Kilo adds or changes a model.
+`npm run check:kilo-mirror` compares `src/registry.ts` against Kilo's
+`model-registry.ts` and constants; the weekly `kilo-drift` workflow runs the same
+check and opens or closes a single issue. Normal PR CI does not touch the
+network.
 
 ## Acknowledgements
 

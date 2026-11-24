@@ -6,6 +6,7 @@ import { getKiloStoreInfo, resolveKiloCollection } from "./kilo-store.ts"
 import { readLanceDbInfoAt, openLanceDbReader, lanceDbNames, type LanceDbReader } from "./lancedb-store.ts"
 import { kiloLanceDbDirectories } from "./settings.ts"
 import { VALID_PROVIDERS } from "./config.ts"
+import type { KiloConfigIndexing } from "./kilo-config.ts"
 import { mainWorktree } from "./worktree.ts"
 import { recordWorkspace } from "./workspaces.ts"
 import { describeError } from "./errors.ts"
@@ -76,6 +77,8 @@ export async function discoverKiloSources(
     /** Candidate LanceDB roots; overrides the default Kilo locations. */
     lancedbDirectories?: string[]
     homeDir?: string
+    /** Effective Kilo config for this workspace (store, paths, Qdrant). */
+    kiloConfig?: KiloConfigIndexing
     /** Main worktree to read the full index from when `root` is a linked worktree. */
     baselineRoot?: string
     targetProfile?: EmbeddingProfile
@@ -142,7 +145,9 @@ export async function discoverKiloSources(
   // Qdrant source(s)
   let client: Qdrant | undefined
   try {
-    client = options.qdrant ?? createQdrant({ url: "http://localhost:6333" })
+    const url = options.kiloConfig?.qdrant?.url?.trim() || "http://localhost:6333"
+    const apiKey = options.kiloConfig?.qdrant?.apiKey?.trim() || undefined
+    client = options.qdrant ?? createQdrant({ url, apiKey })
   } catch (error) {
     problem(`Could not reach the Qdrant server to look for a Kilo index: ${describeError(error)}`)
   }
@@ -175,10 +180,17 @@ export async function discoverKiloSources(
     }
   }
 
-  // LanceDB source(s)
+  // LanceDB source(s). An explicit directory in Kilo's config is authoritative:
+  // probing the defaults after it is how a database left behind by a store
+  // switch gets imported instead of the one Kilo actually writes.
+  const configured = options.kiloConfig?.lancedb?.directory?.trim()
   const directories =
     options.lancedbDirectories ??
-    (options.lancedbDirectory ? [options.lancedbDirectory] : kiloLanceDbDirectories(options.homeDir))
+    (configured
+      ? [path.resolve(root, configured)]
+      : options.lancedbDirectory
+        ? [options.lancedbDirectory]
+        : kiloLanceDbDirectories(options.homeDir))
   const roots = [...new Set(directories.map((directory) => path.resolve(directory)))]
   for (const target of targets) {
     for (const directory of roots) {
@@ -216,6 +228,26 @@ export async function discoverKiloSources(
   }
 
   return sources
+}
+
+/**
+ * One Kilo backend per workspace, never a mix of a new store and a stale one.
+ *
+ * Kilo writes either Qdrant or LanceDB. Both may exist on disk after a switch,
+ * and importing/searching both would duplicate or resurrect old chunks. The
+ * configured store wins; without a config, LanceDB is Kilo's current default.
+ * If the configured store has no source at all, the other one is used so an
+ * older Kilo setup still works.
+ */
+export function selectKiloSources(
+  sources: readonly KiloSourceInfo[],
+  configuredStore?: string | null,
+): KiloSourceInfo[] {
+  const kinds = new Set(sources.map((source) => source.kind))
+  const configured =
+    configuredStore === "qdrant" || configuredStore === "lancedb" ? configuredStore : undefined
+  const kind = configured && kinds.has(configured) ? configured : kinds.has("lancedb") ? "lancedb" : kinds.has("qdrant") ? "qdrant" : undefined
+  return kind ? sources.filter((source) => source.kind === kind) : []
 }
 
 export interface ImportOptions {

@@ -1,25 +1,24 @@
-import * as os from "node:os"
-
 import type { EmbedderProvider, IndexingSettings, ProviderCredentials } from "./types.ts"
 import { defaultLanceDbDirectory, readSettingsFile, settingsFilePath, type SettingsFile } from "./settings.ts"
 import { lanceDbSupport } from "./lancedb-support.ts"
 import { stripJsonComments } from "./jsonc.ts"
+import { readKiloIndexingConfig } from "./kilo-config.ts"
+import { localModelSpec } from "./local/models.ts"
 import {
   DEFAULT_EMBEDDING_BATCH_SIZE,
   DEFAULT_MAX_FILE_SIZE_BYTES,
   DEFAULT_MAX_SEARCH_RESULTS,
   DEFAULT_SEARCH_MIN_SCORE,
   getDefaultModelId,
-  getModelDimension,
-  getModelQueryPrefix,
-  getModelScoreThreshold,
+  getModelProfile,
+  modelDimensionFor,
+  modelQueryPrefixFor,
+  modelScoreThresholdFor,
   normalizeExtensions,
 } from "./registry.ts"
 
-import * as fs from "node:fs"
-import * as path from "node:path"
-
 export { stripJsonComments }
+export { readKiloIndexingConfig }
 
 export interface PluginOptionsInput {
   vectorStore?: "qdrant" | "lancedb"
@@ -47,26 +46,6 @@ export interface PluginOptionsInput {
   homeDir?: string
 }
 
-interface KiloConfigIndexing {
-  enabled?: boolean
-  provider?: string
-  model?: string | null
-  dimension?: number | null
-  vectorStore?: string
-  searchMinScore?: number
-  searchMaxResults?: number
-  embeddingBatchSize?: number
-  fileExtensions?: string[]
-  qdrant?: { url?: string; apiKey?: string }
-  mistral?: { apiKey?: string }
-  openai?: { apiKey?: string }
-  ollama?: { baseUrl?: string }
-  "openai-compatible"?: { baseUrl?: string; apiKey?: string }
-  gemini?: { apiKey?: string }
-  voyage?: { apiKey?: string }
-  openrouter?: { apiKey?: string }
-}
-
 export const VALID_PROVIDERS: readonly EmbedderProvider[] = [
   "local",
   "mistral",
@@ -77,33 +56,6 @@ export const VALID_PROVIDERS: readonly EmbedderProvider[] = [
   "voyage",
   "openrouter",
 ]
-
-function readJsoncFile(file: string): Record<string, unknown> | undefined {
-  try {
-    const raw = fs.readFileSync(file, "utf8")
-    return JSON.parse(stripJsonComments(raw)) as Record<string, unknown>
-  } catch {
-    return undefined
-  }
-}
-
-function kiloConfigDir(homeDir?: string): string {
-  const xdg = process.env.XDG_CONFIG_HOME
-  if (xdg && xdg.trim()) return path.join(xdg, "kilo")
-  return path.join(homeDir ?? os.homedir(), ".config", "kilo")
-}
-
-/** Read Kilo's indexing config (best-effort; never throws). */
-export function readKiloIndexingConfig(homeDir?: string): KiloConfigIndexing | undefined {
-  const dir = kiloConfigDir(homeDir)
-  for (const file of ["kilo.jsonc", "kilo.json"]) {
-    const parsed = readJsoncFile(path.join(dir, file))
-    if (parsed && typeof parsed.indexing === "object" && parsed.indexing !== null) {
-      return parsed.indexing as KiloConfigIndexing
-    }
-  }
-  return undefined
-}
 
 function pickProvider(value: string | undefined): EmbedderProvider | undefined {
   if (!value) return undefined
@@ -209,11 +161,32 @@ export function resolveSettings(options: PluginOptionsInput): IndexingSettings {
     ""
   if (!modelId) warnings.push(`No embedding model configured for provider "${provider}"`)
 
+  const customProfiles = file?.models
+  const custom = customProfiles?.[provider]?.[modelId]
+  if (provider === "local" && custom && !localModelSpec(modelId)) {
+    warnings.push(
+      `The local provider only loads its bundled models; custom metadata for "${modelId}" cannot supply weights. Use openai-compatible for a self-hosted model.`,
+    )
+  }
+  const mirrored = getModelProfile(provider, modelId)
+  if (
+    custom &&
+    mirrored &&
+    ((custom.dimension !== undefined && custom.dimension !== mirrored.dimension) ||
+      (custom.queryPrefix !== undefined && custom.queryPrefix !== (mirrored.queryPrefix ?? "")))
+  ) {
+    warnings.push(
+      `Custom metadata for ${provider}/${modelId} differs from Kilo's catalog; a Kilo index built with this model may no longer be importable.`,
+    )
+  }
   const dimension =
     (typeof options.dimension === "number" && options.dimension > 0 ? options.dimension : undefined) ??
+    // A model-specific entry is more precise than the legacy top-level
+    // `dimension`, which may have been left behind by a previous model.
+    (custom?.dimension && custom.dimension > 0 ? custom.dimension : undefined) ??
     (typeof file?.dimension === "number" && file.dimension > 0 ? file.dimension : undefined) ??
     (typeof kilo?.dimension === "number" && kilo.dimension > 0 ? kilo.dimension : undefined) ??
-    getModelDimension(provider, modelId)
+    modelDimensionFor({ customProfiles }, provider, modelId)
   if (!dimension) {
     warnings.push(`Unknown embedding dimension for ${provider}/${modelId}; it will be detected on first use`)
   }
@@ -269,8 +242,9 @@ export function resolveSettings(options: PluginOptionsInput): IndexingSettings {
   const scoreThreshold =
     (typeof options.searchMinScore === "number" ? options.searchMinScore : undefined) ??
     fileMinScore ??
+    custom?.scoreThreshold ??
     kiloMinScore ??
-    getModelScoreThreshold(provider, modelId) ??
+    modelScoreThresholdFor({ customProfiles }, provider, modelId) ??
     DEFAULT_SEARCH_MIN_SCORE
 
   const searchMaxResults =
@@ -337,7 +311,8 @@ export function resolveSettings(options: PluginOptionsInput): IndexingSettings {
     qdrantApiKey,
     lancedbDirectory,
     scoreThreshold,
-    queryPrefix: getModelQueryPrefix(provider, modelId),
+    queryPrefix: modelQueryPrefixFor({ customProfiles }, provider, modelId),
+    customProfiles,
     searchMinScore:
       (typeof options.searchMinScore === "number" ? options.searchMinScore : undefined) ??
       fileMinScore ??
@@ -366,7 +341,7 @@ export function withProfile(
     provider: profile.provider,
     modelId: profile.modelId,
     dimension: profile.dimension,
-    scoreThreshold: getModelScoreThreshold(profile.provider, profile.modelId) ?? settings.scoreThreshold,
-    queryPrefix: getModelQueryPrefix(profile.provider, profile.modelId),
+    scoreThreshold: modelScoreThresholdFor(settings, profile.provider, profile.modelId) ?? settings.scoreThreshold,
+    queryPrefix: modelQueryPrefixFor(settings, profile.provider, profile.modelId),
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@javierkaiser/opencode-indexing",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "OpenCode plugin: semantic code search that reuses Kilo Code indexes (Qdrant/LanceDB) and maintains its own independent index",
   "license": "MIT",
   "author": "Carlos Javier Lust <javierkaiser@gmail.com>",
@@ -57,7 +57,8 @@
     "build:gui": "vite build",
     "prepack": "npm run build:gui -- --logLevel warn",
     "bench": "node bench/run.mjs --strategy grep",
-    "perf": "node bench/perf.mjs"
+    "perf": "node bench/perf.mjs",
+    "check:kilo-mirror": "node scripts/check-kilo-mirror.mjs"
   },
   "engines": {
     "node": ">=22.6"

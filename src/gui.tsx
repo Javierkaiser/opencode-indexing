@@ -34,6 +34,9 @@ interface SettingsView {
   readonly provider: string
   readonly model: string
   readonly dimension: number
+  readonly queryPrefix?: string
+  readonly maxInputTokens?: number
+  readonly modelScoreThreshold?: number | null
   readonly importFromKilo: boolean
   readonly searchKilo: boolean
   readonly autoRefresh: boolean
@@ -375,6 +378,45 @@ function IndexingSettings(props: { readonly ctx: Context }) {
             await applyKey("model", model)
           }
 
+          const editModelMetadata = async (): Promise<void> => {
+            if (!settings().model) return
+            const dimension = await ctx.dialogs.prompt({
+              title: ctx.t("settings.dimension"),
+              value: settings().dimension ? String(settings().dimension) : "",
+            })
+            if (dimension === undefined) return
+            if (dimension.trim() && dimension.trim() !== String(settings().dimension)) {
+              if (!(await applyKey("dimension", dimension.trim()))) return
+            }
+
+            const prefix = await ctx.dialogs.prompt({
+              title: ctx.t("settings.queryPrefix"),
+              value: settings().queryPrefix ?? "",
+            })
+            if (prefix === undefined) return
+            if (prefix !== (settings().queryPrefix ?? "")) {
+              if (!(await applyKey("queryprefix", prefix))) return
+            }
+
+            const maxTokens = await ctx.dialogs.prompt({
+              title: ctx.t("settings.maxInputTokens"),
+              value: settings().maxInputTokens ? String(settings().maxInputTokens) : "",
+            })
+            if (maxTokens === undefined) return
+            if (maxTokens.trim() && maxTokens.trim() !== String(settings().maxInputTokens ?? "")) {
+              if (!(await applyKey("maxinputtokens", maxTokens.trim()))) return
+            }
+
+            const threshold = await ctx.dialogs.prompt({
+              title: ctx.t("settings.modelScoreThreshold"),
+              value: settings().modelScoreThreshold == null ? "" : String(settings().modelScoreThreshold),
+            })
+            if (threshold === undefined) return
+            if (threshold.trim() !== (settings().modelScoreThreshold == null ? "" : String(settings().modelScoreThreshold))) {
+              await applyKey("modelscorethreshold", threshold.trim() || "default")
+            }
+          }
+
           const chooseStore = async (picked: string): Promise<void> => {
             if (!picked || picked === settings().vectorStore) return
             const ok = await ctx.dialogs.confirm({
@@ -476,7 +518,20 @@ function IndexingSettings(props: { readonly ctx: Context }) {
                     onChange={(picked) => void chooseModel(picked)}
                   />
                 </ctx.ui.SettingsRow>
-                <ctx.ui.SettingsRow title={ctx.t("settings.dimension")} description={String(settings().dimension)} />
+                <ctx.ui.SettingsRow
+                  title={ctx.t("settings.dimension")}
+                  description={`${settings().dimension || "?"}d${settings().queryPrefix ? ` · ${settings().queryPrefix}` : ""}${settings().maxInputTokens ? ` · ${settings().maxInputTokens} tokens` : ""}`}
+                >
+                  <ctx.ui.Button
+                    variant="neutral"
+                    size="small"
+                    icon="edit"
+                    disabled={!settings().model}
+                    onClick={() => void editModelMetadata()}
+                  >
+                    {ctx.t("settings.edit")}
+                  </ctx.ui.Button>
+                </ctx.ui.SettingsRow>
                 <Show when={["mistral", "openai", "gemini", "voyage", "openrouter"].includes(settings().provider)}>
                   <ctx.ui.SettingsRow
                     title={`${settings().provider} ${ctx.t("settings.apiKey")}`}
@@ -795,6 +850,9 @@ export default Plugin.define({
       "settings.model": "Embedding model",
       "settings.defaultModel": "(provider default)",
       "settings.dimension": "Dimensions",
+      "settings.queryPrefix": "Query prefix",
+      "settings.maxInputTokens": "Max input tokens",
+      "settings.modelScoreThreshold": "Model score threshold",
       "settings.apiKey": "API key",
       "settings.apiKeyConfigured": "Configured",
       "settings.configured": "Configured",

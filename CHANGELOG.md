@@ -5,6 +5,53 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-11-24
+
+### Changed
+
+- **Live search reads Kilo's current store, including LanceDB.** Kilo defaults to
+  LanceDB now; `indexing_search` used to look only at Qdrant, so a healthy Kilo
+  LanceDB answered as if Kilo had no index. Both stores are searched read-only,
+  the project's `indexing.vectorStore` decides which one is active, and a stale
+  index left behind by a store switch is not mixed into the results.
+- **Kilo's project config is read with Kilo's own precedence.** Workspace and
+  ancestor `kilo.jsonc`/`kilo.json`, `.kilo`/`.kilocode` directories, `KILO_CONFIG`,
+  `KILO_CONFIG_DIR` and `KILO_CONFIG_CONTENT` can change the store, the LanceDB
+  directory, the Qdrant URL and the embedding profile used to read Kilo. The own
+  index keeps its own configuration and is not redirected by project scope.
+- **A linked worktree is searched as baseline + delta, not just imported that
+  way.** Delta hits win; a baseline hit is returned only when the file in this
+  checkout still hashes to the value Kilo indexed in the main checkout. The
+  lookup expands the limit when the hash filter removes too many hits, like
+  Kilo's overlay.
+- **`indexing_import` imports the same worktree pair as a build.** It uses the
+  delta-first/baseline-skip plan, seeds the manifest so the next refresh does not
+  re-embed what it copied, and reports the precise provider/schema/profile
+  refusal instead of a generic incompatible-profile error.
+- **Embedding models can be described without a code change.** `indexing.json`
+  gained a `models` map (`dimension`, `queryPrefix`, `maxInputTokens`,
+  `maxBatchItems`, `maxBatchTokens`, `scoreThreshold`) and the settings commands
+  gained `dimension`, `queryprefix`, `maxinputtokens` and `modelscorethreshold`.
+  A custom entry that changes a mirrored Kilo model warns that its index may no
+  longer be importable.
+
+### Added
+
+- **Custom model metadata is editable from the Desktop settings page** through
+  the native dimensions row, and the server's catalog now lists custom entries.
+- **A weekly Kilo drift check.** `npm run check:kilo-mirror` compares the mirrored
+  model registry and constants against Kilo upstream; the `kilo-drift` workflow
+  runs it on a schedule and opens or closes one issue. It is not part of normal
+  PR CI and never blocks on the network.
+- **The README and bundled skill document live LanceDB search, project config,
+  worktree search, custom models and the drift monitor.**
+
+### Dependencies
+
+- `@lancedb/lancedb` 0.41.0 (still reads databases written by Kilo 0.26.2) and
+  OpenTUI 0.9.7. `mini-semantic-search` stays on 0.1.0 because 0.2 bundles a
+  different 256d model, and OpenTUI pins Solid 1.x and web-tree-sitter 0.25.10.
+
 ## [0.12.0] - 2026-11-24
 
 ### Changed
@@ -866,7 +913,8 @@ First public release.
 - Cross-platform installer (`install.mjs`, plus `install.sh` / `install.ps1`
   wrappers).
 
-[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/Javierkaiser/opencode-indexing/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.13.0
 [0.12.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.12.0
 [0.11.0]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.11.0
 [0.10.3]: https://github.com/Javierkaiser/opencode-indexing/releases/tag/v0.10.3

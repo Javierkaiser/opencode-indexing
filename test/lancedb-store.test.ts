@@ -21,6 +21,7 @@ import {
   openLanceDbReader,
   readLanceDbBatch,
   readLanceDbInfoAt,
+  searchLanceDbAt,
 } from "../src/lancedb-store.ts"
 import type { EmbeddingProfile, QdrantPoint } from "../src/types.ts"
 import type { ExportBatch } from "../src/vector-store.ts"
@@ -491,6 +492,159 @@ describe("openLanceDbReader", { skip: lanceUnavailable }, () => {
     const emptyDir = path.join(DIRECTORY, uniqueName("empty"))
     fs.mkdirSync(emptyDir, { recursive: true })
     assert.equal(await openLanceDbReader(emptyDir), null)
+  })
+})
+
+describe("searchLanceDbAt", { skip: lanceUnavailable }, () => {
+  test("returns the closest hits with payloads, sorted by descending score", async () => {
+    const name = uniqueName("search-at")
+    const s = store(name)
+    await s.ensure(4, PROFILE)
+
+    const points = EXACT_VECTORS.map((vector, index) => point(index + 1, `src\\f${index}.ts`, vector, index + 1, index + 4))
+    await s.upsert(points)
+
+    // Default minScore (0.4) keeps the exact match and the two nearest vectors.
+    const hits = await searchLanceDbAt(s.name, { vector: [1, 0, 0, 0] })
+    assert.deepEqual(
+      hits.map((hit) => hit.id),
+      [idFor(1), idFor(5), idFor(2)],
+    )
+
+    const top = hits[0]!
+    assert.ok(Math.abs(top.score - 1) < 1e-6, `expected score ~1, got ${top.score}`)
+    assert.deepEqual(top.payload, {
+      filePath: "src/f0.ts",
+      fileHash: "hash-1",
+      codeChunk: "chunk 1",
+      startLine: 1,
+      endLine: 4,
+    })
+    for (let index = 1; index < hits.length; index++) {
+      assert.ok(hits[index - 1]!.score >= hits[index]!.score, "hits must be ordered by descending score")
+    }
+
+    // Searching is read-only: no rows are added, moved or rewritten.
+    const raw = await readLanceDbInfoAt(s.name)
+    assert.equal(raw.pointsCount, points.length)
+    assert.equal(raw.schema, 2)
+  })
+
+  test("filters by pathPrefix across both separators", async () => {
+    const dir = path.join(DIRECTORY, uniqueName("search-at-native"))
+    const lancedb = await import("@lancedb/lancedb")
+    const db = await lancedb.connect(dir)
+    const rows = [
+      { id: idFor(1), vector: [1, 0, 0, 0], filePath: "src/a.ts", fileHash: "h1", codeChunk: "chunk 1", startLine: 1, endLine: 2 },
+      { id: idFor(2), vector: [1, 0, 0, 0], filePath: "src\\b.ts", fileHash: "h2", codeChunk: "chunk 2", startLine: 3, endLine: 4 },
+      { id: idFor(3), vector: [1, 0, 0, 0], filePath: "lib/c.ts", fileHash: "h3", codeChunk: "chunk 3", startLine: 5, endLine: 6 },
+    ]
+    const table = await db.createTable("vector", rows)
+    await table.close?.()
+    await db.close?.()
+
+    assert.equal((await searchLanceDbAt(dir, { vector: [1, 0, 0, 0] })).length, 3)
+
+    // Without a metadata table there is no stored profile to compare: an
+    // expectedProfile must not refuse the search.
+    const withExpected = await searchLanceDbAt(dir, { vector: [1, 0, 0, 0], expectedProfile: OTHER_PROFILE })
+    assert.equal(withExpected.length, 3)
+
+    // Databases written by Kilo on Windows keep `\`; both prefix spellings match.
+    for (const prefix of ["src", "src/", "src\\"]) {
+      const hits = await searchLanceDbAt(dir, { vector: [1, 0, 0, 0], pathPrefix: prefix })
+      assert.deepEqual(
+        hits.map((hit) => String(hit.payload?.filePath)).sort(),
+        ["src/a.ts", "src\\b.ts"],
+        `prefix ${prefix}`,
+      )
+    }
+
+    const lib = await searchLanceDbAt(dir, { vector: [1, 0, 0, 0], pathPrefix: "lib" })
+    assert.deepEqual(
+      lib.map((hit) => hit.payload?.filePath),
+      ["lib/c.ts"],
+    )
+  })
+
+  test("honors minScore and maxResults", async () => {
+    const name = uniqueName("search-at-limits")
+    const s = store(name)
+    await s.ensure(4, PROFILE)
+    await s.upsert(EXACT_VECTORS.map((vector, index) => point(index + 1, `src\\v${index}.ts`, vector)))
+
+    const limited = await searchLanceDbAt(s.name, { vector: [1, 0, 0, 0], maxResults: 2 })
+    assert.deepEqual(
+      limited.map((hit) => hit.id),
+      [idFor(1), idFor(5)],
+    )
+
+    const strict = await searchLanceDbAt(s.name, { vector: [1, 0, 0, 0], minScore: 0.7 })
+    assert.deepEqual(
+      strict.map((hit) => hit.id),
+      [idFor(1), idFor(5)],
+    )
+
+    const everything = await searchLanceDbAt(s.name, { vector: [1, 0, 0, 0], maxResults: 10 })
+    assert.equal(everything.length, 3)
+  })
+
+  test("refuses a mismatched expectedProfile and accepts the stored one", async () => {
+    const name = uniqueName("search-at-profile")
+    const s = store(name)
+    await s.ensure(4, PROFILE)
+    await s.upsert([point(1, "src\\a.ts", [1, 0, 0, 0])])
+
+    const hits = await searchLanceDbAt(s.name, { vector: [1, 0, 0, 0], expectedProfile: PROFILE })
+    assert.equal(hits.length, 1)
+
+    await assert.rejects(
+      searchLanceDbAt(s.name, { vector: [1, 0, 0, 0], expectedProfile: OTHER_PROFILE }),
+      /was built with openai\/text-embedding-3-small \(4 dimensions\), but the search profile is ollama\/nomic-embed-text \(4 dimensions\)/,
+    )
+  })
+
+  test("refuses an unknown index schema unless explicitly allowed", async () => {
+    const dir = path.join(DIRECTORY, uniqueName("search-at-schema"))
+    const lancedb = await import("@lancedb/lancedb")
+    const db = await lancedb.connect(dir)
+    const vector = await db.createTable("vector", [
+      {
+        id: idFor(1),
+        vector: [1, 0, 0, 0],
+        filePath: "src/a.ts",
+        fileHash: "h1",
+        codeChunk: "chunk 1",
+        startLine: 1,
+        endLine: 2,
+      },
+    ])
+    const metadata = await db.createTable("metadata", [
+      { key: "index_schema", value: "3" },
+      { key: "vector_size", value: "4" },
+    ])
+    await vector.close?.()
+    await metadata.close?.()
+    await db.close?.()
+
+    await assert.rejects(
+      searchLanceDbAt(dir, { vector: [1, 0, 0, 0] }),
+      /uses index schema 3, but this build reads 1 and 2/,
+    )
+
+    const bestEffort = await searchLanceDbAt(dir, { vector: [1, 0, 0, 0], expectedSchema: false })
+    assert.equal(bestEffort.length, 1)
+    assert.equal(bestEffort[0]!.id, idFor(1))
+  })
+
+  test("throws for a missing database and returns [] when the vector table is absent", async () => {
+    const missing = path.join(DIRECTORY, uniqueName("search-at-missing"))
+    await assert.rejects(searchLanceDbAt(missing, { vector: [1, 0, 0, 0] }), /LanceDB database at .* does not exist/)
+    assert.equal(fs.existsSync(missing), false, "a search must not create the database")
+
+    const empty = path.join(DIRECTORY, uniqueName("search-at-empty"))
+    fs.mkdirSync(empty, { recursive: true })
+    assert.deepEqual(await searchLanceDbAt(empty, { vector: [1, 0, 0, 0] }), [])
   })
 })
 

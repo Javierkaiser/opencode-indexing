@@ -87,6 +87,8 @@ export interface IndexingSettings extends EmbeddingProfile {
   lancedbDirectory: string
   scoreThreshold: number
   queryPrefix?: string
+  /** User-defined model metadata, keyed by provider and model id. */
+  customProfiles?: Partial<Record<EmbedderProvider, Record<string, Partial<ModelProfile>>>>
   searchMinScore?: number
   searchMaxResults: number
   embeddingBatchSize: number

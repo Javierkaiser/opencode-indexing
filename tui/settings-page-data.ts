@@ -18,6 +18,10 @@ export interface SettingsView {
   provider: string
   model: string
   dimension: number
+  /** Prefix and limits from `models` for the current model, when defined. */
+  queryPrefix?: string
+  maxInputTokens?: number
+  modelScoreThreshold?: number | null
   importFromKilo: boolean
   /** Search Kilo's index alongside the own one. */
   searchKilo: boolean
@@ -215,7 +219,7 @@ export function configRows(settings: SettingsView, version = "unknown"): ConfigR
     },
     {
       label: "Embeddings",
-      value: `${settings.provider}/${settings.model}${settings.dimension ? ` (${settings.dimension}d)` : ""}`,
+      value: `${settings.provider}/${settings.model}${settings.dimension ? ` (${settings.dimension}d)` : ""}${settings.queryPrefix ? ` · ${settings.queryPrefix}` : ""}`,
     },
     {
       label: "Import from Kilo",

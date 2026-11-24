@@ -1,7 +1,9 @@
 The `indexing_search` tool finds code by meaning in the workspace's semantic
 index. It returns chunks embedded with the configured model, merging Kilo Code's
 index (when present and compatible) with this plugin's own index (Qdrant or
-LanceDB). When the same chunk exists in both, the own index wins.
+LanceDB). Kilo is read live from the store its project config selects; a linked
+worktree contributes its baseline and delta, and a stale baseline hit is
+dropped. When the same chunk exists in both, the own index wins.
 
 ## When to use it
 
@@ -71,7 +73,9 @@ the fallback for exact terms.
 credentials masked, search and behaviour). `indexing_config_set { key, value }`
 changes one and persists it. Credentials are refused by design: a tool call is
 recorded in the conversation. Set a key from the terminal `/indexing` page, the
-Desktop settings page, the environment or the plugin options.
+Desktop settings page, the environment or the plugin options. Dimension,
+query prefix and input limits for a model the catalog does not list live in the
+`models` map; the Desktop dimensions row and `indexing_config_set` write them.
 
 ## Setup
 

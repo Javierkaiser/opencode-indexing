@@ -1,7 +1,7 @@
 import type { SettingsFile } from "./settings.ts"
 import { maskSecret } from "./settings.ts"
-import { normalizeExtensions } from "./registry.ts"
-import type { IndexingSettings } from "./types.ts"
+import { getModelDimension, getModelMaxInputTokens, normalizeExtensions } from "./registry.ts"
+import type { IndexingSettings, EmbedderProvider, ModelProfile } from "./types.ts"
 
 /**
  * Chat-driven settings for the `indexing-config` server command (option A).
@@ -74,7 +74,7 @@ export function parseIndexingCommand(text: string): ParsedCommand {
   }
 }
 
-type ValueKind = "string" | "url" | "boolean" | "integer" | "score" | "enum" | "key" | "extensions"
+type ValueKind = "string" | "optional-text" | "url" | "boolean" | "integer" | "score" | "enum" | "key" | "extensions"
 
 interface KeySpec {
   /** Report group this key belongs to (see SETTING_GROUPS). */
@@ -86,9 +86,11 @@ interface KeySpec {
   /** Allowed values for `enum`. */
   values?: readonly string[]
   /** Build the settings-file patch for a parsed value. */
-  toPatch(value: string | number | boolean | string[] | null): SettingsFile
+  toPatch(value: string | number | boolean | string[] | null, settings?: IndexingSettings): SettingsFile
   /** Current effective value for `set <key>` without a value. */
   display(settings: IndexingSettings): string
+  /** Refuse the key when no model is configured (model metadata keys). */
+  requiresModel?: boolean
 }
 
 /**
@@ -134,6 +136,18 @@ function summarizeExtensions(extensions: readonly string[]): string {
   const shown = 8
   if (extensions.length <= shown) return extensions.join(",")
   return `${extensions.slice(0, shown).join(",")}, … (${extensions.length} total)`
+}
+
+/** Write model metadata into `models[provider][modelId]`, merged by deepMerge. */
+function modelPatch(settings: IndexingSettings | undefined, patch: Partial<ModelProfile>): SettingsFile {
+  const provider = settings?.provider as EmbedderProvider | undefined
+  const modelId = settings?.modelId
+  if (!provider || !modelId) return {}
+  return { models: { [provider]: { [modelId]: patch } } }
+}
+
+function customProfile(settings: IndexingSettings): Partial<ModelProfile> | undefined {
+  return settings.customProfiles?.[settings.provider]?.[settings.modelId]
 }
 
 const KEY_SPECS: Record<string, KeySpec> = {
@@ -188,6 +202,46 @@ const KEY_SPECS: Record<string, KeySpec> = {
     description: "Embedding model id (provider default when unset)",
     toPatch: (value) => ({ model: String(value) }),
     display: (settings) => settings.modelId,
+  },
+  dimension: {
+    group: "embedding",
+    kind: "integer",
+    description: "Embedding dimension for the current model, stored as custom metadata",
+    requiresModel: true,
+    toPatch: (value, settings) => modelPatch(settings, { dimension: Number(value) }),
+    display: (settings) =>
+      String(settings.dimension || customProfile(settings)?.dimension || getModelDimension(settings.provider, settings.modelId) || "(unknown)"),
+  },
+  queryprefix: {
+    group: "embedding",
+    kind: "optional-text",
+    description: "Prefix applied to documents and queries for the current model (empty clears it)",
+    requiresModel: true,
+    toPatch: (value, settings) => modelPatch(settings, { queryPrefix: String(value) }),
+    display: (settings) => customProfile(settings)?.queryPrefix || "(none)",
+  },
+  maxinputtokens: {
+    group: "performance",
+    kind: "integer",
+    description: "Largest input the current model accepts, in tokens",
+    requiresModel: true,
+    toPatch: (value, settings) => modelPatch(settings, { maxInputTokens: Number(value) }),
+    display: (settings) =>
+      String(customProfile(settings)?.maxInputTokens ?? getModelMaxInputTokens(settings.provider, settings.modelId)),
+  },
+  modelscorethreshold: {
+    group: "search",
+    kind: "score",
+    description: "Default similarity threshold for the current model (or `default`)",
+    requiresModel: true,
+    toPatch: (value, settings) =>
+      modelPatch(settings, {
+        scoreThreshold: (value === null ? null : Number(value)) as unknown as number,
+      }),
+    display: (settings) =>
+      customProfile(settings)?.scoreThreshold == null
+        ? "(model default)"
+        : String(customProfile(settings)?.scoreThreshold),
   },
   mistralkey: {
     group: "credentials",
@@ -357,11 +411,14 @@ export type ApplyResult =
   | { ok: false; error: string }
 
 /** Validate a value and build the settings-file patch for `set <key>=<value>`. */
-export function applySettingValue(key: string, rawValue: string): ApplyResult {
+export function applySettingValue(key: string, rawValue: string, settings?: IndexingSettings): ApplyResult {
   const spec = KEY_SPECS[key]
   if (!spec) {
     const known = Object.keys(KEY_SPECS).join(", ")
     return { ok: false, error: `Unknown setting \`${key}\`. Valid keys: ${known}` }
+  }
+  if (spec.requiresModel && !settings?.modelId) {
+    return { ok: false, error: `\`${key}\` describes the current model; set \`model\` and \`provider\` first` }
   }
   const raw = rawValue.trim()
 
@@ -369,7 +426,7 @@ export function applySettingValue(key: string, rawValue: string): ApplyResult {
     case "boolean": {
       const parsed = parseBoolean(raw)
       if (parsed === undefined) return { ok: false, error: `\`${key}\` expects a boolean (true/false). Got: ${rawValue}` }
-      const patch = spec.toPatch(parsed)
+      const patch = spec.toPatch(parsed, settings)
       return { ok: true, patch, display: String(parsed) }
     }
     case "integer": {
@@ -377,46 +434,52 @@ export function applySettingValue(key: string, rawValue: string): ApplyResult {
       if (!Number.isFinite(value) || value <= 0 || !Number.isInteger(value)) {
         return { ok: false, error: `\`${key}\` expects a positive integer. Got: ${rawValue}` }
       }
-      return { ok: true, patch: spec.toPatch(value), display: String(value) }
+      return { ok: true, patch: spec.toPatch(value, settings), display: String(value) }
     }
     case "score": {
       if (raw === "default" || raw === "reset" || raw === "none") {
-        return { ok: true, patch: spec.toPatch(null), display: "(model default)" }
+        return { ok: true, patch: spec.toPatch(null, settings), display: "(model default)" }
       }
       const value = Number(raw)
       if (!Number.isFinite(value) || value < 0 || value > 1) {
         return { ok: false, error: `\`${key}\` expects a number between 0 and 1 (or \`default\`). Got: ${rawValue}` }
       }
-      return { ok: true, patch: spec.toPatch(value), display: String(value) }
+      return { ok: true, patch: spec.toPatch(value, settings), display: String(value) }
     }
     case "enum": {
       if (!spec.values?.includes(raw)) {
         return { ok: false, error: `\`${key}\` must be one of: ${spec.values?.join(", ")}. Got: ${rawValue}` }
       }
-      return { ok: true, patch: spec.toPatch(raw), display: raw }
+      return { ok: true, patch: spec.toPatch(raw, settings), display: raw }
     }
     case "extensions": {
       if (raw === "default" || raw === "reset") {
-        return { ok: true, patch: spec.toPatch(null), display: "(built-in defaults)" }
+        return { ok: true, patch: spec.toPatch(null, settings), display: "(built-in defaults)" }
       }
       const extensions = normalizeExtensions(raw.split(/[\s,;]+/).filter(Boolean))
       if (extensions.length === 0) return { ok: false, error: "No valid extensions provided" }
-      return { ok: true, patch: spec.toPatch(extensions), display: extensions.join(", ") }
+      return { ok: true, patch: spec.toPatch(extensions, settings), display: extensions.join(", ") }
     }
     case "url": {
       if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/.+/.test(raw)) {
         return { ok: false, error: `\`${key}\` expects a URL with protocol (e.g. http://localhost:6333). Got: ${rawValue}` }
       }
-      return { ok: true, patch: spec.toPatch(raw), display: raw }
+      return { ok: true, patch: spec.toPatch(raw, settings), display: raw }
     }
     case "key": {
       // Empty string clears the key.
-      const patch = spec.toPatch(raw)
+      const patch = spec.toPatch(raw, settings)
       return { ok: true, patch, display: raw === "" ? "(cleared)" : (maskSecret(raw) ?? "(set)") }
+    }
+    case "optional-text": {
+      // Prefixes are whitespace-sensitive: `search_query: ` must keep its
+      // trailing space. Only an all-whitespace value clears the entry.
+      const value = rawValue.trim() === "" ? "" : rawValue
+      return { ok: true, patch: spec.toPatch(value, settings), display: value === "" ? "(none)" : value }
     }
     case "string": {
       if (raw === "") return { ok: false, error: `\`${key}\` expects a non-empty value` }
-      return { ok: true, patch: spec.toPatch(raw), display: raw }
+      return { ok: true, patch: spec.toPatch(raw, settings), display: raw }
     }
   }
 }
@@ -450,12 +513,16 @@ export const CREDENTIAL_REFUSAL =
  * here rather than in the tool so the decision is unit-testable without a
  * running server, and so both paths share one set of rules.
  */
-export function applySettingsChange(key: string, rawValue: string): ApplyResult {
+export function applySettingsChange(
+  key: string,
+  rawValue: string,
+  settings?: IndexingSettings,
+): ApplyResult {
   const normalized = key.trim().toLowerCase()
   if (isSecretSetting(normalized)) {
     return { ok: false, error: `\`${normalized}\` ${CREDENTIAL_REFUSAL}` }
   }
-  return applySettingValue(normalized, rawValue)
+  return applySettingValue(normalized, rawValue, settings)
 }
 
 /**

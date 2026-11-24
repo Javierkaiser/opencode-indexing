@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
@@ -353,6 +354,13 @@ describe("search metadata cache", () => {
     let infoReads = 0
     const client = kiloQdrant({
       collections: [collection],
+      payload: {
+        embedding_provider: "mistral",
+        embedding_model_id: "codestral-embed-2505",
+        embedding_dimension: 1536,
+        index_schema: 2,
+        indexing_complete: true,
+      },
       onProbe: () => {
         probes += 1
       },
@@ -458,4 +466,108 @@ describe("search tool: why Kilo contributed nothing", () => {
     assert.match(output, /Kilo index: not found/i)
     assert.doesNotMatch(output, /search disabled/i)
   })
+})
+
+describe("live Kilo worktree search", () => {
+  test("delta wins and a baseline hit for a changed file is dropped", async () => {
+    const main = mkdtempSync(path.join(os.tmpdir(), "oi-search-main-"))
+    const linked = mkdtempSync(path.join(os.tmpdir(), "oi-search-linked-"))
+    try {
+      mkdirSync(path.join(main, ".git", "worktrees", "feature"), { recursive: true })
+      mkdirSync(path.join(linked, "src"), { recursive: true })
+      writeFileSync(path.join(linked, ".git"), `gitdir: ${path.join(main, ".git", "worktrees", "feature")}\n`)
+      const sameContent = "the file Kilo indexed in the main checkout"
+      writeFileSync(path.join(linked, "src", "b.ts"), sameContent)
+      writeFileSync(path.join(linked, "src", "a.ts"), "the file changed in this worktree")
+      const sameHash = createHash("sha256").update(sameContent).digest("hex")
+
+      const baselineName = kiloCollectionCandidates(main)[0]!
+      const deltaName = kiloCollectionCandidates(linked)[0]!
+      const profile = {
+        embedding_provider: "mistral",
+        embedding_model_id: "codestral-embed-2505",
+        embedding_dimension: 1536,
+        index_schema: 2,
+        indexing_complete: true,
+      }
+      const hit = (id: string, filePath: string, fileHash: string, score: number): QueryHit => ({
+        id,
+        score,
+        payload: { filePath, fileHash, codeChunk: `content of ${filePath}`, startLine: 1, endLine: 5 },
+      })
+      const hits = new Map<string, QueryHit[]>([
+        [baselineName, [hit("baseline-a", "src/a.ts", "stale-hash", 0.9), hit("baseline-b", "src/b.ts", sameHash, 0.8)]],
+        [deltaName, [hit("delta-a", "src/a.ts", "delta-hash", 0.95)]],
+      ])
+      const client = {
+        async collectionExists(name: string) {
+          return name === baselineName || name === deltaName
+        },
+        async getCollection(name: string) {
+          return name === baselineName || name === deltaName ? { points_count: 1 } : null
+        },
+        async retrieve() {
+          return [{ id: KILO_METADATA_ID, payload: profile }]
+        },
+        async query(name: string) {
+          return hits.get(name) ?? []
+        },
+        async listCollections() {
+          return []
+        },
+      } as unknown as Qdrant
+
+      const outcome = await searchCode(
+        {
+          qdrant: client,
+          kv: memoryKv(),
+          root: linked,
+          settings: settings({ credentials: { mistralApiKey: "test" } }),
+          ownStore: fakeOwnStore(undefined, 0),
+          kiloConfig: { vectorStore: "qdrant" },
+        },
+        "where is the invoice",
+      )
+
+      assert.deepEqual(
+        outcome.hits.map((item) => item.filePath).sort(),
+        ["src/a.ts", "src/b.ts"],
+        "the changed file comes from the delta and the unchanged one from the baseline",
+      )
+      assert.equal(outcome.hits.find((item) => item.filePath === "src/a.ts")?.source, "kilo")
+      assert.equal(outcome.hits.find((item) => item.filePath === "src/a.ts")?.fileHash, "delta-hash")
+      assert.deepEqual(outcome.meta.kilo.sources?.map((item) => item.role), ["baseline", "delta"])
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(linked, { recursive: true, force: true })
+    }
+  })
+})
+
+test("a Kilo source is embedded with Kilo's key when the plugin has none", async () => {
+  const root = "D:/Projects/kilo-credential"
+  const collection = kiloCollectionCandidates(root)[0]!
+  const client = kiloQdrant({
+    collections: [collection],
+    payload: {
+      embedding_provider: "mistral",
+      embedding_model_id: "codestral-embed-2505",
+      embedding_dimension: 1536,
+      index_schema: 2,
+      indexing_complete: true,
+    },
+  })
+  const outcome = await searchCode(
+    {
+      qdrant: client,
+      kv: memoryKv(),
+      root,
+      settings: settings({ credentials: {} }),
+      ownStore: fakeOwnStore(undefined, 0),
+      kiloConfig: { vectorStore: "qdrant", mistral: { apiKey: "kilo-key" } },
+    },
+    "where is the invoice",
+  )
+  assert.deepEqual(outcome.errors, [])
+  assert.equal(outcome.meta.kilo.sources?.[0]?.kind, "qdrant")
 })

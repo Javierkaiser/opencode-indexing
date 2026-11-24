@@ -1,6 +1,7 @@
 import { createQdrant, type Qdrant } from "./qdrant.ts"
 import { createQdrantOwnStore } from "./store-qdrant.ts"
 import { createLanceDbStore } from "./lancedb-store.ts"
+import type { KiloConfigIndexing } from "./kilo-config.ts"
 import type { EmbeddingProfile, IndexingSettings } from "./types.ts"
 import type { VectorStoreAdapter, VectorStoreKind } from "./vector-store.ts"
 
@@ -21,6 +22,25 @@ export function createOwnStore(settings: IndexingSettings, root: string): Vector
 /** Qdrant client for the given settings (also used for Kilo reads). */
 export function createSettingsQdrant(settings: IndexingSettings): Qdrant {
   return createQdrant({ url: settings.qdrantUrl, apiKey: settings.qdrantApiKey })
+}
+
+/**
+ * Qdrant client Kilo writes to.
+ *
+ * Kilo's project config may point at a different server than the own index. When
+ * it does not, the caller's existing client is the right one and is reused.
+ */
+export function createKiloQdrant(
+  settings: IndexingSettings,
+  config: KiloConfigIndexing | undefined,
+  fallback?: Qdrant,
+): Qdrant {
+  const url = config?.qdrant?.url?.trim()
+  const apiKey = config?.qdrant?.apiKey?.trim()
+  const sameUrl = !url || url === settings.qdrantUrl
+  const sameKey = !apiKey || apiKey === settings.qdrantApiKey
+  if (fallback && sameUrl && sameKey) return fallback
+  return createQdrant({ url: url || settings.qdrantUrl, apiKey: apiKey || settings.qdrantApiKey })
 }
 
 /**

@@ -28,10 +28,10 @@ import type { StaticModel } from "mini-semantic-search"
 
 import {
   DEFAULT_EMBEDDING_BATCH_SIZE,
-  getModelDimension,
-  getModelMaxInputTokens,
-  getModelProfile,
-  getModelQueryPrefix,
+  modelDimensionFor,
+  modelMaxInputTokensFor,
+  modelProfileFor,
+  modelQueryPrefixFor,
 } from "./registry.ts"
 import type { Embedder, EmbedderProvider, IndexingSettings } from "./types.ts"
 import { describeError } from "./errors.ts"
@@ -634,7 +634,7 @@ function requireSpec(provider: EmbedderProvider): ProviderSpec {
  * silently caps throughput at whatever arithmetic happens to produce.
  */
 export function resolveBatchLimits(settings: IndexingSettings): BatchLimits {
-  const profile = getModelProfile(settings.provider, settings.modelId)
+  const profile = modelProfileFor(settings, settings.provider, settings.modelId)
   const configured =
     Number.isFinite(settings.embeddingBatchSize) && settings.embeddingBatchSize > 0
       ? Math.floor(settings.embeddingBatchSize)
@@ -648,9 +648,9 @@ export function resolveBatchLimits(settings: IndexingSettings): BatchLimits {
 function createEmbedderImpl(settings: IndexingSettings, request: BatchRequest, prefix: string | undefined): Embedder {
   const provider = settings.provider
   const modelId = settings.modelId
-  const dimension = settings.dimension || getModelDimension(provider, modelId) || 0
+  const dimension = settings.dimension || modelDimensionFor(settings, provider, modelId) || 0
   const limits = resolveBatchLimits(settings)
-  const maxItemTokens = getModelMaxInputTokens(provider, modelId)
+  const maxItemTokens = modelMaxInputTokensFor(settings, provider, modelId)
 
   return {
     provider,
@@ -687,7 +687,7 @@ export function createEmbedder(settings: IndexingSettings): Embedder {
   // The prefix comes from the catalog for models that declare one (nomic and
   // friends); otherwise the resolved setting, which only an explicit override
   // sets. Mistral and OpenAI declare none.
-  const prefix = getModelQueryPrefix(provider, settings.modelId) ?? settings.queryPrefix
+  const prefix = modelQueryPrefixFor(settings, provider, settings.modelId) ?? settings.queryPrefix
   switch (provider) {
     case "local":
       return createEmbedderImpl(settings, createLocalRequest(settings), prefix)

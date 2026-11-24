@@ -9,11 +9,13 @@ import { deleteRecords, diffFiles, emptyManifest, loadManifest, saveManifest, se
 import {
   discoverKiloSources,
   importFromKilo,
+  selectKiloSources,
   type ImportReport,
   type KiloSourceInfo,
   type KiloSourceRole,
 } from "./import.ts"
-import { createOwnStore, createSettingsQdrant, recreateOwnStore } from "./store-factory.ts"
+import { readKiloConfig, type KiloConfigIndexing } from "./kilo-config.ts"
+import { createKiloQdrant, createOwnStore, createSettingsQdrant, recreateOwnStore } from "./store-factory.ts"
 import { scanWorkspace } from "./scanner.ts"
 import { profileKey } from "./registry.ts"
 import { recordWorkspace } from "./workspaces.ts"
@@ -41,6 +43,11 @@ export interface IndexerDeps {
   store?: VectorStoreAdapter
   /** Qdrant client (Kilo reads + import source discovery); created when omitted. */
   qdrant?: Qdrant
+  /** Qdrant client for Kilo's server when it differs from the own one. */
+  kiloQdrant?: Qdrant
+  /** Effective Kilo config; read from disk when omitted. */
+  kiloConfig?: KiloConfigIndexing
+  homeDir?: string
   embedder?: Embedder
   onProgress?: (update: {
     phase: string
@@ -348,13 +355,19 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
       // unreadable source, and the caller has to be told why the scan below is
       // about to re-embed the whole workspace at their expense.
       const problems: string[] = []
+      const kiloConfig = deps.kiloConfig ?? readKiloConfig(root, deps.homeDir).indexing
+      const kiloClient = deps.kiloQdrant ?? createKiloQdrant(settings, kiloConfig, qdrant)
       const sources = await discoverKiloSources(root, {
-        qdrant,
-        homeDir: undefined,
+        qdrant: kiloClient,
+        homeDir: deps.homeDir,
+        kiloConfig,
         targetProfile: profile,
         onProblem: (message) => problems.push(message),
       })
-      const plan = planKiloImport(sources, profile)
+      // A store switch leaves the old backend behind. Import only the one Kilo
+      // actually writes, or a stale collection gets resurrected.
+      const selected = selectKiloSources(sources, kiloConfig?.vectorStore)
+      const plan = planKiloImport(selected, profile)
       report.warnings.push(...plan.warnings)
       if (plan.unavailable) {
         report.errors.push(plan.unavailable)
@@ -378,7 +391,7 @@ export async function runIndex(deps: IndexerDeps, options: IndexOptions): Promis
             source: step.source,
             target: store,
             targetProfile: profile,
-            qdrant,
+            qdrant: kiloClient,
             skipFiles: skipped ? new Set(Object.keys(skipped)) : undefined,
             onProgress: (update) =>
               deps.onProgress?.({

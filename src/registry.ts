@@ -275,6 +275,63 @@ export function getModelMaxInputTokens(provider: EmbedderProvider, modelId: stri
   return getModelProfile(provider, modelId)?.maxInputTokens ?? FALLBACK_MAX_INPUT_TOKENS
 }
 
+/** Settings subset that may carry user-defined model metadata. */
+export interface ProfileOverrides {
+  customProfiles?: Partial<Record<EmbedderProvider, Record<string, Partial<ModelProfile>>>>
+}
+
+/**
+ * Model metadata for a profile: a user-defined entry wins over the mirrored
+ * catalog. That is what lets a self-hosted or newly released model work without
+ * a plugin release; the mirror stays the source of truth for import parity.
+ *
+ * A partial custom entry (say, only a query prefix) is merged over the catalog
+ * entry, so overriding one field does not erase the known dimension.
+ */
+export function modelProfileFor(
+  source: ProfileOverrides | undefined,
+  provider: EmbedderProvider,
+  modelId: string,
+): Partial<ModelProfile> | undefined {
+  const custom = source?.customProfiles?.[provider]?.[modelId]
+  const base = getModelProfile(provider, modelId)
+  if (!custom) return base
+  if (!base) return custom
+  return { ...base, ...custom }
+}
+
+export function modelDimensionFor(
+  source: ProfileOverrides | undefined,
+  provider: EmbedderProvider,
+  modelId: string,
+): number | undefined {
+  return modelProfileFor(source, provider, modelId)?.dimension
+}
+
+export function modelQueryPrefixFor(
+  source: ProfileOverrides | undefined,
+  provider: EmbedderProvider,
+  modelId: string,
+): string | undefined {
+  return modelProfileFor(source, provider, modelId)?.queryPrefix
+}
+
+export function modelScoreThresholdFor(
+  source: ProfileOverrides | undefined,
+  provider: EmbedderProvider,
+  modelId: string,
+): number | undefined {
+  return modelProfileFor(source, provider, modelId)?.scoreThreshold
+}
+
+export function modelMaxInputTokensFor(
+  source: ProfileOverrides | undefined,
+  provider: EmbedderProvider,
+  modelId: string,
+): number {
+  return modelProfileFor(source, provider, modelId)?.maxInputTokens ?? FALLBACK_MAX_INPUT_TOKENS
+}
+
 /** sha256 hex of a workspace path (no normalization, mirrors Kilo). */
 export function workspaceHash(root: string): string {
   return createHash("sha256").update(root).digest("hex")

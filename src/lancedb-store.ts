@@ -375,29 +375,10 @@ class LanceDbStoreAdapter implements VectorStoreAdapter {
     const maxResults = options.maxResults ?? DEFAULT_MAX_RESULTS
     const prefix = options.pathPrefix !== undefined ? normalizeSearchPrefix(options.pathPrefix) : undefined
 
-    const rows = await this.runNative("search", async () => {
-      let query: any = table.search(options.vector)
-      if (prefix !== undefined) {
-        // Rows are stored with `/`; match that plus the native-separator variant
-        // so databases written by Kilo on Windows also filter correctly.
-        const variants = forwardSlashVariants(prefix)
-        const like = variants
-          .map((variant) => `\`filePath\` LIKE '${escapeLikePattern(variant)}%'`)
-          .join(" OR ")
-        query = query.where(variants.length > 1 ? `(${like})` : like)
-      }
-      return query.distanceType("cosine").distanceRange(0, 1 - minScore).limit(maxResults).toArray()
-    })
-
-    const hits: QueryHit[] = []
-    for (const row of rows as Array<Record<string, unknown>>) {
-      const payload = chunkPayload(row)
-      if (!payload) continue
-      const distance = toFiniteNumber(row._distance)
-      if (distance === undefined) continue
-      hits.push({ id: String(row.id ?? ""), score: 1 - distance, payload })
-    }
-    return hits
+    const rows = await this.runNative("search", () =>
+      vectorSearchRows(table, { vector: options.vector, prefix, minScore, maxResults }),
+    )
+    return rowsToHits(rows)
   }
 
   async exportBatch(options: { limit: number; cursor?: unknown }): Promise<ExportBatch & { done: boolean }> {
@@ -644,6 +625,99 @@ export async function openLanceDbReader(dbPath: string): Promise<LanceDbReader |
   }
 }
 
+export interface SearchLanceDbAtOptions {
+  vector: number[]
+  pathPrefix?: string
+  minScore?: number
+  maxResults?: number
+  /** When present, refuse a DB whose stored profile differs. */
+  expectedProfile?: EmbeddingProfile
+  /**
+   * Validate the stored `index_schema` before searching. Defaults to `true`;
+   * only an explicit `false` reads a schema this build does not know.
+   */
+  expectedSchema?: boolean
+}
+
+type LanceDbSearchOutcome =
+  | { status: "missing-table" }
+  | { status: "unsupported-schema"; schema: number }
+  | { status: "profile-mismatch"; stored: EmbeddingProfile; expected: EmbeddingProfile }
+  | { status: "hits"; rows: Array<Record<string, unknown>> }
+
+/**
+ * Read-only vector search over an arbitrary LanceDB directory (e.g. a Kilo
+ * Code store). It never creates tables, writes, optimizes or migrates.
+ *
+ * - A missing directory throws: that is a configuration error, not an empty
+ *   index.
+ * - A database without the `vector` table is an empty index and yields `[]`,
+ *   mirroring how Kilo treats an index that has not been built yet.
+ * - Metadata is validated when present: schemas 1 and 2 are readable (Kilo
+ *   writes 2; this plugin writes 2 as well), anything else is refused. A
+ *   store with profile metadata is refused when `expectedProfile` differs; a
+ *   store without profile metadata is accepted and the caller decides.
+ *
+ * The connection runs through the per-database native queue and is closed
+ * before returning.
+ */
+export async function searchLanceDbAt(dbPath: string, options: SearchLanceDbAtOptions): Promise<QueryHit[]> {
+  if (!isSearchVector(options.vector)) {
+    throw new Error("Invalid search vector: expected a non-empty array of finite numbers.")
+  }
+  if (!isDirectory(dbPath)) {
+    throw new Error(`LanceDB database at "${dbPath}" does not exist`)
+  }
+
+  const minScore = options.minScore ?? DEFAULT_MIN_SCORE
+  const maxResults = options.maxResults ?? DEFAULT_MAX_RESULTS
+  const prefix = options.pathPrefix !== undefined ? normalizeSearchPrefix(options.pathPrefix) : undefined
+  const validateSchema = options.expectedSchema !== false
+
+  const db = await openReadOnly(dbPath)
+  const outcome = await native(dbPath, async (): Promise<LanceDbSearchOutcome> => {
+    const names = (await db.tableNames()) as string[]
+    if (!names.includes(VECTOR_TABLE)) return { status: "missing-table" }
+
+    if (names.includes(METADATA_TABLE)) {
+      const meta = await readMetadataMap(await db.openTable(METADATA_TABLE))
+      if (validateSchema) {
+        const schema = toFiniteNumber(meta.get(METADATA_KEYS.schema))
+        if (schema !== undefined && schema !== 1 && schema !== 2) {
+          return { status: "unsupported-schema", schema }
+        }
+      }
+      const stored = profileFromMetadataMap(meta)
+      if (options.expectedProfile && stored && !profilesEqual(stored, options.expectedProfile)) {
+        return { status: "profile-mismatch", stored, expected: options.expectedProfile }
+      }
+    }
+
+    const table = await db.openTable(VECTOR_TABLE)
+    const rows = await vectorSearchRows(table, { vector: options.vector, prefix, minScore, maxResults })
+    return { status: "hits", rows }
+  })
+    .catch((error: unknown) => {
+      throw wrapNativeError("search", dbPath, error)
+    })
+    .finally(() => {
+      closeQuietly(dbPath, db)
+    })
+
+  if (outcome.status === "missing-table") return []
+  if (outcome.status === "unsupported-schema") {
+    throw new Error(`LanceDB database at "${dbPath}" uses index schema ${outcome.schema}, but this build reads 1 and 2.`)
+  }
+  if (outcome.status === "profile-mismatch") {
+    throw new Error(
+      `LanceDB database at "${dbPath}" was built with ${profileLabel(outcome.stored)}, ` +
+        `but the search profile is ${profileLabel(outcome.expected)}. ` +
+        `Use the model that built the index for this search.`,
+    )
+  }
+  return rowsToHits(outcome.rows)
+}
+
 /** Read the raw table state of an open connection. Must run inside a native task. */
 async function readRawTables(db: any, vectorTable?: any): Promise<LanceDbRawTables> {
   const names = (await db.tableNames()) as string[]
@@ -687,6 +761,35 @@ async function selectableExportColumns(table: any): Promise<string[]> {
     // Schema unreadable: ask for everything, i.e. the previous behaviour.
     return [...EXPORT_COLUMNS]
   }
+}
+
+/** Run a cosine similarity query. Must run inside a native task. */
+function vectorSearchRows(
+  table: any,
+  options: { vector: number[]; prefix?: string; minScore: number; maxResults: number },
+): Promise<Array<Record<string, unknown>>> {
+  let query: any = table.search(options.vector)
+  if (options.prefix !== undefined) {
+    // Rows are stored with `/`; match that plus the native-separator variant
+    // so databases written by Kilo on Windows also filter correctly.
+    const variants = forwardSlashVariants(options.prefix)
+    const like = variants.map((variant) => `\`filePath\` LIKE '${escapeLikePattern(variant)}%'`).join(" OR ")
+    query = query.where(variants.length > 1 ? `(${like})` : like)
+  }
+  return query.distanceType("cosine").distanceRange(0, 1 - options.minScore).limit(options.maxResults).toArray()
+}
+
+/** Map raw LanceDB rows to hits; rows without a usable chunk or distance are skipped. */
+function rowsToHits(rows: Array<Record<string, unknown>>): QueryHit[] {
+  const hits: QueryHit[] = []
+  for (const row of rows) {
+    const payload = chunkPayload(row)
+    if (!payload) continue
+    const distance = toFiniteNumber(row._distance)
+    if (distance === undefined) continue
+    hits.push({ id: String(row.id ?? ""), score: 1 - distance, payload })
+  }
+  return hits
 }
 
 function sampleRow(dimension: number): Record<string, unknown> {
@@ -738,6 +841,10 @@ function assertMetadataKey(key: string): void {
 
 function profilesEqual(a: EmbeddingProfile, b: EmbeddingProfile): boolean {
   return a.provider === b.provider && a.modelId === b.modelId && a.dimension === b.dimension
+}
+
+function profileLabel(profile: EmbeddingProfile): string {
+  return `${profile.provider}/${profile.modelId} (${profile.dimension} dimensions)`
 }
 
 function profileFromMetadataMap(meta: Map<string, string>): EmbeddingProfile | undefined {
@@ -797,6 +904,14 @@ function toFiniteNumber(value: unknown): number | undefined {
     if (Number.isFinite(parsed)) return parsed
   }
   return undefined
+}
+
+function isSearchVector(value: unknown): value is number[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((entry) => typeof entry === "number" && Number.isFinite(entry))
+  )
 }
 
 function normalizeLimit(value: number): number {

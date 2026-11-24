@@ -2,10 +2,14 @@ import { runIndex } from "./indexer.ts"
 import { invalidateSearchCaches, searchCode } from "./search.ts"
 import { getStatus } from "./status.ts"
 import { indexStatusLine } from "./index-state.ts"
-import { discoverKiloSources, importFromKilo, type KiloSourceInfo } from "./import.ts"
-import { createOwnStore, createSettingsQdrant } from "./store-factory.ts"
+import { discoverKiloSources, importFromKilo, selectKiloSources, type KiloSourceInfo } from "./import.ts"
+import { readKiloConfig } from "./kilo-config.ts"
+import { emptyManifest, loadManifest, saveManifest } from "./manifest.ts"
+import { planKiloImport, seedImportedManifest, type KiloImportPlan } from "./indexer.ts"
+import { createKiloQdrant, createOwnStore, createSettingsQdrant } from "./store-factory.ts"
 import { assessScope } from "./scope.ts"
 import { codegraphStatusLine, indexWithCodegraph, type CodegraphOutcome } from "./codegraph.ts"
+import { describeError } from "./errors.ts"
 import type { IndexingSettings, KVStore } from "./types.ts"
 import type { Qdrant } from "./qdrant.ts"
 
@@ -248,15 +252,19 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
         const settings = await deps.getSettings()
         const qdrant = createSettingsQdrant(settings)
         const root = toolRoot(deps, context)
-        const status = await getStatus({ qdrant, kv: deps.kv, root, settings }, { checkFreshness: input.checkFreshness !== false })
+        const kiloConfig = readKiloConfig(root).indexing
+        const status = await getStatus(
+          { qdrant, kv: deps.kv, root, settings, kiloConfig },
+          { checkFreshness: input.checkFreshness !== false },
+        )
         const lines: string[] = [
           `Workspace: ${status.root}`,
           `Qdrant: ${status.qdrant.url} (${status.qdrant.reachable ? "reachable" : "UNREACHABLE"})`,
         ]
         lines.push(
           status.kilo.exists
-            ? `Kilo Qdrant index: ${status.kilo.collection} — ${status.kilo.points ?? "?"} points, ${status.kilo.complete === true ? "complete" : "incomplete"}${status.kilo.profile ? `, ${status.kilo.profile}` : ""}`
-            : "Kilo Qdrant index: none for this workspace",
+            ? `Kilo index: ${status.kilo.collection} — ${status.kilo.points ?? "?"} points, ${status.kilo.complete === true ? "complete" : "incomplete"}${status.kilo.profile ? `, ${status.kilo.profile}` : ""}`
+            : "Kilo index: none for this workspace",
         )
         if (status.kiloSources.length > 0) {
           lines.push("Kilo import sources:")
@@ -377,8 +385,15 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
         await store.ensure(dimension, targetProfile)
 
         const problems: string[] = []
-        const sources = await discoverKiloSources(root, { qdrant, targetProfile, onProblem: (m) => problems.push(m) })
-        if (sources.length === 0) {
+        const kiloConfig = readKiloConfig(root).indexing
+        const kiloQdrant = createKiloQdrant(settings, kiloConfig, qdrant)
+        const allSources = await discoverKiloSources(root, {
+          qdrant: kiloQdrant,
+          kiloConfig,
+          targetProfile,
+          onProblem: (m) => problems.push(m),
+        })
+        if (allSources.length === 0) {
           throw new Error(
             problems.length > 0
               ? `No Kilo Code index found for ${root}. ${problems.join(" · ")}`
@@ -386,32 +401,78 @@ export function createTools(deps: ToolDeps): ToolDefinition[] {
           )
         }
         const wanted = typeof input.source === "string" && input.source.trim() !== "" ? input.source.trim() : undefined
-        const source = wanted ? sources.find((item) => item.name === wanted) : (sources.find((item) => item.compatible) ?? sources[0])
-        if (!source) throw new Error(`Source not found: ${wanted}. Available: ${sources.map((s) => s.name).join(", ")}`)
-        if (!source.compatible) {
-          throw new Error(
-            `Source ${source.name} has an incompatible embedding profile. ` +
-              `Expected ${targetProfile.provider}:${targetProfile.modelId}:${targetProfile.dimension}. Re-index with embeddings instead.`,
-          )
+        const selected = selectKiloSources(allSources, kiloConfig?.vectorStore)
+        const plan: KiloImportPlan = wanted
+          ? (() => {
+              const source = allSources.find((item) => item.name === wanted)
+              return source
+                ? { steps: [{ source }], verifyAll: false, warnings: [], unavailable: undefined }
+                : { steps: [], verifyAll: false, warnings: [], unavailable: `Source not found: ${wanted}. Available: ${allSources.map((s) => s.name).join(", ")}` }
+            })()
+          : planKiloImport(selected, targetProfile)
+        if (plan.unavailable) throw new Error(plan.unavailable)
+        if (plan.steps.length === 0) throw new Error("No compatible Kilo source found for this workspace")
+
+        const filesByRole = new Map<string, Record<string, string>>()
+        const imported: Array<Awaited<ReturnType<typeof importFromKilo>>> = []
+        for (const step of plan.steps) {
+          const skipped = step.skipRole ? filesByRole.get(step.skipRole) : undefined
+          try {
+            const report = await importFromKilo({
+              root,
+              source: step.source,
+              target: store,
+              targetProfile,
+              qdrant: kiloQdrant,
+              skipFiles: skipped ? new Set(Object.keys(skipped)) : undefined,
+              onProgress: (update) =>
+                context.progress?.({ status: `importing ${update.imported}/${update.total ?? "?"}` }) ?? Promise.resolve(),
+            })
+            imported.push(report)
+            if (step.source.role) {
+              filesByRole.set(step.source.role, { ...filesByRole.get(step.source.role), ...report.files })
+            }
+          } catch (error) {
+            const role = step.source.role ? ` (${step.source.role})` : ""
+            throw new Error(`import failed${role}: ${describeError(error)}`)
+          }
         }
 
-        const report = await importFromKilo({
-          root,
-          source,
-          target: store,
-          targetProfile,
-          qdrant,
-          onProgress: (update) =>
-            context.progress?.({ status: `importing ${update.imported}/${update.total ?? "?"}` }) ?? Promise.resolve(),
-        })
+        const files: Record<string, string> = {}
+        for (const report of imported) if (report.source.role !== "delta") Object.assign(files, report.files)
+        for (const report of imported) if (report.source.role === "delta") Object.assign(files, report.files)
+
+        let manifest = await loadManifest(deps.kv, root)
+        const profileChanged =
+          manifest !== undefined &&
+          (manifest.profile.provider !== targetProfile.provider ||
+            manifest.profile.modelId !== targetProfile.modelId ||
+            manifest.profile.dimension !== targetProfile.dimension)
+        if (!manifest || profileChanged || manifest.collection !== store.name) {
+          manifest = emptyManifest(root, store.name, targetProfile)
+        }
+        await seedImportedManifest(manifest, root, files, { verifyAll: plan.verifyAll })
+        manifest.collection = store.name
+        await saveManifest(deps.kv, manifest)
+
         invalidateSearchCaches(root)
+        const chunks = imported.reduce((sum, report) => sum + report.imported, 0)
+        const batches = imported.reduce((sum, report) => sum + report.batches, 0)
+        const skipped = imported.reduce((sum, report) => sum + report.skipped, 0)
+        const detail = imported
+          .map((report) => `${report.source.role ? `${report.source.role} ` : ""}${report.source.kind} ${report.source.name}: ${report.imported}`)
+          .join(" · ")
         const lines = [
-          `Imported ${report.imported} chunks from ${report.source.kind} ${report.source.name} in ${(report.durationMs / 1000).toFixed(1)}s.`,
-          `Batches: ${report.batches}, skipped: ${report.skipped}. Embedding API calls: 0.`,
+          `Imported ${chunks} chunks from ${imported.length} Kilo source(s) (${detail}) in ${(imported.reduce((sum, report) => sum + report.durationMs, 0) / 1000).toFixed(1)}s.`,
+          `Batches: ${batches}, skipped: ${skipped}. Embedding API calls: 0.`,
+          ...plan.warnings,
           await codegraphLine(root, settings),
         ]
-        if (report.errors.length > 0) lines.push(`Errors: ${report.errors.join("; ")}`)
-        return { output: lines.filter(Boolean).join("\n"), metadata: report as unknown as Record<string, unknown> }
+        if (problems.length > 0) lines.push(`Problems: ${problems.join("; ")}`)
+        return {
+          output: lines.filter(Boolean).join("\n"),
+          metadata: { imported: chunks, batches, skipped, sources: imported.map((report) => report.source) },
+        }
       },
     },
   ]

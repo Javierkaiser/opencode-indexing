@@ -2,10 +2,11 @@ import * as fs from "node:fs/promises"
 import * as path from "node:path"
 
 import { getKiloStoreInfo, resolveKiloCollection } from "./kilo-store.ts"
-import { discoverKiloSources, type KiloSourceInfo } from "./import.ts"
-import { createOwnStore, createSettingsQdrant } from "./store-factory.ts"
+import { discoverKiloSources, selectKiloSources, type KiloSourceInfo } from "./import.ts"
+import { readKiloConfig, type KiloConfigIndexing } from "./kilo-config.ts"
+import { createKiloQdrant, createOwnStore } from "./store-factory.ts"
 import { diffFiles, loadManifest } from "./manifest.ts"
-import { getModelDimension, profileKey, workspaceHash } from "./registry.ts"
+import { modelDimensionFor, profileKey, workspaceHash } from "./registry.ts"
 import { scanWorkspace } from "./scanner.ts"
 import type { IndexingSettings, KVStore } from "./types.ts"
 import type { Qdrant } from "./qdrant.ts"
@@ -19,6 +20,9 @@ export interface StatusDeps {
   settings: IndexingSettings
   /** The own-index store. Built from the settings when omitted. */
   ownStore?: VectorStoreAdapter
+  /** Effective Kilo config; read from disk when omitted. */
+  kiloConfig?: KiloConfigIndexing
+  homeDir?: string
 }
 
 export interface IndexStatus {
@@ -84,6 +88,7 @@ function incompatibleSourceRecommendation(source: KiloSourceInfo): string {
 
 export async function getStatus(deps: StatusDeps, options?: { checkFreshness?: boolean }): Promise<IndexStatus> {
   const { qdrant, kv, root, settings } = deps
+  const kiloConfig = deps.kiloConfig ?? readKiloConfig(root, deps.homeDir).indexing
   // Configuration warnings are produced once per resolution and were previously
   // never shown, so a store that cannot work on this platform looked simply
   // absent rather than misconfigured.
@@ -96,21 +101,26 @@ export async function getStatus(deps: StatusDeps, options?: { checkFreshness?: b
     // Only worth reporting when Qdrant is actually part of this setup. With the
     // own index on LanceDB and no Qdrant-backed Kilo index, a dead Qdrant is
     // not a problem the user has, and saying so would train them to ignore it.
-    const qdrantIsOurs = settings.vectorStore === "qdrant" || settings.kiloVectorStore === "qdrant"
+    const qdrantIsOurs =
+      settings.vectorStore === "qdrant" ||
+      settings.kiloVectorStore === "qdrant" ||
+      kiloConfig?.vectorStore === "qdrant"
     if (qdrantIsOurs) {
+      const kiloQdrantUrl = kiloConfig?.qdrant?.url?.trim() || settings.qdrantUrl
       warnings.push(
         settings.vectorStore === "qdrant"
           ? `Qdrant unreachable at ${settings.qdrantUrl}: ${describeError(error)}`
-          : `Qdrant unreachable at ${settings.qdrantUrl}, so a Kilo index stored there cannot be imported: ${describeError(error)}`,
+          : `Qdrant unreachable at ${kiloQdrantUrl}, so a Kilo index stored there cannot be read: ${describeError(error)}`,
       )
     }
   }
 
   const ownStore = deps.ownStore ?? createOwnStore(settings, root)
+  const kiloQdrant = createKiloQdrant(settings, kiloConfig, qdrant)
   const cacheKey = KILO_CACHE_PREFIX + workspaceHash(root).slice(0, 16)
   const cachedKilo = await kv.get(cacheKey)
   const kiloCollection = reachable
-    ? await resolveKiloCollection(qdrant, root, typeof cachedKilo === "string" ? cachedKilo : undefined).catch(() => null)
+    ? await resolveKiloCollection(kiloQdrant, root, typeof cachedKilo === "string" ? cachedKilo : undefined).catch(() => null)
     : null
   if (kiloCollection && kiloCollection !== cachedKilo) await kv.set(cacheKey, kiloCollection)
 
@@ -122,16 +132,18 @@ export async function getStatus(deps: StatusDeps, options?: { checkFreshness?: b
   // can say "found but unreadable" instead of the much less useful "nothing there".
   const kiloProblems: string[] = []
   const [kiloInfo, ownInfo, manifest, kiloSources] = await Promise.all([
-    kiloCollection ? getKiloStoreInfo(qdrant, kiloCollection).catch(() => null) : null,
+    kiloCollection ? getKiloStoreInfo(kiloQdrant, kiloCollection).catch(() => null) : null,
     ownStore.info().catch(() => null),
     loadManifest(kv, root),
     discoverKiloSources(root, {
-      qdrant,
-      homeDir: undefined,
+      qdrant: kiloQdrant,
+      homeDir: deps.homeDir,
+      kiloConfig,
       targetProfile,
       onProblem: (message) => kiloProblems.push(message),
     }).catch(() => [] as KiloSourceInfo[]),
   ])
+  const selectedKiloSources = selectKiloSources(kiloSources, kiloConfig?.vectorStore)
 
   const freshness = { checked: false, total: 0, added: 0, maybeStale: 0, deleted: 0 }
   if (options?.checkFreshness && reachable) {
@@ -151,7 +163,7 @@ export async function getStatus(deps: StatusDeps, options?: { checkFreshness?: b
     }
   }
 
-  const compatibleSource = kiloSources.find((source) => source.compatible)
+  const compatibleSource = selectedKiloSources.find((source) => source.compatible)
 
   /**
    * The Kilo source that best explains this workspace.
@@ -162,11 +174,12 @@ export async function getStatus(deps: StatusDeps, options?: { checkFreshness?: b
    * discovered sources fill the gap: delta first, then baseline.
    */
   const effectiveKiloSource =
-    kiloSources.find((source) => source.role === "delta" && source.compatible) ??
-    kiloSources.find((source) => source.role === "baseline" && source.compatible) ??
-    kiloSources.find((source) => source.role === "delta") ??
-    kiloSources.find((source) => source.role === "baseline")
-  const kiloFromDiscovery = kiloCollection === null && effectiveKiloSource !== undefined
+    selectedKiloSources.find((source) => source.role === "delta" && source.compatible) ??
+    selectedKiloSources.find((source) => source.role === "baseline" && source.compatible) ??
+    selectedKiloSources.find((source) => source.role === "delta") ??
+    selectedKiloSources.find((source) => source.role === "baseline") ??
+    selectedKiloSources[0]
+  const kiloFromDiscovery = effectiveKiloSource !== undefined
   const kiloCollectionName = kiloCollection ?? effectiveKiloSource?.name ?? null
   const kiloPoints = kiloFromDiscovery ? (effectiveKiloSource.pointsCount ?? null) : (kiloInfo?.pointsCount ?? null)
   const kiloComplete = kiloFromDiscovery ? (effectiveKiloSource.complete ?? null) : (kiloInfo?.complete ?? null)
@@ -192,7 +205,7 @@ export async function getStatus(deps: StatusDeps, options?: { checkFreshness?: b
   const configuredProfile = {
     provider: settings.provider,
     modelId: settings.modelId,
-    dimension: settings.dimension || getModelDimension(settings.provider, settings.modelId) || 0,
+    dimension: settings.dimension || modelDimensionFor(settings, settings.provider, settings.modelId) || 0,
   }
   const storedProfile = ownInfo?.profile
   const profileChanged =
@@ -235,12 +248,12 @@ export async function getStatus(deps: StatusDeps, options?: { checkFreshness?: b
     recommendation = "Start Qdrant (e.g. `docker run -p 6333:6333 qdrant/qdrant` or Podman equivalent), then re-run indexing_status."
   } else if (!kiloInSearch) {
     recommendation = ownIndexRecommendation()
-  } else if (!kiloCollectionName && !ownInfo?.exists && kiloSources.length === 0) {
+  } else if (!kiloCollectionName && !ownInfo?.exists && selectedKiloSources.length === 0) {
     recommendation = "No index found. Run indexing_build to create an independent index (works without Kilo Code)."
-  } else if (kiloSources.length > 0 && !ownInfo?.exists && compatibleSource) {
+  } else if (selectedKiloSources.length > 0 && !ownInfo?.exists && compatibleSource) {
     recommendation = `Kilo index detected (${compatibleSource.kind}: ${compatibleSource.name}). Run indexing_build to import it without re-embedding.`
-  } else if (kiloSources.some((source) => !source.compatible) && !ownInfo?.exists) {
-    const blocked = kiloSources.find((source) => !source.compatible)!
+  } else if (selectedKiloSources.some((source) => !source.compatible) && !ownInfo?.exists) {
+    const blocked = selectedKiloSources.find((source) => !source.compatible)!
     recommendation = incompatibleSourceRecommendation(blocked)
   } else if (kiloCollectionName && kiloComplete === false && !ownInfo?.exists) {
     recommendation =

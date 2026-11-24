@@ -3,7 +3,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 
 import { stripJsonComments } from "./jsonc.ts"
-import type { EmbedderProvider } from "./types.ts"
+import type { EmbedderProvider, ModelProfile } from "./types.ts"
 
 /**
  * User-facing settings file for the plugin.
@@ -24,6 +24,8 @@ export interface SettingsFile {
   provider?: EmbedderProvider
   model?: string
   dimension?: number | null
+  /** User-defined metadata for models the static catalog does not know. */
+  models?: Partial<Record<EmbedderProvider, Record<string, Partial<ModelProfile>>>>
   apiKeys?: {
     mistral?: string
     openai?: string

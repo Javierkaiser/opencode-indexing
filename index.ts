@@ -17,10 +17,12 @@ import { maskSecret, settingsFilePath } from "./src/settings.ts"
 import { createPluginStorage } from "./src/storage.ts"
 import { createTools, invalidateAutoRefresh, type ToolDefinition } from "./src/tools.ts"
 import { invalidateSearchCaches } from "./src/search.ts"
-import { runIndex } from "./src/indexer.ts"
+import { planKiloImport, runIndex, seedImportedManifest, type KiloImportPlan } from "./src/indexer.ts"
 import { getStatus } from "./src/status.ts"
-import { discoverKiloSources, importFromKilo } from "./src/import.ts"
-import { createOwnStore, createSettingsQdrant } from "./src/store-factory.ts"
+import { discoverKiloSources, importFromKilo, selectKiloSources } from "./src/import.ts"
+import { readKiloConfig } from "./src/kilo-config.ts"
+import { emptyManifest, loadManifest, saveManifest } from "./src/manifest.ts"
+import { createKiloQdrant, createOwnStore, createSettingsQdrant } from "./src/store-factory.ts"
 import { createEmbedder } from "./src/embedder.ts"
 import { getOwnStoreInfo, OWN_COLLECTION_PREFIX, type OwnStoreInfo } from "./src/own-store.ts"
 import { forgetWorkspace, readWorkspaces } from "./src/workspaces.ts"
@@ -37,7 +39,16 @@ import {
   parseIndexingCommand,
   settingReport,
 } from "./src/settings-commands.ts"
-import { getDefaultModelId, getModelDimension, isKiloMirrored, isLiveTested, listModelIds } from "./src/registry.ts"
+import {
+  getDefaultModelId,
+  getModelDimension,
+  getModelMaxInputTokens,
+  getModelProfile,
+  isKiloMirrored,
+  isLiveTested,
+  listModelIds,
+  modelDimensionFor,
+} from "./src/registry.ts"
 import type { EmbeddingProfile, IndexingSettings, KVStore, ProviderCredentials } from "./src/types.ts"
 import type { Qdrant } from "./src/qdrant.ts"
 import { describeError } from "./src/errors.ts"
@@ -64,6 +75,7 @@ async function readOwnCollectionInfo(client: Qdrant, store: string): Promise<Own
 }
 
 function settingsView(settings: IndexingSettings, homeDir?: string): Record<string, unknown> {
+  const custom = settings.customProfiles?.[settings.provider]?.[settings.modelId]
   return {
     vectorStore: settings.vectorStore,
     qdrantUrl: settings.qdrantUrl,
@@ -72,6 +84,9 @@ function settingsView(settings: IndexingSettings, homeDir?: string): Record<stri
     provider: settings.provider,
     model: settings.modelId,
     dimension: settings.dimension,
+    queryPrefix: custom?.queryPrefix ?? settings.queryPrefix ?? "",
+    maxInputTokens: custom?.maxInputTokens ?? getModelMaxInputTokens(settings.provider, settings.modelId),
+    modelScoreThreshold: custom?.scoreThreshold ?? null,
     importFromKilo: settings.importFromKilo,
     searchKilo: settings.searchKilo !== false,
     autoRefresh: settings.autoRefresh,
@@ -121,7 +136,7 @@ function configuredProviders(credentials: ProviderCredentials): string[] {
  * incompatible, which is as wrong as reporting every one as compatible.
  */
 function profileFor(settings: IndexingSettings): EmbeddingProfile | undefined {
-  const dimension = settings.dimension || getModelDimension(settings.provider, settings.modelId) || 0
+  const dimension = settings.dimension || modelDimensionFor(settings, settings.provider, settings.modelId) || 0
   if (!dimension) return undefined
   return { provider: settings.provider, modelId: settings.modelId, dimension }
 }
@@ -135,7 +150,8 @@ function profileFor(settings: IndexingSettings): EmbeddingProfile | undefined {
  * it is stated rather than left to be discovered by a refused build.
  */
 function describeAvailableModels(settings: IndexingSettings): string[] {
-  const models = listModelIds(settings.provider)
+  const custom = settings.customProfiles?.[settings.provider] ?? {}
+  const models = [...new Set([...listModelIds(settings.provider), ...Object.keys(custom)])]
   const note = isLiveTested(settings.provider)
     ? []
     : [
@@ -145,8 +161,9 @@ function describeAvailableModels(settings: IndexingSettings): string[] {
     return [...note, `- **Models:** this provider has no catalog; set \`model\` to whatever your endpoint serves`]
   }
   const render = (modelId: string) => {
-    const dimension = getModelDimension(settings.provider, modelId)
-    const importer = isKiloMirrored(settings.provider, modelId) === false ? " — not importable from Kilo" : ""
+    const dimension = custom[modelId]?.dimension ?? getModelDimension(settings.provider, modelId)
+    const own = custom[modelId] !== undefined && getModelProfile(settings.provider, modelId) === undefined
+    const importer = own ? " — custom model" : isKiloMirrored(settings.provider, modelId) === false ? " — not importable from Kilo" : ""
     return `\`${modelId}\`${dimension ? ` (${dimension}d)` : ""}${importer}`
   }
   return [...note, `- **Models for ${settings.provider}:** ${models.map(render).join(" · ")}`]
@@ -296,7 +313,7 @@ Behavior:
           .toLowerCase()
         const value = String(input.value ?? "")
 
-        const applied = applySettingsChange(key, value)
+        const applied = applySettingsChange(key, value, await getSettings())
         if (!applied.ok) return { output: applied.error }
 
         const { writeSettingsFile } = await import("./src/settings.ts")
@@ -394,13 +411,16 @@ Behavior:
         }
         if (target === "kilo") {
           const problems: string[] = []
-          const sources = await discoverKiloSources(workspace, {
-            qdrant: createSettingsQdrant(settings),
-            homeDir: undefined,
+          const kiloConfig = readKiloConfig(workspace, options.homeDir).indexing
+          const allSources = await discoverKiloSources(workspace, {
+            qdrant: createKiloQdrant(settings, kiloConfig, createSettingsQdrant(settings)),
+            homeDir: options.homeDir,
+            kiloConfig,
             targetProfile: profileFor(settings),
             onProblem: (message) => problems.push(message),
           })
-          const list = sources.map((s) => `${s.kind} ${s.name} (${s.pointsCount ?? "?"} pts, ${s.compatible ? "compatible" : "INCOMPATIBLE"})`)
+          const sources = selectKiloSources(allSources, kiloConfig?.vectorStore)
+          const list = sources.map((s) => `${s.kind} ${s.name}${s.role ? ` [${s.role}]` : ""} (${s.pointsCount ?? "?"} pts, ${s.compatible ? "compatible" : "INCOMPATIBLE"})`)
           // A readable source does not make an unreadable one irrelevant: a
           // partial answer ("Qdrant works, LanceDB does not") is the one that
           // explains why an import picked the source it did.
@@ -435,15 +455,28 @@ Behavior:
       if (!dimension) throw new Error("Embedding dimension unknown")
       const targetProfile = { provider: settings.provider, modelId: settings.modelId, dimension }
       const problems: string[] = []
-      const sources = await discoverKiloSources(workspace, {
-        qdrant: createSettingsQdrant(settings),
+      const kiloConfig = readKiloConfig(workspace, options.homeDir).indexing
+      const fallbackQdrant = createSettingsQdrant(settings)
+      const kiloQdrant = createKiloQdrant(settings, kiloConfig, fallbackQdrant)
+      const allSources = await discoverKiloSources(workspace, {
+        qdrant: kiloQdrant,
+        homeDir: options.homeDir,
+        kiloConfig,
         targetProfile,
         onProblem: (message) => problems.push(message),
       })
-      const source = wanted
-        ? sources.find((item) => item.name === wanted)
-        : (sources.find((item) => item.compatible) ?? sources[0])
-      if (!source) {
+      const selected = selectKiloSources(allSources, kiloConfig?.vectorStore)
+      const plan: KiloImportPlan = wanted
+        ? (() => {
+            const source = allSources.find((item) => item.name === wanted)
+            return source
+              ? { steps: [{ source }], verifyAll: false, warnings: [], unavailable: undefined }
+              : { steps: [], verifyAll: false, warnings: [], unavailable: `No Kilo source named "${wanted}" was found.` }
+          })()
+        : planKiloImport(selected, targetProfile)
+
+      if (plan.unavailable) throw new Error(plan.unavailable)
+      if (plan.steps.length === 0) {
         // Naming the cause turns "nothing here" into something actionable when
         // the index is present but unreadable.
         throw new Error(
@@ -452,17 +485,59 @@ Behavior:
             : "No Kilo source found for this workspace",
         )
       }
-      if (!source.compatible) throw new Error(`Source ${source.name} has an incompatible embedding profile`)
+
       await store.ensure(dimension, targetProfile)
-      const report = await importFromKilo({
-        root: workspace,
-        source,
-        target: store,
-        targetProfile,
-        qdrant: createSettingsQdrant(settings),
-      })
+      const filesByRole = new Map<string, Record<string, string>>()
+      const imported: Array<Awaited<ReturnType<typeof importFromKilo>>> = []
+      for (const step of plan.steps) {
+        const skipped = step.skipRole ? filesByRole.get(step.skipRole) : undefined
+        try {
+          const report = await importFromKilo({
+            root: workspace,
+            source: step.source,
+            target: store,
+            targetProfile,
+            qdrant: kiloQdrant,
+            skipFiles: skipped ? new Set(Object.keys(skipped)) : undefined,
+          })
+          imported.push(report)
+          if (step.source.role) {
+            filesByRole.set(step.source.role, { ...filesByRole.get(step.source.role), ...report.files })
+          }
+        } catch (error) {
+          const role = step.source.role ? ` (${step.source.role})` : ""
+          throw new Error(`import failed${role}: ${describeError(error)}`)
+        }
+      }
+
+      const files: Record<string, string> = {}
+      for (const report of imported) if (report.source.role !== "delta") Object.assign(files, report.files)
+      for (const report of imported) if (report.source.role === "delta") Object.assign(files, report.files)
+
+      let manifest = await loadManifest(kv, workspace)
+      const profileChanged =
+        manifest !== undefined &&
+        (manifest.profile.provider !== targetProfile.provider ||
+          manifest.profile.modelId !== targetProfile.modelId ||
+          manifest.profile.dimension !== targetProfile.dimension)
+      if (!manifest || profileChanged || manifest.collection !== store.name) {
+        manifest = emptyManifest(workspace, store.name, targetProfile)
+      }
+      await seedImportedManifest(manifest, workspace, files, { verifyAll: plan.verifyAll })
+      manifest.collection = store.name
+      await saveManifest(kv, manifest)
+
+      const chunks = imported.reduce((sum, report) => sum + report.imported, 0)
+      const batches = imported.reduce((sum, report) => sum + report.batches, 0)
+      const detail =
+        imported.length > 1
+          ? ` from ${imported.length} Kilo sources (${imported
+              .map((report) => `${report.source.role ?? report.source.kind} ${report.imported}`)
+              .join(", ")})`
+          : ` from ${imported[0]!.source.kind} ${imported[0]!.source.name}`
       invalidateCaches(workspace)
-      return `Imported ${report.imported} chunks from ${report.source.kind} ${report.source.name} · ${report.batches} batches · 0 embedding calls`
+      const notes = plan.warnings.length > 0 ? `\n${plan.warnings.join("\n")}` : ""
+      return `Imported ${chunks} chunks${detail} · ${batches} batches · 0 embedding calls${notes}`
     }
 
     /**
@@ -644,11 +719,6 @@ class ForgetRefusedError extends Error {}
                   return
                 }
                 case "set": {
-                  const applied = applySettingValue(parsed.key, parsed.rawValue)
-                  if (!applied.ok) {
-                    await reply(`${applied.error}\n\n${COMMAND_USAGE}`)
-                    return
-                  }
                   if (!parsed.hasValue) {
                     // `set <key>` with no value reports the current one.
                     const settings = await getSettings()
@@ -658,6 +728,11 @@ class ForgetRefusedError extends Error {}
                         ? `Unknown setting \`${parsed.key}\`.\n\n${COMMAND_USAGE}`
                         : `${parsed.key} = ${current}`,
                     )
+                    return
+                  }
+                  const applied = applySettingValue(parsed.key, parsed.rawValue, await getSettings())
+                  if (!applied.ok) {
+                    await reply(`${applied.error}\n\n${COMMAND_USAGE}`)
                     return
                   }
                   const { writeSettingsFile } = await import("./src/settings.ts")
@@ -727,7 +802,7 @@ class ForgetRefusedError extends Error {}
 
         "settings.apply": async (input: unknown) => {
           const { key, value } = input as { key?: string; value?: string }
-          const applied = applySettingsChange(String(key ?? ""), String(value ?? ""))
+          const applied = applySettingsChange(String(key ?? ""), String(value ?? ""), await getSettings())
           if (!applied.ok) return { ok: false, error: applied.error }
           const { writeSettingsFile } = await import("./src/settings.ts")
           writeSettingsFile(applied.patch as never)
@@ -758,18 +833,25 @@ class ForgetRefusedError extends Error {}
           }
         },
 
-        "catalog.get": async () => ({
-          providers: VALID_PROVIDERS.map((provider) => ({
-            id: provider,
-            defaultModel: getDefaultModelId(provider),
-            liveTested: isLiveTested(provider),
-            models: listModelIds(provider).map((modelId) => ({
-              id: modelId,
-              dimension: getModelDimension(provider, modelId) ?? null,
-              kiloMirrored: isKiloMirrored(provider, modelId) === true,
-            })),
-          })),
-        }),
+        "catalog.get": async () => {
+          const settings = await getSettings()
+          return {
+            providers: VALID_PROVIDERS.map((provider) => {
+              const custom = settings.customProfiles?.[provider] ?? {}
+              const models = [...new Set([...listModelIds(provider), ...Object.keys(custom)])]
+              return {
+                id: provider,
+                defaultModel: getDefaultModelId(provider),
+                liveTested: isLiveTested(provider),
+                models: models.map((modelId) => ({
+                  id: modelId,
+                  dimension: custom[modelId]?.dimension ?? getModelDimension(provider, modelId) ?? null,
+                  kiloMirrored: isKiloMirrored(provider, modelId) === true,
+                })),
+              }
+            }),
+          }
+        },
 
         "settings.test": async (input: unknown) => {
           return testTarget((input as { target: string }).target, rootFor(input))
@@ -780,9 +862,12 @@ class ForgetRefusedError extends Error {}
           const targetProfile =
             settings.dimension > 0 ? { provider: settings.provider, modelId: settings.modelId, dimension: settings.dimension } : undefined
           const problems: string[] = []
-          const sources = await discoverKiloSources(rootFor(input), {
-            qdrant: createSettingsQdrant(settings),
-            homeDir: undefined,
+          const workspace = rootFor(input)
+          const kiloConfig = readKiloConfig(workspace, options.homeDir).indexing
+          const sources = await discoverKiloSources(workspace, {
+            qdrant: createKiloQdrant(settings, kiloConfig, createSettingsQdrant(settings)),
+            homeDir: options.homeDir,
+            kiloConfig,
             targetProfile,
             onProblem: (message) => problems.push(message),
           })
@@ -807,8 +892,17 @@ class ForgetRefusedError extends Error {}
 
         "status.get": async (input: unknown) => {
           const settings = await getSettings()
+          const workspace = rootFor(input)
+          const kiloConfig = readKiloConfig(workspace, options.homeDir).indexing
           const status = await getStatus(
-            { qdrant: createSettingsQdrant(settings), kv, root: rootFor(input), settings },
+            {
+              qdrant: createSettingsQdrant(settings),
+              kv,
+              root: workspace,
+              settings,
+              kiloConfig,
+              homeDir: options.homeDir,
+            },
             { checkFreshness: (input as { checkFreshness?: boolean }).checkFreshness === true },
           )
           const summary = [

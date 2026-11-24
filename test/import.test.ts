@@ -4,9 +4,15 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { after, describe, test } from "node:test"
 
-import { discoverKiloSources, importFromKilo, importReportToIndexReport, type KiloSourceInfo } from "../src/import.ts"
+import {
+  discoverKiloSources,
+  importFromKilo,
+  importReportToIndexReport,
+  selectKiloSources,
+  type KiloSourceInfo,
+} from "../src/import.ts"
 import { kiloCollectionCandidates, KILO_METADATA_ID } from "../src/kilo-store.ts"
-import type { LanceDbReader } from "../src/lancedb-store.ts"
+import { lanceDbName, type LanceDbReader } from "../src/lancedb-store.ts"
 import type { EmbeddingProfile, QdrantPoint, QueryHit } from "../src/types.ts"
 import type { ExportBatch, StoreSearchOptions, VectorStoreAdapter, VectorStoreInfo } from "../src/vector-store.ts"
 
@@ -634,6 +640,68 @@ describe("discoverKiloSources worktrees", () => {
     })
     assert.equal(sources.length, 1)
     assert.equal(sources[0]!.role, undefined)
+  })
+})
+
+describe("Kilo source selection", () => {
+  const source = (kind: "qdrant" | "lancedb", name: string, role?: "baseline" | "delta"): KiloSourceInfo => ({
+    kind,
+    name,
+    pointsCount: 1,
+    compatible: true,
+    ...(role ? { role } : {}),
+  })
+
+  test("LanceDB wins when Kilo has no configured store", () => {
+    const picked = selectKiloSources([source("qdrant", "ws-old"), source("lancedb", "new")])
+    assert.deepEqual(picked.map((item) => item.kind), ["lancedb"])
+  })
+
+  test("the configured store wins over the other backend", () => {
+    const picked = selectKiloSources([source("qdrant", "ws-old"), source("lancedb", "new")], "qdrant")
+    assert.deepEqual(picked.map((item) => item.name), ["ws-old"])
+  })
+
+  test("the other backend is used when the configured store has no source", () => {
+    const picked = selectKiloSources([source("lancedb", "new")], "qdrant")
+    assert.deepEqual(picked.map((item) => item.name), ["new"])
+  })
+
+  test("a worktree keeps baseline and delta in the same backend", () => {
+    const picked = selectKiloSources(
+      [
+        source("lancedb", "main", "baseline"),
+        source("lancedb", "feature", "delta"),
+        source("qdrant", "old-main", "baseline"),
+        source("qdrant", "old-feature", "delta"),
+      ],
+      "lancedb",
+    )
+    assert.deepEqual(picked.map((item) => item.name), ["main", "feature"])
+  })
+
+  test("an explicit LanceDB directory is the only place Kilo is looked for", async () => {
+    const configured = mkdtempSync(path.join(os.tmpdir(), "oi-kilo-dir-"))
+    const root = path.join(os.tmpdir(), "configured-root")
+    try {
+      const dbPath = path.join(configured, lanceDbName(root))
+      mkdirSync(path.join(dbPath, "vector.lance"), { recursive: true })
+      writeFileSync(path.join(dbPath, "vector.lance", "_versions"), "not a lance manifest")
+
+      const problems: string[] = []
+      const sources = await discoverKiloSources(root, {
+        qdrant: { collectionExists: async () => false } as never,
+        kiloConfig: { lancedb: { directory: configured } },
+        onProblem: (message) => problems.push(message),
+      })
+
+      assert.deepEqual(sources, [])
+      assert.equal(problems.length, 1)
+      assert.match(problems[0]!, /exists at/)
+      assert.ok(problems[0]!.includes(dbPath), "the configured directory is the one probed")
+    } finally {
+      rmSync(configured, { recursive: true, force: true })
+    }
   })
 })
 
