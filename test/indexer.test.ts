@@ -750,11 +750,15 @@ describe("runIndex worktree import (B4)", () => {
 
     const baselineName = kiloCollectionCandidates(main)[0]!
     const deltaName = kiloCollectionCandidates(linked)[0]!
+    // Kilo stores relative paths with the host separator, so a Linux run must
+    // use `src/a.ts` while Windows gets `src\a.ts`.
+    const relA = path.join("src", "a.ts")
+    const relB = path.join("src", "b.ts")
     const collections = new Map<string, QdrantPoint[]>([
-      [deltaName, [kiloPoint("delta-a", "src\\a.ts", deltaHash)]],
+      [deltaName, [kiloPoint("delta-a", relA, deltaHash)]],
       [
         baselineName,
-        [kiloPoint("baseline-a", "src\\a.ts", "baseline-hash"), kiloPoint("baseline-b", "src\\b.ts", "baseline-hash")],
+        [kiloPoint("baseline-a", relA, "baseline-hash"), kiloPoint("baseline-b", relB, "baseline-hash")],
       ],
     ])
     const store = new FakeStore(path.join(linked, ".lancedb", "db"))
@@ -786,8 +790,8 @@ describe("runIndex worktree import (B4)", () => {
     assert.equal(report.imported?.chunks, 1)
 
     const manifest = await loadManifest(kv, linked)
-    assert.equal(manifest!.files["src\\a.ts"]!.hash, deltaHash, "the delta's hash wins for a shared file")
-    assert.equal(manifest!.files["src\\b.ts"], undefined, "a baseline-only file missing here is deleted by the scan")
+    assert.equal(manifest!.files[relA]!.hash, deltaHash, "the delta's hash wins for a shared file")
+    assert.equal(manifest!.files[relB], undefined, "a baseline-only file missing here is deleted by the scan")
 
     const kept = [...store.points.values()]
     assert.equal(kept.length, 1)
@@ -802,9 +806,10 @@ describe("runIndex worktree import (B4)", () => {
 
     const baselineName = kiloCollectionCandidates(main)[0]!
     const deltaName = kiloCollectionCandidates(linked)[0]!
+    const relA = path.join("src", "a.ts")
     const collections = new Map<string, QdrantPoint[]>([
-      [deltaName, [kiloPoint("delta-a", "src\\a.ts", "delta-hash")]],
-      [baselineName, [kiloPoint("baseline-a", "src\\a.ts", "baseline-hash")]],
+      [deltaName, [kiloPoint("delta-a", relA, "delta-hash")]],
+      [baselineName, [kiloPoint("baseline-a", relA, "baseline-hash")]],
     ])
     const store = new FakeStore(path.join(linked, ".lancedb", "db"))
     const kv = createMemoryStorage()
@@ -829,7 +834,7 @@ describe("runIndex worktree import (B4)", () => {
     assert.equal(report.imported?.source, baselineName, "the baseline still seeds what it can")
 
     const manifest = await loadManifest(kv, linked)
-    const record = manifest!.files["src\\a.ts"]!
+    const record = manifest!.files[relA]!
     assert.notEqual(
       record.hash,
       "baseline-hash",
